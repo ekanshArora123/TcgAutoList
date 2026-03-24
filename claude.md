@@ -4,7 +4,7 @@
 
 TcgAutoList automates listing ~10,000 Pokemon cards on eBay. It uses an **agentic architecture** with MCP servers (Model Context Protocol) and a Telegram bot for photo intake.
 
-**Workflow:** Agent picks next unlisted card → requests photos via Telegram → waits for photos → gathers card info from API → builds listing → creates eBay listing → marks as done → repeats.
+**Workflow:** Agent picks next unlisted card → requests photos via Telegram → waits for photos → gathers card info + price from TCGplayer → builds listing → creates eBay listing → marks as done → repeats.
 
 ## Architecture
 
@@ -12,81 +12,139 @@ TcgAutoList automates listing ~10,000 Pokemon cards on eBay. It uses an **agenti
 
 | Component | Type | Location | Purpose |
 |-----------|------|----------|---------|
-| `collectionServer` | MCP Server | `src/servers/collection/` | SQLite DB of user's card collection with CRUD tools |
-| `cardInfoServer` | MCP Server | `src/servers/cardinfo/` | Fetches card metadata from Pokemon TCG API + pricing |
+| `card-server` | MCP Server | `card-server/` | **Combined** collection, card info, and pricing server. SQLite DB with CRUD + TCGplayer data fetching + pricing algorithm. Standalone — usable independently of the parent project. |
 | `ebay-mcp` | MCP Server (external) | npm package | eBay Sell API access (325 tools) |
 | `telegram/bot` | Module | `src/telegram/` | Sends photo requests & receives photos via Telegram Bot API |
 | `listingAgent` | Orchestrator | `src/agent/` | State machine driving the card → listing workflow |
 
-### MCP Server Pattern
+### card-server Internal Architecture
 
-Each custom MCP server follows this structure:
-- `index.ts` — Server setup, tool registration, STDIO transport
-- `db.ts` or API wrapper — Data layer
-- `types.ts` — Zod schemas for validation
-- `__tests__/` — Unit tests
+The agent interacts with **two service files**. Everything else is a helper.
 
-Servers communicate via **STDIO transport** using `@modelcontextprotocol/sdk`.
+```
+card-server/src/
+├── index.ts                        ← MCP entry: 30+ tools, delegates to services
+├── db.ts                           ← SQLite init/close (implemented)
+├── schema.sql                      ← 4-table schema
+├── types.ts                        ← Zod schemas + TS types
+├── services/                       ← AGENT-FACING (high-level composed operations)
+│   ├── collectionService.ts        ← Cards + SKUs + Inventory management
+│   └── pricingService.ts           ← Pricing operations + TCGplayer fetch workflows
+└── helpers/                        ← INTERNAL (services compose these, agent doesn't call directly)
+    ├── crud/                       ← Pure DB CRUD, one file per table
+    │   ├── cards.ts                ← Card metadata CRUD (implemented)
+    │   ├── skus.ts                 ← SKU variant CRUD (implemented)
+    │   ├── inventory.ts            ← Physical inventory CRUD (implemented)
+    │   └── prices.ts               ← Price history CRUD (implemented)
+    ├── pricing/
+    │   └── algorithm.ts            ← Pricing algorithm: lowest-listing anchor (implemented)
+    └── tcgplayer/
+        ├── fetchPrices.ts          ← Active listings API (implemented), sold listings (TODO)
+        ├── fetchCardInfo.ts        ← Card metadata fetching (TODO)
+        └── formatters.ts           ← Condition/finish format conversion for TCGplayer API (implemented)
+```
 
 ### Data Flow
 
 ```
-collectionServer (pick card)
-        ↓ tcgplayer_id + condition
+card-server (pick next unlisted card)
+        ↓ inventory_id, tcgplayer_id, condition, finish
 Telegram bot (request & receive photos)
         ↓ photo file paths
-cardInfoServer (get name, set, rarity, price)
-        ↓ card info + price estimate
+card-server (fetch price from TCGplayer if stale, run pricing algorithm)
+        ↓ card info + price estimate + confidence + reasoning
 ebay-mcp (create inventory item + offer)
         ↓ listing ID
-collectionServer (mark as listed)
+card-server (mark as listed with eBay listing ID)
 ```
+
+## Database Schema (card-server)
+
+4 tables in SQLite, migrated from MySQL. Designed with proper foreign keys replacing the old hashed-SKU approach.
+
+```sql
+-- cards: canonical card metadata from TCGplayer (keyed by tcgplayer product ID)
+-- skus: card variants (card_id + condition + finish + specialty_one + specialty_two) with UNIQUE composite
+-- inventory: physical cards owned, each pointing to a SKU + optional pricing_sku_id override
+-- prices: historical price estimates per SKU per date (composite PK: sku_id + calculation_date)
+```
+
+### Key design decisions:
+- **`skus` uses auto-increment PK + composite UNIQUE** instead of hashing the composite key
+- **`inventory.pricing_sku_id`** allows pricing a borderline card against a different condition (e.g., price an LP-NM card as NM)
+- **`inventory.tags`** is a comma-separated string for card-specific hidden details (hidden creases, marks, trade history). Intentionally not normalized — the set of possible tags is variable and evolving.
+- **`lotsmaster` and `sellerslist`** from the original MySQL DB are omitted — not needed for the listing workflow.
+
+### SKU field meanings:
+- **`condition`**: NM, LP, MP, HP, DMG. Also supports in-between grades (LP-NM, MP-LP, HP-MP) for internal tracking, but TCGplayer only supports the primary conditions for listing.
+- **`finish`**: Regular, Holo, Reverse-Holo.
+- **`specialty_one`**: Reproducible TCGplayer-level variants that affect the product ID or finish on TCGplayer: "First Edition", "None". These are NOT edge cases — TCGplayer sells them separately with their own listings/solds data.
+- **`specialty_two`**: Reproducible but NOT represented on TCGplayer: graded cards (PSA 10, CGC 9), specific known errors. These DO trigger manual pricing review.
+- **`tags`** (on inventory, not SKU): Unique to the physical card — hidden crease, surface marks, bought as trade, etc.
+
+## TCGplayer API Integration
+
+### Listings API (implemented)
+- **Endpoint:** `POST https://mp-search-api.tcgplayer.com/v1/product/{id}/listings?mpfev=2163`
+- **Auth:** None (browser-mimicking headers)
+- **Payload:** JSON with filters for condition, finish ("printing"), language, seller status. Sorted by `price+shipping` ascending.
+- **Pagination:** `from` (offset) and `size` (max 50 per request)
+- **Seller filtering:** Only include sellers with rating > 80 and sales > 30 (or "X+" format)
+- **Format conversion:** Internal codes must be converted to TCGplayer strings:
+  - Conditions: `NM` → `"Near Mint"`, `LP` → `"Lightly Played"`, etc.
+  - Finishes: `Holo` → `"Holofoil"`, `Reverse-Holo` → `"Reverse Holofoil"`, `Regular` → `"Normal"`
+  - 1st Edition: `Holo` + `First Edition` → `"1st Edition Holofoil"`
+  - WOTC sets (Base Set Shadowless, Jungle, Fossil, Gym, Neo, Team Rocket): `Holo` → `"Unlimited Holofoil"`, `Regular` → `"Unlimited"`
+
+### Sold Listings API (TODO)
+- Endpoint and payload format still need to be identified from TCGplayer's frontend.
+
+### Card Info API (TODO)
+- For fetching card metadata (name, set, rarity, etc.) by product ID.
+
+## Pricing Algorithm
+
+### Philosophy
+- **Goal:** Maximum profit. Pricing aggressiveness should be variable.
+- **Primary metric:** Lowest active TCGplayer listing price. Works well for liquid NM modern cards.
+- **Secondary metric:** Average of recent sold prices. Takes precedence for illiquid cards.
+- **TCGplayer "market price" is NOT used.** It is unreliable.
+- **Fees:** Both TCGplayer and eBay take ~15%. Stored as `FEE_RATE = 0.15`.
+
+### Current algorithm (v1: `lowest-listing-v1`)
+1. If active listings exist → anchor on lowest listing (price + shipping combined)
+2. If sold data also exists → compare. If they diverge >30% and solds are lower, use sold average instead (listings may be stale). Flag for review.
+3. If no active listings → fall back to sold average
+4. If no data at all → null price, flagged as unpriceable
+5. Edge case flags: high value (>$50), specialty_two cards (graded/errors), few solds (<3) → lower confidence / manual review
+
+### Liquid value formula
+```
+liquid_value = (sell_price * 0.85) - shipping_cost
+```
+Where shipping = $1 for cards $25 and under, $5 for cards over $25.
+
+### Cross-condition extrapolation
+When no data exists for a specific condition, extrapolate from another condition of the same card:
+- **30% discount per full condition tier, compounding:** NM $10 → LP $7.00 → MP $4.90 → HP $3.43
+- **In-between conditions = average of neighbors:** LP-NM = (NM + LP) / 2
+- All extrapolation logic is in one function (`extrapolateAcrossConditions` in `algorithm.ts`) for easy modification
+- Always flagged for manual review with max 35% confidence
+
+### Future pricing versions
+- **v2:** Factor in sales velocity (sales per 48hr window). If a card sells frequently, price above lowest listing since it'll sell anyway. If it sells rarely, match or undercut.
+- **v3 (LLM sampling):** TCGplayer sales, TCGplayer listings, eBay solds, and eBay listings are all separate tools the LLM calls to price edge cases. The model reasons about the data rather than following rules.
 
 ## Tech Stack
 
-- **Runtime:** Node.js with TypeScript (ES2022 target)
+- **Runtime:** Node.js with TypeScript (ES2022 target, ESM modules)
 - **MCP SDK:** `@modelcontextprotocol/sdk` — server & client implementations
 - **Database:** SQLite via `better-sqlite3` — local, zero-config, single-file DB
-- **Card Data API:** Pokemon TCG API (`pokemontcg.io`) — free, open, JSON
+- **Card Data:** TCGplayer internal search API — web requests for listings, solds, card info
 - **Telegram:** `node-telegram-bot-api` — bot for photo request/receive
 - **eBay:** `ebay-mcp` — open-source MCP server wrapping eBay Sell APIs
-- **Validation:** Zod — runtime type checking for tool inputs/outputs
+- **Validation:** Zod — runtime type checking for MCP tool inputs/outputs
 - **Config:** dotenv — environment variable management
-
-## Key Concepts (Educational Reference)
-
-### MCP Servers
-MCP servers expose **tools** (functions an agent can call) and **resources** (data an agent can read). They communicate over STDIO or HTTP. Each server is a separate process.
-
-### MCP Sampling (Future)
-Sampling lets an MCP **server** request an LLM completion from the **client**. This inverts the usual flow — instead of the agent calling the server, the server asks the agent's LLM for help. Use cases here:
-- Pricing analysis (cardInfoServer asks LLM to evaluate multiple price sources)
-- Listing description generation (cardInfoServer asks LLM to write compelling copy)
-- Quality review (agent asks LLM to review listing before submission)
-
-**Current design:** Sampling hooks exist as `SamplingHook<TInput, TOutput>` interfaces with `samplingEnabled: boolean`. Set to `false` now; flip to `true` and implement `sampling/createMessage` later.
-
-### Agent Orchestrator
-The orchestrator is a **state machine** with states:
-`IDLE → PICK_CARD → REQUEST_PHOTOS → WAIT_PHOTOS → GATHER_INFO → BUILD_LISTING → CREATE_LISTING → MARK_LISTED → PICK_CARD`
-
-Each state has entry actions, exit conditions, error handlers, and sampling hooks.
-
-## Database Schema
-
-```sql
--- cards table in collection.db
-CREATE TABLE cards (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tcgplayer_id TEXT UNIQUE NOT NULL,
-    condition TEXT NOT NULL,          -- NM, LP, MP, HP, DMG
-    special_notes TEXT,               -- hidden details, play wear
-    status TEXT DEFAULT 'unlisted',   -- unlisted, photo_requested, listed, skipped, sold
-    ebay_listing_id TEXT,
-    listed_at DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
 
 ## Environment Variables
 
@@ -97,53 +155,55 @@ TELEGRAM_CHAT_ID=         # Your personal chat ID
 EBAY_CLIENT_ID=           # eBay developer credentials
 EBAY_CLIENT_SECRET=       # eBay developer credentials
 EBAY_ENVIRONMENT=sandbox  # 'sandbox' or 'production'
-POKEMON_TCG_API_KEY=      # Optional, for higher rate limits
 ```
 
 ## Commands
 
 ```bash
-npm run build          # Compile TypeScript
-npm run start          # Start the listing workflow
-npm run status         # Show collection stats
-npm run import <file>  # Import cards from CSV/JSON
-npm run server:collection  # Run collectionServer standalone
-npm run server:cardinfo    # Run cardInfoServer standalone
-npm run test           # Run all tests
+# Parent project
+npm run build              # Compile TypeScript
+npm run start              # Start the listing workflow
+npm run test               # Run all tests
+
+# card-server (standalone)
+cd card-server
+npm run build              # Compile TypeScript
+npm run start              # Run MCP server via STDIO
+npm run test               # Run card-server tests
 ```
 
 ## Design Principles
 
-1. **Sampling-ready:** Every decision point has a `SamplingHook` interface. Current implementation uses templates/rules; future versions use LLM sampling.
-2. **Data source abstraction:** Card data and pricing use provider interfaces (`PriceProvider`, etc.) so sources can be swapped without changing the orchestrator.
+1. **Standalone card-server:** The MCP server in `card-server/` is independently deployable. It has its own package.json, tsconfig, and no imports from the parent project.
+2. **Two-file agent interface:** The agent only calls `collectionService.ts` and `pricingService.ts`. All CRUD helpers and TCGplayer fetchers are internal.
 3. **Idempotent operations:** Re-running the agent skips already-listed cards. No duplicate listings.
-4. **Auditable:** Every state transition and tool call is logged with timestamps.
-5. **Graceful degradation:** If the Pokemon TCG API is down, the agent skips info gathering and asks you via Telegram. If eBay fails, it queues the card for retry.
+4. **Pricing transparency:** Every price computation returns a human-readable `reasoning` string explaining the decision.
+5. **Graceful degradation:** If TCGplayer is unreachable, the agent flags the card for manual pricing. If eBay fails, it queues for retry.
 
-## File Structure
+## Next Steps
 
-```
-TcgAutoList/
-├── src/
-│   ├── servers/
-│   │   ├── collection/    # collectionServer MCP
-│   │   └── cardinfo/      # cardInfoServer MCP
-│   ├── telegram/          # Telegram bot module
-│   ├── agent/             # Orchestrator
-│   ├── ebay/              # eBay adapter
-│   ├── config.ts          # Central config
-│   └── index.ts           # CLI entry point
-├── data/                  # SQLite database
-├── photos/                # Downloaded card photos
-├── claude.md              # This file
-├── .env.example
-├── package.json
-└── tsconfig.json
-```
+### Immediate (get card-server fully functional)
+1. **Implement `fetchSoldListings`** — Identify TCGplayer's sold listings API endpoint from browser network inspector. Port the request format like was done for active listings.
+2. **Implement `fetchCardInfo`** — Fetch card metadata (name, set, rarity, etc.) from TCGplayer by product ID. This enables `collectionService.getCard()` auto-fetch when a card isn't in the DB yet.
+3. **Write migration script** (`card-server/src/migrate.ts`) — Read the MySQL dump (`database-dump.sql`) and populate the new SQLite schema. Map: `cardinfo` → `cards`, `skutable` → `skus`, `actualinventory` → `inventory`, `cardprices` → `prices`.
+4. **Run `npm install` and verify TypeScript compilation** in `card-server/`.
+5. **Write tests** for CRUD helpers and pricing algorithm.
+
+### Medium-term (integrate with parent project)
+6. **Wire card-server into the parent project's MCP client** — The orchestrator connects to card-server via STDIO and calls its tools.
+7. **Build the Telegram bot module** — Photo request/receive workflow.
+8. **Build the eBay listing builder** — Takes an `InventoryDetail` and constructs an eBay listing via `ebay-mcp`.
+9. **Build the orchestrator state machine** — IDLE → PICK_CARD → REQUEST_PHOTOS → WAIT_PHOTOS → GATHER_INFO → BUILD_LISTING → CREATE_LISTING → MARK_LISTED → repeat.
+
+### Long-term (advanced pricing + optimization)
+10. **Pricing v2:** Sales velocity analysis — track sales per 48hr window to decide if pricing above lowest listing is viable.
+11. **Pricing v3 (LLM sampling):** TCGplayer solds, TCGplayer listings, eBay solds, eBay listings as separate MCP tools the LLM reasons over for edge cases.
+12. **In-between condition listing choice** — When a card is LP-NM, the user chooses whether to list as LP or NM on TCGplayer/eBay. Build a tool or prompt for this decision.
+13. **Bulk re-pricing** — Periodically re-fetch prices for cards with stale `latest_calc_date` (>14 days old, matching the SQL query in `QuickCollectionValueFinder.py`).
 
 ## Common Tasks for AI Assistants
 
-- **Adding a new MCP tool:** Add tool definition in the server's `index.ts`, implement handler, add Zod schema in `types.ts`, write test.
-- **Changing the pricing strategy:** Implement `PriceProvider` interface in `src/servers/cardinfo/pricing.ts`.
-- **Enabling sampling at a hook point:** Set `samplingEnabled: true` on the hook, implement `sampling/createMessage` call in the hook's `process()` method.
-- **Adding a new agent state:** Add state to the enum in `state.ts`, implement entry/exit/error in `orchestrator.ts`.
+- **Adding a new MCP tool:** Add Zod schema in `types.ts`, add handler in `collectionService.ts` or `pricingService.ts`, register in `index.ts`.
+- **Changing the pricing algorithm:** Edit `helpers/pricing/algorithm.ts`. The `computePrice()` function and the constants above it are the only things to change. The extrapolation model lives entirely in `extrapolateAcrossConditions()`.
+- **Adding a new TCGplayer data source:** Add a fetch function in `helpers/tcgplayer/`, add format conversions in `formatters.ts`, wire it into the relevant service.
+- **Changing condition/finish mappings:** Edit `helpers/tcgplayer/formatters.ts`. All TCGplayer API format conversions live there.
