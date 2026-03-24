@@ -225,6 +225,22 @@ function parseNumeric(val: unknown): number | null {
 
 // ─── TCGplayer Sales API ─────────────────────────────────────
 
+/** Headers for the sales/catalog API (mpapi.tcgplayer.com). */
+const MPAPI_HEADERS: Record<string, string> = {
+  'accept': 'application/json, text/plain, */*',
+  'accept-language': 'en-US,en;q=0.9',
+  'content-type': 'application/json',
+  'origin': 'https://www.tcgplayer.com',
+  'referer': 'https://www.tcgplayer.com/',
+  'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"Windows"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+};
+
 /**
  * Sales API condition filter IDs.
  * The sales endpoint requires integer IDs, not string names.
@@ -257,47 +273,99 @@ const SALES_VARIANT_IDS: Record<string, number> = {
 };
 
 /**
+ * TCGplayer auth cookie for accessing full sales data.
+ * Without this, the API returns max 5 results. With it, returns 25 per page
+ * with full pagination support.
+ *
+ * Set via TCGPLAYER_AUTH_COOKIE env var (the TCGAuthTicket_Production value).
+ */
+function getAuthCookie(): string | null {
+  return process.env.TCGPLAYER_AUTH_COOKIE ?? null;
+}
+
+/**
  * Fetch recent sold listings from TCGplayer's sales API.
  *
  * Endpoint: POST https://mpapi.tcgplayer.com/v2/product/{id}/latestsales
  *
- * This API returns a maximum of 5 results per request, even with limit > 5.
- * When no condition filter is specified, it returns the 5 most recent sales
- * across all conditions. To get more data, we query each condition separately
- * (up to 25 total: 5 conditions x 5 results each).
+ * With auth cookie: returns 25 per page with pagination (offset/limit).
+ * Without auth cookie: returns max 5 results, no pagination.
+ *
+ * When no condition is specified and no auth cookie is available,
+ * queries each condition separately to maximize data (5 conditions x 5 = 25).
  *
  * @param tcgplayerId - TCGplayer product ID
- * @param condition   - Internal condition (e.g., "NM"). If omitted, fetches all conditions separately.
+ * @param condition   - Internal condition (e.g., "NM"). If omitted, fetches all conditions.
  * @param finish      - Internal finish (e.g., "Holo"). Maps to variant ID filter.
+ * @param maxResults  - Max total results to fetch across pages (default 25).
  */
 export async function fetchSoldListings(
   tcgplayerId: string,
   condition?: string,
   finish?: string,
+  maxResults = 25,
 ): Promise<TcgPlayerSoldListing[]> {
-  // If no condition specified, query each condition separately to maximize data
+  const authCookie = getAuthCookie();
+
+  // With auth: single paginated query (much more data)
+  if (authCookie) {
+    return fetchSoldListingsPaginated(tcgplayerId, condition, finish, maxResults, authCookie);
+  }
+
+  // Without auth: 5 results max per request, so fan out by condition
   if (!condition) {
     const conditions = ['NM', 'LP', 'MP', 'HP', 'DMG'];
-    const promises = conditions.map(c => fetchSoldListingsForCondition(tcgplayerId, c, finish));
+    const promises = conditions.map(c => fetchSoldListingsPage(tcgplayerId, c, finish, 0));
     const results = await Promise.all(promises);
     return results.flat();
   }
 
-  return fetchSoldListingsForCondition(tcgplayerId, condition, finish);
+  return fetchSoldListingsPage(tcgplayerId, condition, finish, 0);
 }
 
 /**
- * Fetch sold listings for a specific condition.
+ * Fetch sold listings with pagination (requires auth cookie).
+ * Fetches multiple pages up to maxResults.
  */
-async function fetchSoldListingsForCondition(
+async function fetchSoldListingsPaginated(
   tcgplayerId: string,
-  condition: string,
-  finish?: string,
+  condition: string | undefined,
+  finish: string | undefined,
+  maxResults: number,
+  authCookie: string,
 ): Promise<TcgPlayerSoldListing[]> {
-  const url = `https://mpapi.tcgplayer.com/v2/product/${tcgplayerId}/latestsales`;
+  const allResults: TcgPlayerSoldListing[] = [];
+  const pageSize = 25;
+  let offset = 0;
 
-  const conditionId = SALES_CONDITION_IDS[condition];
-  const conditions = conditionId ? [conditionId] : [];
+  while (allResults.length < maxResults) {
+    const page = await fetchSoldListingsPage(tcgplayerId, condition, finish, offset, authCookie);
+    if (page.length === 0) break;
+    allResults.push(...page);
+    offset += pageSize;
+    if (page.length < pageSize) break; // last page
+  }
+
+  return allResults.slice(0, maxResults);
+}
+
+/**
+ * Fetch a single page of sold listings.
+ */
+async function fetchSoldListingsPage(
+  tcgplayerId: string,
+  condition: string | undefined,
+  finish: string | undefined,
+  offset: number,
+  authCookie?: string,
+): Promise<TcgPlayerSoldListing[]> {
+  const url = `https://mpapi.tcgplayer.com/v2/product/${tcgplayerId}/latestsales?mpfev=4952`;
+
+  const conditions: number[] = [];
+  if (condition) {
+    const conditionId = SALES_CONDITION_IDS[condition];
+    if (conditionId) conditions.push(conditionId);
+  }
 
   const variants: number[] = [];
   if (finish) {
@@ -311,16 +379,18 @@ async function fetchSoldListingsForCondition(
     conditions,
     languages: [1], // English
     limit: 25,
-    offset: 0,
+    offset,
   };
+
+  const headers: Record<string, string> = { ...MPAPI_HEADERS };
+  if (authCookie) {
+    headers['cookie'] = `TCGAuthTicket_Production=${authCookie}`;
+  }
 
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        ...TCGPLAYER_HEADERS,
-        'authority': 'mpapi.tcgplayer.com',
-      },
+      headers,
       body: JSON.stringify(payload),
     });
 
@@ -334,15 +404,14 @@ async function fetchSoldListingsForCondition(
 
     return json.data.map((sale: any) => ({
       tcgplayer_id: tcgplayerId,
-      condition: parseConditionFromSalesApi(sale.condition ?? condition),
+      condition: parseConditionFromSalesApi(sale.condition ?? condition ?? ''),
       finish: parseFinishFromSalesApi(sale.variant ?? ''),
       sold_price: (sale.purchasePrice ?? 0) + (sale.shippingPrice ?? 0),
       sold_date: sale.orderDate ?? '',
-      seller_name: null, // Sales API doesn't include seller name
+      seller_name: null,
     }));
   } catch (err) {
     if (err instanceof Error && err.message.includes('TCGplayer sales API error')) throw err;
-    // Network errors — return empty rather than crashing
     return [];
   }
 }
@@ -375,5 +444,62 @@ function parseFinishFromSalesApi(variant: string): string {
     'Unlimited': 'Regular',
   };
   return map[variant] ?? variant;
+}
+
+// ─── Set Catalog API ─────────────────────────────────────────
+
+export interface TcgPlayerSetInfo {
+  set_id: number;
+  name: string;
+  clean_name: string;
+  url_name: string;
+  abbreviation: string;
+  release_date: string | null;
+  is_supplemental: boolean;
+  active: boolean;
+  description: string | null;
+}
+
+/**
+ * Fetch set metadata from TCGplayer's catalog API.
+ *
+ * Endpoint: GET https://mpapi.tcgplayer.com/v2/Catalog/SetName/{setId}
+ * No auth required.
+ *
+ * @param setId - TCGplayer set ID (from the search API's `setId` field)
+ */
+export async function fetchSetInfo(setId: number): Promise<TcgPlayerSetInfo | null> {
+  const url = `https://mpapi.tcgplayer.com/v2/Catalog/SetName/${setId}?mpfev=4952`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: MPAPI_HEADERS,
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`TCGplayer catalog API error: ${response.status} ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    const result = json?.results?.[0];
+    if (!result) return null;
+
+    return {
+      set_id: result.setNameId,
+      name: result.name,
+      clean_name: result.cleanSetName,
+      url_name: result.urlName,
+      abbreviation: result.abbreviation ?? '',
+      release_date: result.releaseDate ?? null,
+      is_supplemental: result.isSupplemental ?? false,
+      active: result.active ?? true,
+      description: result.setDescription ?? null,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('TCGplayer catalog API error')) throw err;
+    return null;
+  }
 }
 

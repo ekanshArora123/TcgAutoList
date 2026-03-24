@@ -97,15 +97,16 @@ card-server (mark as listed with eBay listing ID)
   - WOTC sets (Base Set Shadowless, Jungle, Fossil, Gym, Neo, Team Rocket): `Holo` → `"Unlimited Holofoil"`, `Regular` → `"Unlimited"`
 
 ### Sold Listings API (implemented)
-- **Endpoint:** `POST https://mpapi.tcgplayer.com/v2/product/{id}/latestsales`
-- **Auth:** None (browser-mimicking headers, authority: `mpapi.tcgplayer.com`)
+- **Endpoint:** `POST https://mpapi.tcgplayer.com/v2/product/{id}/latestsales?mpfev=4952`
+- **Auth:** `TCGAuthTicket_Production` cookie required for full access (25/page with pagination). Without auth: max 5 results, no pagination.
 - **Payload:** `{ variants: number[], listingType: "All", conditions: number[], languages: number[], limit: 25, offset: 0 }`
-- **Max results:** 5 per request (hard server-side limit, ignores `limit` and `offset` params)
-- **Strategy:** Query each condition separately to get up to 25 results (5 conditions x 5 each)
+- **Pagination:** With auth cookie, `offset` and `limit` work properly. `previousPage`/`nextPage` fields indicate more pages.
+- **Fallback (no auth):** Query each condition separately to get up to 25 results (5 conditions x 5 each)
 - **Condition IDs:** 1=Near Mint, 2=Lightly Played, 3=Moderately Played, 4=Heavily Played, 5=Damaged
 - **Variant (finish) IDs:** 10=Normal, 11=Holofoil, 77=Reverse Holofoil (product-specific — only IDs valid for that product work)
 - **Language IDs:** 1=English
 - **Response fields per sale:** `condition`, `variant`, `language`, `quantity`, `title`, `listingType`, `purchasePrice`, `shippingPrice`, `orderDate`
+- **Auth cookie source:** `TCGPLAYER_AUTH_COOKIE` env var = the `TCGAuthTicket_Production` cookie value from browser after logging into tcgplayer.com
 
 ### Card Info API (implemented)
 - **Endpoint:** `POST https://mp-search-api.tcgplayer.com/v1/search/request?q=&isList=false&mpfev=2163`
@@ -120,6 +121,12 @@ card-server (mark as listed with eBay listing ID)
 - **Endpoint:** `GET https://mpapi.tcgplayer.com/v2/product/{id}/pricepoints`
 - **Returns:** `[{ printingType, marketPrice, buylistMarketPrice, listedMedianPrice }]` per finish
 - **Note:** Not currently used — market price is unreliable per pricing philosophy
+
+### Set Catalog API (implemented)
+- **Endpoint:** `GET https://mpapi.tcgplayer.com/v2/Catalog/SetName/{setId}?mpfev=4952`
+- **Auth:** None
+- **Returns:** `{ setNameId, name, cleanSetName, urlName, abbreviation, releaseDate, isSupplemental, active, setDescription }`
+- **Usage:** The `setId` from the search API response maps directly to this endpoint (e.g., 604 = Base Set)
 
 ## Pricing Algorithm
 
@@ -174,6 +181,7 @@ TELEGRAM_CHAT_ID=         # Your personal chat ID
 EBAY_CLIENT_ID=           # eBay developer credentials
 EBAY_CLIENT_SECRET=       # eBay developer credentials
 EBAY_ENVIRONMENT=sandbox  # 'sandbox' or 'production'
+TCGPLAYER_AUTH_COOKIE=    # Optional: TCGAuthTicket_Production cookie for full sales data
 ```
 
 ## Commands
