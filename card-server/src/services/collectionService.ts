@@ -51,22 +51,20 @@ export class CollectionService {
     const fetched = await fetchCardInfo(tcgplayerId);
     if (!fetched) return null;
 
+    const { metadata, priceInfo } = fetched;
+
     const card = this.cards.upsert({
-      id: fetched.tcgplayer_id,
-      card_name: fetched.card_name,
-      set_name: fetched.set_name,
-      product_line: fetched.product_line,
-      card_type: fetched.card_type,
-      visual_layout: fetched.visual_layout,
-      rarity: fetched.rarity,
-      card_number: fetched.card_number,
-      product_type: fetched.product_type,
-      era: fetched.era,
-      set_type: fetched.set_type,
+      id: metadata.tcgplayer_id,
+      card_name: metadata.card_name,
+      set_name: metadata.set_name,
+      product_line: metadata.product_line,
+      card_type: metadata.card_type,
+      rarity: metadata.rarity,
+      card_number: metadata.card_number,
     });
 
     // Pre-create SKU entries for known conditions
-    for (const variant of fetched.available_conditions) {
+    for (const variant of priceInfo.available_conditions) {
       this.skus.getOrCreate({
         card_id: card.id,
         condition: variant.condition as any,

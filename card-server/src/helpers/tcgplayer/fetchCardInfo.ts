@@ -4,28 +4,22 @@
  * Uses TCGplayer's internal search API:
  *   POST https://mp-search-api.tcgplayer.com/v1/search/request
  *
- * This returns rich card metadata including name, set, rarity, card number,
- * attacks, HP, type, and available conditions/finishes with listing counts.
+ * Returns two separate objects:
+ *   - TcgPlayerCardMetadata: Card identity info (name, set, rarity, attacks, etc.)
+ *   - TcgPlayerCardPriceInfo: Market/pricing snapshot (market price, lowest price, listing counts)
  */
 
-export interface TcgPlayerCardData {
+// ─── Types ───────────────────────────────────────────────────
+
+/** Card identity and attributes — stable, rarely changes. */
+export interface TcgPlayerCardMetadata {
   tcgplayer_id: string;
   card_name: string;
   set_name: string | null;
   product_line: string;
   card_type: string | null;
-  visual_layout: string | null;
   rarity: string | null;
   card_number: string | null;
-  product_type: string | null;
-  era: string | null;
-  set_type: string | null;
-  available_conditions: {
-    condition: string;
-    finish: string;
-    listing_count: number;
-  }[];
-  // Extra metadata from customAttributes
   hp: string | null;
   stage: string | null;
   description: string | null;
@@ -36,12 +30,30 @@ export interface TcgPlayerCardData {
   flavor_text: string | null;
   energy_type: string[];
   release_date: string | null;
+  foil_only: boolean;
+}
+
+/** Price/market snapshot — changes frequently. */
+export interface TcgPlayerCardPriceInfo {
+  tcgplayer_id: string;
   market_price: number | null;
   lowest_price: number | null;
   lowest_price_with_shipping: number | null;
   total_listings: number | null;
-  foil_only: boolean;
+  available_conditions: {
+    condition: string;
+    finish: string;
+    listing_count: number;
+  }[];
 }
+
+/** Combined result from the search API call. */
+export interface TcgPlayerCardFetchResult {
+  metadata: TcgPlayerCardMetadata;
+  priceInfo: TcgPlayerCardPriceInfo;
+}
+
+// ─── Headers ─────────────────────────────────────────────────
 
 const SEARCH_API_HEADERS: Record<string, string> = {
   'authority': 'mp-search-api.tcgplayer.com',
@@ -59,16 +71,16 @@ const SEARCH_API_HEADERS: Record<string, string> = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
 };
 
+// ─── Main Fetch ──────────────────────────────────────────────
+
 /**
- * Fetch card metadata from TCGplayer for a given product ID.
- *
- * Uses the search API with a productId filter to retrieve full card details
- * including name, set, rarity, card attributes, and available conditions.
+ * Fetch card data from TCGplayer for a given product ID.
+ * Returns metadata and price info as separate objects.
  *
  * @param tcgplayerId - TCGplayer product ID
- * @returns Card data or null if not found
+ * @returns Both metadata and price info, or null if not found
  */
-export async function fetchCardInfo(tcgplayerId: string): Promise<TcgPlayerCardData | null> {
+export async function fetchCardInfo(tcgplayerId: string): Promise<TcgPlayerCardFetchResult | null> {
   const url = 'https://mp-search-api.tcgplayer.com/v1/search/request?q=&isList=false&mpfev=2163';
 
   const payload = {
@@ -112,28 +124,20 @@ export async function fetchCardInfo(tcgplayerId: string): Promise<TcgPlayerCardD
     const attrs = product.customAttributes ?? {};
     const aggs = searchResult.aggregations ?? {};
 
-    // Build available conditions from aggregation data
-    const availableConditions = buildAvailableConditions(aggs);
-
     // Extract attacks (up to 4)
     const attacks: string[] = [];
     for (const key of ['attack1', 'attack2', 'attack3', 'attack4']) {
       if (attrs[key]) attacks.push(stripHtml(attrs[key]));
     }
 
-    return {
+    const metadata: TcgPlayerCardMetadata = {
       tcgplayer_id: tcgplayerId,
       card_name: product.productName ?? '',
       set_name: product.setName ?? null,
       product_line: product.productLineName ?? 'Pokemon',
       card_type: attrs.cardType?.[0] ?? null,
-      visual_layout: null, // Not reliably available from search API
       rarity: product.rarityName ?? null,
       card_number: attrs.number ?? null,
-      product_type: null, // Could use productTypeId but it's numeric
-      era: null, // Not directly available; could be derived from release date
-      set_type: null, // Not available from this endpoint
-      available_conditions: availableConditions,
       hp: attrs.hp ?? null,
       stage: attrs.stage ?? null,
       description: attrs.description ? stripHtml(attrs.description) : null,
@@ -144,12 +148,19 @@ export async function fetchCardInfo(tcgplayerId: string): Promise<TcgPlayerCardD
       flavor_text: attrs.flavorText ? stripHtml(attrs.flavorText) : null,
       energy_type: attrs.energyType ?? [],
       release_date: attrs.releaseDate ?? null,
+      foil_only: product.foilOnly ?? false,
+    };
+
+    const priceInfo: TcgPlayerCardPriceInfo = {
+      tcgplayer_id: tcgplayerId,
       market_price: product.marketPrice ?? null,
       lowest_price: product.lowestPrice ?? null,
       lowest_price_with_shipping: product.lowestPriceWithShipping ?? null,
       total_listings: product.totalListings ?? null,
-      foil_only: product.foilOnly ?? false,
+      available_conditions: buildAvailableConditions(aggs),
     };
+
+    return { metadata, priceInfo };
   } catch (err) {
     if (err instanceof Error && err.message.includes('TCGplayer search API error')) throw err;
     return null;
@@ -157,14 +168,30 @@ export async function fetchCardInfo(tcgplayerId: string): Promise<TcgPlayerCardD
 }
 
 /**
- * Fetch card metadata for multiple product IDs in batch.
- * Runs requests in parallel with optional delay between batches for rate limiting.
+ * Fetch just card metadata (no price info). Convenience wrapper.
+ */
+export async function fetchCardMetadata(tcgplayerId: string): Promise<TcgPlayerCardMetadata | null> {
+  const result = await fetchCardInfo(tcgplayerId);
+  return result?.metadata ?? null;
+}
+
+/**
+ * Fetch just price info snapshot. Convenience wrapper.
+ */
+export async function fetchCardPriceInfo(tcgplayerId: string): Promise<TcgPlayerCardPriceInfo | null> {
+  const result = await fetchCardInfo(tcgplayerId);
+  return result?.priceInfo ?? null;
+}
+
+/**
+ * Fetch card data for multiple product IDs in batch.
+ * Sequential with configurable delay for rate limiting.
  */
 export async function fetchCardInfoBatch(
   tcgplayerIds: string[],
   delayMs = 100,
-): Promise<(TcgPlayerCardData | null)[]> {
-  const results: (TcgPlayerCardData | null)[] = [];
+): Promise<(TcgPlayerCardFetchResult | null)[]> {
+  const results: (TcgPlayerCardFetchResult | null)[] = [];
 
   for (let i = 0; i < tcgplayerIds.length; i++) {
     if (i > 0 && delayMs > 0) {
@@ -180,7 +207,6 @@ export async function fetchCardInfoBatch(
 
 /**
  * Build available condition/finish combos from search API aggregation data.
- * The API returns counts of listings per condition and per printing (finish).
  */
 function buildAvailableConditions(
   aggs: Record<string, { value: string; count: number }[]>,
@@ -190,9 +216,8 @@ function buildAvailableConditions(
 
   if (conditions.length === 0 || printings.length === 0) return [];
 
-  // The API doesn't give us per-condition-per-finish counts directly,
-  // so we create the cross product. The listing_count is the condition count
-  // (best approximation without per-combo data).
+  // The API doesn't give per-condition-per-finish counts directly,
+  // so we create the cross product. listing_count is the condition count.
   const results: { condition: string; finish: string; listing_count: number }[] = [];
 
   for (const cond of conditions) {
@@ -232,9 +257,6 @@ function parseFinishFromSearch(printing: string): string {
   return map[printing] ?? printing;
 }
 
-/**
- * Strip basic HTML tags from TCGplayer attribute strings.
- */
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, '').replace(/\r\n/g, ' ').replace(/\s+/g, ' ').trim();
 }
