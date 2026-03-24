@@ -223,20 +223,157 @@ function parseNumeric(val: unknown): number | null {
   return null;
 }
 
-// ─── Sold Listings (TODO) ────────────────────────────────────
+// ─── TCGplayer Sales API ─────────────────────────────────────
 
 /**
- * Fetch recent sold listings for a product from TCGplayer.
+ * Sales API condition filter IDs.
+ * The sales endpoint requires integer IDs, not string names.
+ */
+const SALES_CONDITION_IDS: Record<string, number> = {
+  'NM': 1,
+  'Near Mint': 1,
+  'LP': 2,
+  'Lightly Played': 2,
+  'MP': 3,
+  'Moderately Played': 3,
+  'HP': 4,
+  'Heavily Played': 4,
+  'DMG': 5,
+  'DM': 5,
+  'Damaged': 5,
+};
+
+/**
+ * Sales API variant (finish) filter IDs.
+ * These are TCGplayer-internal IDs for the "printing" variants.
+ */
+const SALES_VARIANT_IDS: Record<string, number> = {
+  'Normal': 10,
+  'Regular': 10,
+  'Holofoil': 11,
+  'Holo': 11,
+  'Reverse Holofoil': 77,
+  'Reverse-Holo': 77,
+};
+
+/**
+ * Fetch recent sold listings from TCGplayer's sales API.
  *
- * TODO: Implement. The sales API endpoint and payload format
- * still need to be identified from TCGplayer's frontend.
+ * Endpoint: POST https://mpapi.tcgplayer.com/v2/product/{id}/latestsales
+ *
+ * This API returns a maximum of 5 results per request, even with limit > 5.
+ * When no condition filter is specified, it returns the 5 most recent sales
+ * across all conditions. To get more data, we query each condition separately
+ * (up to 25 total: 5 conditions x 5 results each).
+ *
+ * @param tcgplayerId - TCGplayer product ID
+ * @param condition   - Internal condition (e.g., "NM"). If omitted, fetches all conditions separately.
+ * @param finish      - Internal finish (e.g., "Holo"). Maps to variant ID filter.
  */
 export async function fetchSoldListings(
   tcgplayerId: string,
   condition?: string,
   finish?: string,
 ): Promise<TcgPlayerSoldListing[]> {
-  // TODO: implement sales fetching
-  return [];
+  // If no condition specified, query each condition separately to maximize data
+  if (!condition) {
+    const conditions = ['NM', 'LP', 'MP', 'HP', 'DMG'];
+    const promises = conditions.map(c => fetchSoldListingsForCondition(tcgplayerId, c, finish));
+    const results = await Promise.all(promises);
+    return results.flat();
+  }
+
+  return fetchSoldListingsForCondition(tcgplayerId, condition, finish);
+}
+
+/**
+ * Fetch sold listings for a specific condition.
+ */
+async function fetchSoldListingsForCondition(
+  tcgplayerId: string,
+  condition: string,
+  finish?: string,
+): Promise<TcgPlayerSoldListing[]> {
+  const url = `https://mpapi.tcgplayer.com/v2/product/${tcgplayerId}/latestsales`;
+
+  const conditionId = SALES_CONDITION_IDS[condition];
+  const conditions = conditionId ? [conditionId] : [];
+
+  const variants: number[] = [];
+  if (finish) {
+    const variantId = SALES_VARIANT_IDS[finish];
+    if (variantId) variants.push(variantId);
+  }
+
+  const payload = {
+    variants,
+    listingType: 'All',
+    conditions,
+    languages: [1], // English
+    limit: 25,
+    offset: 0,
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...TCGPLAYER_HEADERS,
+        'authority': 'mpapi.tcgplayer.com',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) return [];
+      throw new Error(`TCGplayer sales API error: ${response.status} ${response.statusText}`);
+    }
+
+    const json = await response.json();
+    if (!json?.data || !Array.isArray(json.data)) return [];
+
+    return json.data.map((sale: any) => ({
+      tcgplayer_id: tcgplayerId,
+      condition: parseConditionFromSalesApi(sale.condition ?? condition),
+      finish: parseFinishFromSalesApi(sale.variant ?? ''),
+      sold_price: (sale.purchasePrice ?? 0) + (sale.shippingPrice ?? 0),
+      sold_date: sale.orderDate ?? '',
+      seller_name: null, // Sales API doesn't include seller name
+    }));
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('TCGplayer sales API error')) throw err;
+    // Network errors — return empty rather than crashing
+    return [];
+  }
+}
+
+/**
+ * Map sales API condition strings back to internal format.
+ */
+function parseConditionFromSalesApi(apiCondition: string): string {
+  const map: Record<string, string> = {
+    'Near Mint': 'NM',
+    'Lightly Played': 'LP',
+    'Moderately Played': 'MP',
+    'Heavily Played': 'HP',
+    'Damaged': 'DMG',
+  };
+  return map[apiCondition] ?? apiCondition;
+}
+
+/**
+ * Map sales API variant strings back to internal finish format.
+ */
+function parseFinishFromSalesApi(variant: string): string {
+  const map: Record<string, string> = {
+    'Normal': 'Regular',
+    'Holofoil': 'Holo',
+    'Reverse Holofoil': 'Reverse-Holo',
+    '1st Edition Holofoil': 'Holo',
+    '1st Edition': 'Regular',
+    'Unlimited Holofoil': 'Holo',
+    'Unlimited': 'Regular',
+  };
+  return map[variant] ?? variant;
 }
 

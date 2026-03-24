@@ -96,11 +96,30 @@ card-server (mark as listed with eBay listing ID)
   - 1st Edition: `Holo` + `First Edition` → `"1st Edition Holofoil"`
   - WOTC sets (Base Set Shadowless, Jungle, Fossil, Gym, Neo, Team Rocket): `Holo` → `"Unlimited Holofoil"`, `Regular` → `"Unlimited"`
 
-### Sold Listings API (TODO)
-- Endpoint and payload format still need to be identified from TCGplayer's frontend.
+### Sold Listings API (implemented)
+- **Endpoint:** `POST https://mpapi.tcgplayer.com/v2/product/{id}/latestsales`
+- **Auth:** None (browser-mimicking headers, authority: `mpapi.tcgplayer.com`)
+- **Payload:** `{ variants: number[], listingType: "All", conditions: number[], languages: number[], limit: 25, offset: 0 }`
+- **Max results:** 5 per request (hard server-side limit, ignores `limit` and `offset` params)
+- **Strategy:** Query each condition separately to get up to 25 results (5 conditions x 5 each)
+- **Condition IDs:** 1=Near Mint, 2=Lightly Played, 3=Moderately Played, 4=Heavily Played, 5=Damaged
+- **Variant (finish) IDs:** 10=Normal, 11=Holofoil, 77=Reverse Holofoil (product-specific — only IDs valid for that product work)
+- **Language IDs:** 1=English
+- **Response fields per sale:** `condition`, `variant`, `language`, `quantity`, `title`, `listingType`, `purchasePrice`, `shippingPrice`, `orderDate`
 
-### Card Info API (TODO)
-- For fetching card metadata (name, set, rarity, etc.) by product ID.
+### Card Info API (implemented)
+- **Endpoint:** `POST https://mp-search-api.tcgplayer.com/v1/search/request?q=&isList=false&mpfev=2163`
+- **Auth:** None (browser-mimicking headers)
+- **Payload:** Search query with `productId` filter: `{ algorithm: "sales_synonym_v2", from: 0, size: 1, filters: { term: { productLineName: ["pokemon"], productId: [numericId] } }, listingSearch: { ... } }`
+- **Returns:** Rich product data including:
+  - `productName`, `setName`, `rarityName`, `productLineName`, `marketPrice`, `lowestPrice`, `totalListings`, `foilOnly`
+  - `customAttributes`: `number` (card number), `hp`, `stage`, `energyType`, `attacks` (1-4), `weakness`, `resistance`, `retreatCost`, `releaseDate`, `flavorText`, `description`
+  - `aggregations`: listing counts per condition and per printing (finish)
+
+### Price Points API (informational)
+- **Endpoint:** `GET https://mpapi.tcgplayer.com/v2/product/{id}/pricepoints`
+- **Returns:** `[{ printingType, marketPrice, buylistMarketPrice, listedMedianPrice }]` per finish
+- **Note:** Not currently used — market price is unreliable per pricing philosophy
 
 ## Pricing Algorithm
 
@@ -183,8 +202,8 @@ npm run test               # Run card-server tests
 ## Next Steps
 
 ### Immediate (get card-server fully functional)
-1. **Implement `fetchSoldListings`** — Identify TCGplayer's sold listings API endpoint from browser network inspector. Port the request format like was done for active listings.
-2. **Implement `fetchCardInfo`** — Fetch card metadata (name, set, rarity, etc.) from TCGplayer by product ID. This enables `collectionService.getCard()` auto-fetch when a card isn't in the DB yet.
+1. ~~**Implement `fetchSoldListings`**~~ — Done. Uses `mpapi.tcgplayer.com/v2/product/{id}/latestsales` with per-condition querying for up to 25 results.
+2. ~~**Implement `fetchCardInfo`**~~ — Done. Uses search API with productId filter for full card metadata.
 3. **Write migration script** (`card-server/src/migrate.ts`) — Read the MySQL dump (`database-dump.sql`) and populate the new SQLite schema. Map: `cardinfo` → `cards`, `skutable` → `skus`, `actualinventory` → `inventory`, `cardprices` → `prices`.
 4. **Run `npm install` and verify TypeScript compilation** in `card-server/`.
 5. **Write tests** for CRUD helpers and pricing algorithm.
