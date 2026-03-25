@@ -59,8 +59,12 @@ export class CollectionService {
       set_name: metadata.set_name,
       product_line: metadata.product_line,
       card_type: metadata.card_type,
+      visual_layout: null,
       rarity: metadata.rarity,
       card_number: metadata.card_number,
+      product_type: null,
+      era: null,
+      set_type: null,
     });
 
     // Pre-create SKU entries for known conditions
