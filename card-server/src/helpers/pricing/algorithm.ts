@@ -80,9 +80,23 @@ const MIN_SOLDS_FOR_CONFIDENCE = 3;
 const FEE_RATE = 0.15;
 
 /**
- * Shipping cost tiers.
- * Cards $25 and under: $1 shipping (PWE / plain white envelope).
+ * TCGplayer free-shipping threshold.
+ * Cards under $5 on TCGplayer effectively have free shipping because:
+ *   - Buyers spending $5+ with one seller get free shipping
+ *   - Listing prices assume free shipping (just the card price)
+ *   - Sold prices are noisy because some buyers paid $1 shipping (single card)
+ *     while others bundled to hit $5 and paid nothing
+ *   - For pricing: use listed_price only (ignore shipping_price in the API)
+ *   - For divergence: listings take priority over solds (solds are unreliable)
+ *   - For liquid value: seller shipping cost = $0 (buyer covers or bundles)
+ */
+const CHEAP_CARD_THRESHOLD = 5;
+
+/**
+ * Shipping cost tiers (for cards >= $5).
+ * Cards $5-$25: $1 shipping (PWE / plain white envelope).
  * Cards over $25: $5 shipping (tracked bubble mailer).
+ * Cards under $5: $0 (buyer covers shipping via $5 threshold or pays it themselves).
  */
 const SHIPPING_THRESHOLD = 25;
 const SHIPPING_COST_LOW = 1;
@@ -174,11 +188,23 @@ export function computePrice(input: PricingInput): PricingResult {
 
     // ── Step 2: Sanity check against solds ──
 
+    // For cheap cards (under $5), sold prices are unreliable because they
+    // inconsistently include $1 shipping. Listings take priority.
+    const isCheapCard = lowestListing < CHEAP_CARD_THRESHOLD;
+
     if (soldStats !== null) {
       const divergence = Math.abs(lowestListing - soldStats.average) / soldStats.average;
 
       if (divergence > PRICE_DIVERGENCE_THRESHOLD) {
-        if (soldStats.average < lowestListing) {
+        if (isCheapCard) {
+          // Cheap cards: listings always win. Sold prices are noisy due to
+          // inconsistent shipping ($0 bundled vs $1 single-card).
+          confidence = 75;
+          reasons.push(
+            `Sold average ($${soldStats.average.toFixed(2)}) diverges ${(divergence * 100).toFixed(0)}% from listing. ` +
+            `Card is under $${CHEAP_CARD_THRESHOLD} — sold prices are unreliable (shipping noise). Keeping listing price.`
+          );
+        } else if (soldStats.average < lowestListing) {
           estimatedPrice = soldStats.average;
           confidence = 60;
           manualCheck = true;
@@ -277,14 +303,23 @@ export function computePrice(input: PricingInput): PricingResult {
  * Fees are taken as a percentage of that. Shipping is a flat cost you eat.
  *
  * Shipping tiers:
- *   - Cards $25 and under: $1 (PWE)
+ *   - Cards under $5: $0 (buyer covers via TCGplayer's $5 free shipping threshold)
+ *   - Cards $5-$25: $1 (PWE / plain white envelope)
  *   - Cards over $25: $5 (tracked bubble mailer)
  *
+ * Example: $2 card  → $2 * 0.85 - $0 = $1.70  (buyer bundles for free shipping)
  * Example: $10 card → $10 * 0.85 - $1 = $7.50
  * Example: $40 card → $40 * 0.85 - $5 = $29.00
  */
 export function computeLiquidValue(sellPrice: number): number {
-  const shipping = sellPrice > SHIPPING_THRESHOLD ? SHIPPING_COST_HIGH : SHIPPING_COST_LOW;
+  let shipping: number;
+  if (sellPrice < CHEAP_CARD_THRESHOLD) {
+    shipping = 0;
+  } else if (sellPrice > SHIPPING_THRESHOLD) {
+    shipping = SHIPPING_COST_HIGH;
+  } else {
+    shipping = SHIPPING_COST_LOW;
+  }
   const afterFees = sellPrice * (1 - FEE_RATE);
   const profit = afterFees - shipping;
   return round(Math.max(profit, 0));
@@ -408,13 +443,25 @@ function getResolvedPrimary(condition: string): string | null {
 
 // ─── Helpers ─────────────────────────────────────────────────
 
+/**
+ * Get the lowest listing price, accounting for TCGplayer's shipping model.
+ *
+ * For cards under $5: use listed_price only (ignore shipping).
+ * TCGplayer offers free shipping at $5+ with one seller, so most buyers
+ * bundle cheap cards and never pay shipping. The listed_price IS the
+ * real price these cards sell at.
+ *
+ * For cards >= $5: use listed_price + shipping_price as the total cost.
+ */
 function getLowestListingPrice(listings: TcgPlayerActiveListing[]): number | null {
   if (listings.length === 0) return null;
 
-  // Total price = listed price + shipping
   let lowest = Infinity;
   for (const listing of listings) {
-    const total = listing.listed_price + listing.shipping_price;
+    // First pass: check raw listed_price to determine cheap card threshold
+    const total = listing.listed_price < CHEAP_CARD_THRESHOLD
+      ? listing.listed_price
+      : listing.listed_price + listing.shipping_price;
     if (total < lowest) lowest = total;
   }
   return lowest === Infinity ? null : round(lowest);

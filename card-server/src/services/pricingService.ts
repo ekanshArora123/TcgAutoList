@@ -1,9 +1,11 @@
 import type Database from 'better-sqlite3';
+import { CardsHelper } from '../helpers/crud/cards.js';
 import { SkusHelper } from '../helpers/crud/skus.js';
 import { PricesHelper } from '../helpers/crud/prices.js';
 import { computePrice, extrapolateAcrossConditions, computeLiquidValue } from '../helpers/pricing/algorithm.js';
 import type { PricingResult } from '../helpers/pricing/algorithm.js';
 import { fetchSoldListings, fetchActiveListings } from '../helpers/tcgplayer/fetchPrices.js';
+import { fetchCardInfo } from '../helpers/tcgplayer/fetchCardInfo.js';
 import type { Price, CreatePrice } from '../types.js';
 
 /**
@@ -15,10 +17,12 @@ import type { Price, CreatePrice } from '../types.js';
  * Flow: fetch external data → run algorithm → store results → return to agent.
  */
 export class PricingService {
+  private cards: CardsHelper;
   private skus: SkusHelper;
   private prices: PricesHelper;
 
   constructor(private db: Database.Database) {
+    this.cards = new CardsHelper(db);
     this.skus = new SkusHelper(db);
     this.prices = new PricesHelper(db);
   }
@@ -97,6 +101,36 @@ export class PricingService {
     return fetchActiveListings(tcgplayerId, condition, finish);
   }
 
+  // ─── Card Auto-Ensure ─────────────────────────────────────────
+
+  /**
+   * Ensure a card exists in the DB before creating SKUs that reference it.
+   * If the card isn't in the DB, fetches it from TCGplayer and stores it.
+   * This prevents FK constraint violations when pricing is called before get_card.
+   */
+  private async ensureCardExists(tcgplayerId: string): Promise<boolean> {
+    const existing = this.cards.getById(tcgplayerId);
+    if (existing) return true;
+
+    const fetched = await fetchCardInfo(tcgplayerId);
+    if (!fetched) return false;
+
+    this.cards.upsert({
+      id: fetched.metadata.tcgplayer_id,
+      card_name: fetched.metadata.card_name,
+      set_name: fetched.metadata.set_name,
+      product_line: fetched.metadata.product_line,
+      card_type: fetched.metadata.card_type,
+      visual_layout: null,
+      rarity: fetched.metadata.rarity,
+      card_number: fetched.metadata.card_number,
+      product_type: null,
+      era: null,
+      set_type: null,
+    });
+    return true;
+  }
+
   // ─── Pricing Workflows (fetch + algorithm + store) ─────────
 
   /**
@@ -110,6 +144,8 @@ export class PricingService {
    *   4. Store in DB
    */
   async fetchAndStorePrices(tcgplayerId: string): Promise<(Price & { reasoning: string })[]> {
+    await this.ensureCardExists(tcgplayerId);
+
     const [allSolds, allListings] = await Promise.all([
       fetchSoldListings(tcgplayerId),
       fetchActiveListings(tcgplayerId),
@@ -185,6 +221,8 @@ export class PricingService {
     condition: string,
     finish: string,
   ): Promise<(Price & { reasoning: string }) | null> {
+    await this.ensureCardExists(tcgplayerId);
+
     const [solds, listings] = await Promise.all([
       fetchSoldListings(tcgplayerId, condition, finish),
       fetchActiveListings(tcgplayerId, condition, finish),

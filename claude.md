@@ -138,17 +138,29 @@ card-server (mark as listed with eBay listing ID)
 - **Fees:** Both TCGplayer and eBay take ~15%. Stored as `FEE_RATE = 0.15`.
 
 ### Current algorithm (v1: `lowest-listing-v1`)
-1. If active listings exist → anchor on lowest listing (price + shipping combined)
-2. If sold data also exists → compare. If they diverge >30% and solds are lower, use sold average instead (listings may be stale). Flag for review.
+1. If active listings exist → anchor on lowest listing price
+2. If sold data also exists → compare. If they diverge >30% and solds are lower, use sold average instead (listings may be stale). Flag for review. **Exception: cheap cards (under $5) — listings always win** (see below).
 3. If no active listings → fall back to sold average
 4. If no data at all → null price, flagged as unpriceable
 5. Edge case flags: high value (>$50), specialty_two cards (graded/errors), few solds (<3) → lower confidence / manual review
+
+### TCGplayer shipping model for cheap cards (under $5)
+TCGplayer offers **free shipping when a buyer spends $5+ with one seller**. If they buy a single cheap card, they pay ~$1 shipping. This has major pricing implications:
+
+- **Listing prices assume free shipping.** The listed price IS the real price. A card listed at $0.25 will sell at $0.25 to a buyer who bundles it with other cards from the same seller. This is how cards sell for 5 cents or less.
+- **Sold prices are noisy.** Some buyers paid $1 shipping (single card purchase → sold_price includes shipping), others bundled and paid $0 shipping. The sold price doesn't tell us which happened.
+- **For pricing under $5:** Use `listed_price` only — ignore `shipping_price` from the API. The shipping in the API is the single-card rate, but most sales happen through bundling.
+- **For divergence checks under $5:** Listings take priority. Don't flag for review or switch to sold average, since the divergence is expected (shipping noise in solds).
+- **For liquid value under $5:** Seller shipping cost = $0. The buyer covers shipping via the $5 threshold, or the $1 they pay goes to TCGplayer, not the seller.
 
 ### Liquid value formula
 ```
 liquid_value = (sell_price * 0.85) - shipping_cost
 ```
-Where shipping = $1 for cards $25 and under, $5 for cards over $25.
+Shipping tiers:
+- **Cards under $5:** $0 (buyer covers via TCGplayer's $5 free shipping threshold)
+- **Cards $5-$25:** $1 (PWE / plain white envelope)
+- **Cards over $25:** $5 (tracked bubble mailer)
 
 ### Cross-condition extrapolation
 When no data exists for a specific condition, extrapolate from another condition of the same card:
