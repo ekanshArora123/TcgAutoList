@@ -4,7 +4,7 @@
 
 TcgAutoList automates listing ~10,000 Pokemon cards on eBay. It uses an **agentic architecture** with MCP servers (Model Context Protocol) and a Telegram bot for photo intake.
 
-**Workflow:** Agent picks next unlisted card → requests photos via Telegram → waits for photos → gathers card info + price from TCGplayer → builds listing → creates eBay listing → marks as done → repeats.
+**Workflow:** User sends `/next` via Telegram → orchestrator picks next unlisted card → fetches price → requests photo via Telegram → user sends photo → orchestrator builds listing → creates eBay listing → marks as done → waits for next command.
 
 ## Architecture
 
@@ -14,8 +14,51 @@ TcgAutoList automates listing ~10,000 Pokemon cards on eBay. It uses an **agenti
 |-----------|------|----------|---------|
 | `card-server` | MCP Server | `card-server/` | **Combined** collection, card info, and pricing server. SQLite DB with CRUD + TCGplayer data fetching + pricing algorithm. Standalone — usable independently of the parent project. |
 | `ebay-mcp` | MCP Server (external) | npm package | eBay Sell API access (325 tools) |
-| `telegram/bot` | Module | `src/telegram/` | Sends photo requests & receives photos via Telegram Bot API |
-| `listingAgent` | Orchestrator | `src/agent/` | State machine driving the card → listing workflow |
+| `telegram/bot` | Module (NOT MCP) | `src/telegram/` | Bidirectional I/O channel: sends messages/photo requests, receives commands/photos/text. Transport layer, not a tool provider. |
+| `orchestrator` | LLM Agent | `src/agent/` | Claude-powered agent that processes cards. Fresh conversation per card, tools = card-server + ebay-mcp, I/O = Telegram. |
+
+### Telegram Module (NOT an MCP server)
+
+Telegram is a **transport layer** for the orchestrator, not a tool provider. MCP servers are for standalone, reusable tool providers (card-server works independently). The Telegram bot only makes sense in the context of this specific workflow and is tightly coupled to the orchestrator.
+
+```
+You (Telegram) ←→ Telegram Bot Module ←→ Orchestrator ←→ MCP Servers (card-server, ebay-mcp)
+```
+
+The bot forwards user messages/photos to the orchestrator as events, and sends orchestrator output back to the user.
+
+### Orchestrator (LLM Agent)
+
+The orchestrator is a Claude-powered agent (via Anthropic API). For each card, it starts a **fresh conversation** with a system prompt containing the card's details from the DB, and has access to card-server and ebay-mcp tools.
+
+**Per-card conversation lifecycle:**
+1. User sends `/next` → orchestrator queries DB for next unlisted card
+2. Fresh Claude conversation created with: system prompt + card context + tool definitions
+3. Claude decides actions (fetch price, request photo, build listing, etc.)
+4. Orchestrator executes tool calls, sends results back to Claude
+5. When Claude requests a photo → Telegram message sent to user
+6. User sends photo → injected into Claude's current conversation
+7. Claude builds listing → orchestrator executes via ebay-mcp
+8. Card marked as listed → **conversation discarded** (context reset)
+
+**Context resets per card keep token costs predictable.** No conversation history accumulation across cards. If the program stops mid-card, the DB knows the card's status (e.g., `photo_requested`) and the next conversation can pick up from there.
+
+User free-text messages via Telegram are injected into the active conversation, so you can override decisions ("skip this one", "price it at $5 instead") and Claude reacts naturally.
+
+**Token cost note (FUTURE OPTIMIZATION):** The MVP orchestrator will use more tokens than a coded state machine because every decision goes through the LLM. Future optimizations to reduce cost:
+- Use Haiku for routine cards, Sonnet/Opus for edge cases (manual review, user questions)
+- Short-circuit obvious steps in code (e.g., skip LLM for fetching price — just do it)
+- Cache system prompts / tool definitions to reduce per-turn overhead
+- Batch routine cards into a single conversation with periodic context summaries
+- Measure actual per-card token usage and set cost alerts
+
+### Orchestrator Design Decisions
+
+- **Trigger:** Agent waits for user input (`/next` command) before processing the next card. Does NOT auto-advance.
+- **Photo batching:** One card at a time. Agent requests photo, waits for it, then continues.
+- **Error recovery:** On eBay/API failure, agent alerts via Telegram and waits for human intervention to retry. No auto-retry.
+- **Review UX:** Inline Telegram keyboards for manual review decisions (approve price, override, skip, details).
+- **Context persistence:** All durable state lives in SQLite (card-server). Claude's conversation is ephemeral and reset per card. Program can stop/restart without losing progress.
 
 ### card-server Internal Architecture
 
@@ -47,15 +90,23 @@ card-server/src/
 ### Data Flow
 
 ```
-card-server (pick next unlisted card)
-        ↓ inventory_id, tcgplayer_id, condition, finish
-Telegram bot (request & receive photos)
-        ↓ photo file paths
-card-server (fetch price from TCGplayer if stale, run pricing algorithm)
-        ↓ card info + price estimate + confidence + reasoning
-ebay-mcp (create inventory item + offer)
-        ↓ listing ID
-card-server (mark as listed with eBay listing ID)
+User sends /next via Telegram
+        ↓
+Orchestrator (fresh Claude conversation for this card)
+        ↓ calls card-server: get_next_unlisted
+card-server → returns inventory_id, tcgplayer_id, condition, finish
+        ↓ calls card-server: fetch_prices
+card-server → returns price estimate + confidence + reasoning
+        ↓ sends photo request via Telegram bot
+User sends photo via Telegram
+        ↓ photo injected into Claude conversation
+Orchestrator → Claude decides listing details
+        ↓ calls ebay-mcp: create inventory item + offer
+ebay-mcp → returns listing ID
+        ↓ calls card-server: mark_as_listed
+card-server → card marked as listed
+        ↓
+Orchestrator sends confirmation via Telegram, discards conversation
 ```
 
 ## Database Schema (card-server)
@@ -230,9 +281,25 @@ npm run test               # Run card-server tests
 
 ### Medium-term (integrate with parent project)
 6. **Wire card-server into the parent project's MCP client** — The orchestrator connects to card-server via STDIO and calls its tools.
-7. **Build the Telegram bot module** — Photo request/receive workflow.
-8. **Build the eBay listing builder** — Takes an `InventoryDetail` and constructs an eBay listing via `ebay-mcp`.
-9. **Build the orchestrator state machine** — IDLE → PICK_CARD → REQUEST_PHOTOS → WAIT_PHOTOS → GATHER_INFO → BUILD_LISTING → CREATE_LISTING → MARK_LISTED → repeat.
+7. **Build the Telegram bot module** (`src/telegram/`) — Bot connection, command handlers (`/next`, `/status`, `/skip`, `/pause`), photo handler, inline keyboard support, message renderer for card details/prices.
+8. **Build the orchestrator** (`src/agent/`) — Claude API client, per-card conversation management, tool execution bridge to MCP servers, Telegram event handling, system prompt builder from DB state.
+9. **Build the eBay listing builder** — Takes an `InventoryDetail` + photos and constructs an eBay listing via `ebay-mcp`.
+
+### Target file structure (parent project)
+```
+src/
+├── telegram/
+│   ├── bot.ts              ← TelegramBot wrapper, polling, message routing
+│   ├── commands.ts         ← /next, /status, /skip, /pause command handlers
+│   ├── handlers.ts         ← Photo handler, free-text → orchestrator, callback (button) handler
+│   └── renderer.ts         ← Format card details, prices, status into Telegram messages + inline keyboards
+├── agent/
+│   ├── orchestrator.ts     ← Event-driven loop: receives Telegram events, dispatches to LLM
+│   ├── llm.ts              ← Claude API client, conversation lifecycle (create, turn, reset)
+│   ├── tools.ts            ← Tool definitions bridging MCP servers for Claude to call
+│   └── systemPrompt.ts     ← Build per-card system prompt from DB state + workflow instructions
+└── index.ts                ← Startup: init DB, connect MCP servers, start Telegram bot, start orchestrator
+```
 
 ### Long-term (advanced pricing + optimization)
 10. **Pricing v2:** Sales velocity analysis — track sales per 48hr window to decide if pricing above lowest listing is viable.
