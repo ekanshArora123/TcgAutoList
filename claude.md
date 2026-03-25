@@ -15,7 +15,7 @@ TcgAutoList automates listing ~10,000 Pokemon cards on eBay. It uses an **agenti
 | `card-server` | MCP Server | `card-server/` | **Combined** collection, card info, and pricing server. SQLite DB with CRUD + TCGplayer data fetching + pricing algorithm. Standalone — usable independently of the parent project. |
 | `ebay-mcp` | MCP Server (external) | npm package | eBay Sell API access (325 tools) |
 | `telegram/bot` | Module (NOT MCP) | `src/telegram/` | Bidirectional I/O channel: sends messages/photo requests, receives commands/photos/text. Transport layer, not a tool provider. |
-| `orchestrator` | LLM Agent | `src/agent/` | Claude-powered agent that processes cards. Fresh conversation per card, tools = card-server + ebay-mcp, I/O = Telegram. |
+| `orchestrator` | Coded event loop | `src/agent/` | Picks next card, fetches price, routes by tier. Tier 1 = pure code (template listing). Tier 2/3 = spawns LLM conversation with scoped/full context. |
 
 ### Telegram Module (NOT an MCP server)
 
@@ -25,25 +25,23 @@ Telegram is a **transport layer** for the orchestrator, not a tool provider. MCP
 You (Telegram) ←→ Telegram Bot Module ←→ Orchestrator ←→ MCP Servers (card-server, ebay-mcp)
 ```
 
-The bot forwards user messages/photos to the orchestrator as events, and sends orchestrator output back to the user.
+The bot forwards user messages/photos to the orchestrator as events, and sends orchestrator output back to the user. For Tier 1 cards, the bot sends/receives templated messages only (no LLM). For Tier 2/3, it relays free-text between the user and the active LLM conversation.
 
-### Orchestrator (LLM Agent)
+### Orchestrator
 
-The orchestrator is a Claude-powered agent (via Anthropic API). For each card, it starts a **fresh conversation** with a system prompt containing the card's details from the DB, and has access to card-server and ebay-mcp tools.
+The orchestrator is a **coded event loop** (not an LLM). It picks the next card, fetches pricing, routes to the correct tier, and drives the workflow. The LLM is only invoked for Tier 2/3 cards — the orchestrator itself is pure TypeScript.
 
-**Per-card conversation lifecycle:**
+**Per-card workflow:**
 1. User sends `/next` → orchestrator queries DB for next unlisted card
-2. Fresh Claude conversation created with: system prompt + card context + tool definitions
-3. Claude decides actions (fetch price, request photo, build listing, etc.)
-4. Orchestrator executes tool calls, sends results back to Claude
-5. When Claude requests a photo → Telegram message sent to user
-6. User sends photo → injected into Claude's current conversation
-7. Claude builds listing → orchestrator executes via ebay-mcp
-8. Card marked as listed → **conversation discarded** (context reset)
+2. Orchestrator calls card-server: fetch price → gets `confidence_percent` + `manual_check_necessary`
+3. **Tier routing:** confidence + flags determine which path the card takes (see Tiered Escalation Model)
+4. **Tier 1 (no LLM):** Orchestrator builds a template listing from DB data, requests photo via Telegram, waits, posts to eBay via ebay-mcp. All code, zero tokens.
+5. **Tier 2/3 (LLM involved):** Fresh Claude conversation created with scoped context (Tier 2) or full context (Tier 3). LLM decides pricing/listing details. Orchestrator executes its tool calls and relays Telegram I/O.
+6. Card marked as listed → conversation discarded (if one existed) → waits for next `/next`
 
 **Context resets per card keep token costs predictable.** No conversation history accumulation across cards. If the program stops mid-card, the DB knows the card's status (e.g., `photo_requested`) and the next conversation can pick up from there.
 
-User free-text messages via Telegram are injected into the active conversation, so you can override decisions ("skip this one", "price it at $5 instead") and Claude reacts naturally.
+For Tier 2/3 cards, user free-text messages via Telegram are injected into the active LLM conversation, so you can override decisions ("skip this one", "price it at $5 instead"). For Tier 1 cards, free-text is ignored (only commands and photos are processed).
 
 ### Tiered Escalation Model
 
@@ -316,13 +314,15 @@ src/
 ├── telegram/
 │   ├── bot.ts              ← TelegramBot wrapper, polling, message routing
 │   ├── commands.ts         ← /next, /status, /skip, /pause command handlers
-│   ├── handlers.ts         ← Photo handler, free-text → orchestrator, callback (button) handler
+│   ├── handlers.ts         ← Photo handler, free-text relay (Tier 2/3 only), callback (button) handler
 │   └── renderer.ts         ← Format card details, prices, status into Telegram messages + inline keyboards
 ├── agent/
-│   ├── orchestrator.ts     ← Event-driven loop: receives Telegram events, dispatches to LLM
-│   ├── llm.ts              ← Claude API client, conversation lifecycle (create, turn, reset)
-│   ├── tools.ts            ← Tool definitions bridging MCP servers for Claude to call
-│   └── systemPrompt.ts     ← Build per-card system prompt from DB state + workflow instructions
+│   ├── orchestrator.ts     ← Coded event loop: /next → fetch price → tier route → drive workflow → done
+│   ├── tierRouter.ts       ← Evaluates confidence + flags → returns Tier 1/2/3. Configurable thresholds.
+│   ├── tier1Pipeline.ts    ← Dumb pipe: template listing builder, no LLM. Handles ~80% of cards.
+│   ├── llm.ts              ← Claude API client, conversation lifecycle (create, turn, reset). Tier 2/3 only.
+│   ├── tools.ts            ← Tool definitions bridging MCP servers for Claude. Scoped set (Tier 2) vs full (Tier 3).
+│   └── systemPrompt.ts     ← Build per-card system prompt from DB state. Tier 2 = pricing-focused. Tier 3 = full context.
 └── index.ts                ← Startup: init DB, connect MCP servers, start Telegram bot, start orchestrator
 ```
 
