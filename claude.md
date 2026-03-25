@@ -45,12 +45,27 @@ The orchestrator is a Claude-powered agent (via Anthropic API). For each card, i
 
 User free-text messages via Telegram are injected into the active conversation, so you can override decisions ("skip this one", "price it at $5 instead") and Claude reacts naturally.
 
-**Token cost note (FUTURE OPTIMIZATION):** The MVP orchestrator will use more tokens than a coded state machine because every decision goes through the LLM. Future optimizations to reduce cost:
-- Use Haiku for routine cards, Sonnet/Opus for edge cases (manual review, user questions)
-- Short-circuit obvious steps in code (e.g., skip LLM for fetching price — just do it)
-- Cache system prompts / tool definitions to reduce per-turn overhead
-- Batch routine cards into a single conversation with periodic context summaries
-- Measure actual per-card token usage and set cost alerts
+### Tiered Escalation Model
+
+Not every card needs an LLM. The orchestrator uses a **confidence-based tiered system** where the LLM's involvement scales with the difficulty of the pricing/listing decision. Most cards go through a dumb coded pipeline. As confidence drops, the LLM gets progressively more context and authority.
+
+**Tier 1 — Dumb pipe (majority of cards, 0 tokens):**
+Criteria: high confidence (≥80%), high sales volume, high listing count, single clear condition/finish, price under $50.
+These are modern NM cards with consistent prices where it's hard to make a mistake. Code handles everything: fetch price → request photo → template listing → post to eBay. No LLM involvement at all.
+
+**Tier 2 — LLM with scoped context (edge cases, ~5,000 tokens):**
+Criteria: medium confidence (40-79%), OR low listing count, OR significant sale price variance, OR in-between condition, OR price $50-200.
+The LLM receives the already-gathered pricing data (listings, solds, algorithm reasoning) as context and can fetch additional data from less confident sources — eBay last solds, similar card performance, price history trends. It decides the final price and whether to list. Scoped tool set (only pricing/research tools, not full card-server).
+
+**Tier 3 — Full LLM agent (rare cards, ~10,000-15,000 tokens):**
+Criteria: low confidence (<40%), OR no sales data, OR no active listings, OR specialty cards (graded, errors), OR price >$200.
+Cards with virtually no information. The LLM gets full context, full tool access, and is told to make a judgment call. It can research comparable cards, check eBay solds for similar items, analyze price history, and reason about whether to list at all or hold. May also recommend the card for manual human review via Telegram.
+
+**Future — Tier 2.5: Sell/hold sentiment analysis:**
+Every card's price history and market sentiment is analyzed to determine whether it should be sold now or held, and how aggressively to price it. This is a future capability that requires LLM involvement for pattern recognition across price history, set rotation cycles, and market trends.
+
+**Expected distribution:** ~80% Tier 1 (0 tokens), ~15% Tier 2 (~5K tokens), ~5% Tier 3 (~12K tokens).
+Estimated cost for 10,000 cards: 0 + 750 × 5K + 500 × 12K = **~9.75M tokens (~$4-8 with Sonnet/Haiku mix).**
 
 ### Orchestrator Design Decisions
 
@@ -59,6 +74,7 @@ User free-text messages via Telegram are injected into the active conversation, 
 - **Error recovery:** On eBay/API failure, agent alerts via Telegram and waits for human intervention to retry. No auto-retry.
 - **Review UX:** Inline Telegram keyboards for manual review decisions (approve price, override, skip, details).
 - **Context persistence:** All durable state lives in SQLite (card-server). Claude's conversation is ephemeral and reset per card. Program can stop/restart without losing progress.
+- **Tier routing:** The pricing algorithm's `confidence_percent` and `manual_check_necessary` fields determine which tier a card enters. Tier boundaries are configurable constants.
 
 ### card-server Internal Architecture
 
@@ -92,21 +108,30 @@ card-server/src/
 ```
 User sends /next via Telegram
         ↓
-Orchestrator (fresh Claude conversation for this card)
+Orchestrator (code, no LLM yet)
         ↓ calls card-server: get_next_unlisted
-card-server → returns inventory_id, tcgplayer_id, condition, finish
+card-server → returns card details + condition + finish
         ↓ calls card-server: fetch_prices
-card-server → returns price estimate + confidence + reasoning
-        ↓ sends photo request via Telegram bot
-User sends photo via Telegram
-        ↓ photo injected into Claude conversation
-Orchestrator → Claude decides listing details
-        ↓ calls ebay-mcp: create inventory item + offer
-ebay-mcp → returns listing ID
-        ↓ calls card-server: mark_as_listed
-card-server → card marked as listed
+card-server → returns price + confidence + reasoning
         ↓
-Orchestrator sends confirmation via Telegram, discards conversation
+Tier routing (based on confidence_percent + flags)
+        ↓                          ↓                          ↓
+   Tier 1 (≥80%)            Tier 2 (40-79%)            Tier 3 (<40%)
+   Code handles all          LLM gets pricing data      LLM gets full context
+   Template listing          + fetches more data         + full tool access
+   0 tokens                  ~5K tokens                  ~12K tokens
+        ↓                          ↓                          ↓
+        └──────────────────────────┴──────────────────────────┘
+                                   ↓
+                    Telegram: request photo from user
+                                   ↓
+                    User sends photo via Telegram
+                                   ↓
+                    Build + post eBay listing (ebay-mcp)
+                                   ↓
+                    Mark as listed (card-server)
+                                   ↓
+                    Telegram: send confirmation
 ```
 
 ## Database Schema (card-server)
