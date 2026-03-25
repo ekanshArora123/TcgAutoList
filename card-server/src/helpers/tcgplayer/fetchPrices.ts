@@ -165,7 +165,7 @@ export async function fetchActiveListings(
     throw new Error(`TCGplayer API error: ${response.status} ${response.statusText}`);
   }
 
-  const json = await response.json();
+  const json: any = await response.json();
   if (!json?.results?.[0]?.results) return [];
 
   const rawResults: RawListingResult[] = json.results[0].results;
@@ -209,6 +209,9 @@ function filterAndMapListings(
       seller_sales: sales,
     });
   }
+
+  // Re-sort after filtering — removing sellers can break the API's original order
+  results.sort((a, b) => (a.listed_price + a.shipping_price) - (b.listed_price + b.shipping_price));
 
   return results;
 }
@@ -399,7 +402,7 @@ async function fetchSoldListingsPage(
       throw new Error(`TCGplayer sales API error: ${response.status} ${response.statusText}`);
     }
 
-    const json = await response.json();
+    const json: any = await response.json();
     if (!json?.data || !Array.isArray(json.data)) return [];
 
     return json.data.map((sale: any) => ({
@@ -482,7 +485,7 @@ export async function fetchSetInfo(setId: number): Promise<TcgPlayerSetInfo | nu
       throw new Error(`TCGplayer catalog API error: ${response.status} ${response.statusText}`);
     }
 
-    const json = await response.json();
+    const json: any = await response.json();
     const result = json?.results?.[0];
     if (!result) return null;
 

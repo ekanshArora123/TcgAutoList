@@ -115,7 +115,7 @@ export async function fetchCardInfo(tcgplayerId: string): Promise<TcgPlayerCardF
       throw new Error(`TCGplayer search API error: ${response.status} ${response.statusText}`);
     }
 
-    const json = await response.json();
+    const json: any = await response.json();
 
     const searchResult = json?.results?.[0];
     if (!searchResult?.results?.[0]) return null;
