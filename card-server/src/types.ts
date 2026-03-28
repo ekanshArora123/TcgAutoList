@@ -119,10 +119,13 @@ export const SearchPricesInput = z.object({
 
 /** Full inventory item with card info, SKU details, and latest price */
 export const InventoryDetailSchema = InventorySchema.extend({
+  card_id: z.string(),
   card_name: z.string(),
   set_name: z.string().nullable(),
   condition: CardCondition,
   finish: CardFinish,
+  specialty_one: z.string().default('None'),
+  specialty_two: z.string().default('None'),
   rarity: z.string().nullable(),
   card_number: z.string().nullable(),
   estimated_price: z.number().nullable(),
