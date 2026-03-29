@@ -163,12 +163,11 @@ export class Orchestrator {
     const summary = renderCardSummary(detail, price);
     const summaryText = `${summary}\n\nTier: ${tierResult.tier} — ${tierResult.reason}`;
     const cardImagePath = this.bot.getCardImagePath(detail.card_id);
-    console.log(`[DEBUG] card_id="${detail.card_id}", imagePath=${cardImagePath}`);
 
     if (cardImagePath) {
       await this.bot.sendPhoto(cardImagePath, summaryText, 'Markdown');
     } else {
-      await this.bot.sendMessage(summaryText, 'Markdown');
+      await this.bot.sendMessage(`${summaryText}\n\n_No digital image available_`, 'Markdown');
     }
 
     // Execute the appropriate tier

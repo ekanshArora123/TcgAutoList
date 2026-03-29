@@ -208,7 +208,6 @@ export class Bot extends EventEmitter {
    */
   getCardImagePath(cardId: string): string | null {
     const imgPath = join(this.projectRoot, 'data', 'card-images', `${cardId}.webp`);
-    console.log(`[DEBUG] getCardImagePath: projectRoot="${this.projectRoot}", full="${imgPath}", exists=${existsSync(imgPath)}`);
     return existsSync(imgPath) ? imgPath : null;
   }
 
