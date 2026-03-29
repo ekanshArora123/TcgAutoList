@@ -39,7 +39,7 @@ async function main() {
   // Load config
   const telegramToken = requireEnv('TELEGRAM_BOT_TOKEN');
   const telegramChatId = parseInt(requireEnv('TELEGRAM_CHAT_ID'), 10);
-  const projectRoot = join(__dirname, '..', '..');
+  const projectRoot = join(__dirname, '..');
   const dbPath = process.env.DB_PATH ?? join(projectRoot, 'card-server', 'data', 'cards.db');
   const photosDir = process.env.PHOTOS_DIR ?? join(projectRoot, 'photos');
 
