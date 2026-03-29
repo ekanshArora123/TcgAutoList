@@ -23,6 +23,32 @@
  */
 
 import type { TcgPlayerSoldListing, TcgPlayerActiveListing } from '../tcgplayer/fetchPrices.js';
+import {
+  ALGORITHM_VERSION,
+  HIGH_VALUE_THRESHOLD,
+  PRICE_DIVERGENCE_THRESHOLD,
+  MIN_SOLDS_FOR_CONFIDENCE,
+  FEE_RATE,
+  CHEAP_CARD_THRESHOLD,
+  SHIPPING_THRESHOLD,
+  SHIPPING_COST_LOW,
+  SHIPPING_COST_HIGH,
+  CONDITION_STEP_MULTIPLIER,
+  PRIMARY_CONDITIONS,
+  IN_BETWEEN_CONDITIONS,
+  CONFIDENCE_LISTING_BASE,
+  CONFIDENCE_CHEAP_DIVERGENT,
+  CONFIDENCE_SOLDS_OVERRIDE,
+  CONFIDENCE_SOLDS_HIGHER,
+  CONFIDENCE_SOLDS_CONFIRM,
+  CONFIDENCE_VOLUME_BONUS,
+  CONFIDENCE_MAX,
+  CONFIDENCE_NO_SOLDS,
+  CONFIDENCE_SOLDS_ONLY,
+  CONFIDENCE_FEW_SOLDS,
+  LOW_ESTIMATE_MULTIPLIER,
+  HIGH_ESTIMATE_MULTIPLIER,
+} from './pricingConfig.js';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -58,86 +84,6 @@ export interface PricingResult {
   /** Human-readable explanation of how the price was determined. */
   reasoning: string;
 }
-
-// ─── Configuration ───────────────────────────────────────────
-
-const ALGORITHM_VERSION = 'lowest-listing-v1';
-
-/** Cards above this price always get flagged for manual review. */
-const HIGH_VALUE_THRESHOLD = 50;
-
-/** If the lowest listing and sold average diverge by more than this %, flag for review. */
-const PRICE_DIVERGENCE_THRESHOLD = 0.30;
-
-/** Minimum number of sold listings for "confident" pricing. */
-const MIN_SOLDS_FOR_CONFIDENCE = 3;
-
-/**
- * Platform fee rate applied to sell price.
- * Both TCGplayer and eBay take approximately 15% in fees.
- * Liquid value = (sell price including shipping) * (1 - FEE_RATE) - shipping cost.
- */
-const FEE_RATE = 0.15;
-
-/**
- * TCGplayer free-shipping threshold.
- * Cards under $5 on TCGplayer effectively have free shipping because:
- *   - Buyers spending $5+ with one seller get free shipping
- *   - Listing prices assume free shipping (just the card price)
- *   - Sold prices are noisy because some buyers paid $1 shipping (single card)
- *     while others bundled to hit $5 and paid nothing
- *   - For pricing: use listed_price only (ignore shipping_price in the API)
- *   - For divergence: listings take priority over solds (solds are unreliable)
- *   - For liquid value: seller shipping cost = $0 (buyer covers or bundles)
- */
-const CHEAP_CARD_THRESHOLD = 5;
-
-/**
- * Shipping cost tiers (for cards >= $5).
- * Cards $5-$25: $1 shipping (PWE / plain white envelope).
- * Cards over $25: $5 shipping (tracked bubble mailer).
- * Cards under $5: $0 (buyer covers shipping via $5 threshold or pays it themselves).
- */
-const SHIPPING_THRESHOLD = 25;
-const SHIPPING_COST_LOW = 1;
-const SHIPPING_COST_HIGH = 5;
-
-// ─── Condition Extrapolation Config ──────────────────────────
-// All extrapolation logic is contained in extrapolateAcrossConditions().
-// To change the model, edit ONLY that function and these constants.
-
-/**
- * Primary conditions recognized by TCGplayer.
- * These are the "full tier" conditions used for compounding.
- * Order: best → worst. Each step = one full tier.
- */
-const PRIMARY_CONDITIONS = ['MINT', 'NM', 'LP', 'MP', 'HP', 'DMG'] as const;
-
-/**
- * In-between conditions and which two primary conditions they sit between.
- * The price of an in-between condition = average of its two neighbors.
- *
- * NOTE: TCGplayer does NOT support in-between conditions. When listing,
- * the user must choose one of the primary conditions. The in-between
- * grade is for internal tracking only.
- */
-const IN_BETWEEN_CONDITIONS: Record<string, [string, string]> = {
-  'LP-NM': ['NM', 'LP'],
-  'MP-LP': ['LP', 'MP'],
-  'HP-MP': ['MP', 'HP'],
-};
-
-/**
- * Price multiplier per full condition tier step (compounding).
- * Moving one full tier worse = price * (1 - CONDITION_STEP_DISCOUNT).
- * e.g., NM $10 → LP = $10 * 0.70 = $7.00, MP = $7.00 * 0.70 = $4.90.
- *
- * 30% discount per tier, compounding.
- *
- * FUTURE: This should be data-driven per era/rarity. Vintage WOTC has
- * steeper curves; modern barely differs between NM and LP.
- */
-const CONDITION_STEP_MULTIPLIER = 0.70;
 
 // ─── Algorithm ───────────────────────────────────────────────
 
@@ -183,7 +129,7 @@ export function computePrice(input: PricingInput): PricingResult {
 
   if (lowestListing !== null) {
     estimatedPrice = lowestListing;
-    confidence = 70;
+    confidence = CONFIDENCE_LISTING_BASE;
     reasons.push(`Anchored on lowest active listing: $${lowestListing.toFixed(2)}.`);
 
     // ── Step 2: Sanity check against solds ──
@@ -199,39 +145,39 @@ export function computePrice(input: PricingInput): PricingResult {
         if (isCheapCard) {
           // Cheap cards: listings always win. Sold prices are noisy due to
           // inconsistent shipping ($0 bundled vs $1 single-card).
-          confidence = 75;
+          confidence = CONFIDENCE_CHEAP_DIVERGENT;
           reasons.push(
             `Sold average ($${soldStats.average.toFixed(2)}) diverges ${(divergence * 100).toFixed(0)}% from listing. ` +
             `Card is under $${CHEAP_CARD_THRESHOLD} — sold prices are unreliable (shipping noise). Keeping listing price.`
           );
         } else if (soldStats.average < lowestListing) {
           estimatedPrice = soldStats.average;
-          confidence = 60;
+          confidence = CONFIDENCE_SOLDS_OVERRIDE;
           manualCheck = true;
           reasons.push(
             `Sold average ($${soldStats.average.toFixed(2)}) is ${(divergence * 100).toFixed(0)}% below lowest listing. ` +
             `Listings may be stale — using sold average instead. Flagged for review.`
           );
         } else {
-          confidence = 75;
+          confidence = CONFIDENCE_SOLDS_HIGHER;
           reasons.push(
             `Sold average ($${soldStats.average.toFixed(2)}) is above lowest listing — ` +
             `someone is undercutting. Lowest listing is a competitive price.`
           );
         }
       } else {
-        confidence = 85;
+        confidence = CONFIDENCE_SOLDS_CONFIRM;
         reasons.push(`Sold average ($${soldStats.average.toFixed(2)}) confirms listing price (${(divergence * 100).toFixed(0)}% divergence).`);
       }
 
       if (soldStats.count >= MIN_SOLDS_FOR_CONFIDENCE) {
-        confidence = Math.min(confidence + 10, 95);
+        confidence = Math.min(confidence + CONFIDENCE_VOLUME_BONUS, CONFIDENCE_MAX);
         reasons.push(`${soldStats.count} recent solds — good data volume.`);
       } else {
         reasons.push(`Only ${soldStats.count} recent sold(s) — limited data.`);
       }
     } else {
-      confidence = 50;
+      confidence = CONFIDENCE_NO_SOLDS;
       reasons.push('No sold data available. Pricing based on listings only — lower confidence.');
     }
 
@@ -239,11 +185,11 @@ export function computePrice(input: PricingInput): PricingResult {
 
   } else if (soldStats !== null) {
     estimatedPrice = soldStats.average;
-    confidence = 55;
+    confidence = CONFIDENCE_SOLDS_ONLY;
     reasons.push(`No active listings. Using average of ${soldStats.count} recent sold(s): $${soldStats.average.toFixed(2)}.`);
 
     if (soldStats.count < MIN_SOLDS_FOR_CONFIDENCE) {
-      confidence = 40;
+      confidence = CONFIDENCE_FEW_SOLDS;
       manualCheck = true;
       reasons.push(`Fewer than ${MIN_SOLDS_FOR_CONFIDENCE} solds — flagged for manual review.`);
     }
@@ -273,8 +219,8 @@ export function computePrice(input: PricingInput): PricingResult {
 
   const liquidValue = estimatedPrice !== null ? computeLiquidValue(estimatedPrice) : null;
 
-  const lowPrice = soldStats?.min ?? (lowestListing !== null ? round(lowestListing * 0.9) : null);
-  const highPrice = soldStats?.max ?? (lowestListing !== null ? round(lowestListing * 1.15) : null);
+  const lowPrice = soldStats?.min ?? (lowestListing !== null ? round(lowestListing * LOW_ESTIMATE_MULTIPLIER) : null);
+  const highPrice = soldStats?.max ?? (lowestListing !== null ? round(lowestListing * HIGH_ESTIMATE_MULTIPLIER) : null);
   const lowPriceLiquid = lowPrice !== null ? computeLiquidValue(lowPrice) : null;
   const highPriceLiquid = highPrice !== null ? computeLiquidValue(highPrice) : null;
 

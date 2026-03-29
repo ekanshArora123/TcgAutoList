@@ -10,6 +10,7 @@
  */
 
 import { formatConditionForApi, formatFinishForApi } from './formatters.js';
+import { MIN_SELLER_RATING, MIN_SELLER_SALES } from '../pricing/pricingConfig.js';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -53,12 +54,7 @@ const TCGPLAYER_HEADERS: Record<string, string> = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
 };
 
-/**
- * Minimum seller quality to include a listing in pricing.
- * Filters out low-reputation sellers whose prices may be unreliable.
- */
-const MIN_SELLER_RATING = 80;
-const MIN_SELLER_SALES = 30;
+// Seller filtering constants imported from pricingConfig.ts
 
 /**
  * Build the POST payload for TCGplayer's mp-search-api listings endpoint.
