@@ -39,8 +39,9 @@ async function main() {
   // Load config
   const telegramToken = requireEnv('TELEGRAM_BOT_TOKEN');
   const telegramChatId = parseInt(requireEnv('TELEGRAM_CHAT_ID'), 10);
-  const dbPath = process.env.DB_PATH ?? join(__dirname, '..', 'card-server', 'data', 'cards.db');
-  const photosDir = process.env.PHOTOS_DIR ?? join(__dirname, '..', 'photos');
+  const projectRoot = join(__dirname, '..');
+  const dbPath = process.env.DB_PATH ?? join(projectRoot, 'card-server', 'data', 'cards.db');
+  const photosDir = process.env.PHOTOS_DIR ?? join(projectRoot, 'photos');
 
   if (isNaN(telegramChatId)) {
     console.error('TELEGRAM_CHAT_ID must be a number');
@@ -66,6 +67,7 @@ async function main() {
     token: telegramToken,
     chatId: telegramChatId,
     photosDir,
+    projectRoot,
   });
 
   // Initialize orchestrator
@@ -76,7 +78,13 @@ async function main() {
   });
 
   orchestrator.start();
-  await bot.sendMessage('TcgAutoList is online. Send /next to start listing cards.');
+  try {
+    await bot.sendMessage('TcgAutoList is online. Send /next to start listing cards.');
+    console.log('Startup message sent to Telegram.');
+  } catch (err: any) {
+    console.error('Failed to send startup message:', err.message);
+    console.error('Check your TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.');
+  }
 
   // ─── Graceful shutdown ─────────────────────────────────────
 

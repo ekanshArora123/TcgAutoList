@@ -20,6 +20,8 @@ export interface BotConfig {
   token: string;
   chatId: number;
   photosDir: string;
+  /** Absolute path to the project root directory. */
+  projectRoot: string;
 }
 
 export class Bot extends EventEmitter {
@@ -27,6 +29,7 @@ export class Bot extends EventEmitter {
   private botToken: string;
   private chatId: number;
   private photosDir: string;
+  private projectRoot: string;
   /** Tracks which photo side we're expecting next per inventory item. */
   private expectedPhoto: { inventoryId: number; side: PhotoSide } | null = null;
 
@@ -35,6 +38,7 @@ export class Bot extends EventEmitter {
     this.botToken = config.token;
     this.chatId = config.chatId;
     this.photosDir = config.photosDir;
+    this.projectRoot = config.projectRoot;
     mkdirSync(this.photosDir, { recursive: true });
 
     this.bot = new TelegramBot(config.token, { polling: true });
@@ -203,7 +207,7 @@ export class Bot extends EventEmitter {
    * Images are stored as `data/card-images/{cardId}.webp`.
    */
   getCardImagePath(cardId: string): string | null {
-    const imgPath = join(process.cwd(), 'data', 'card-images', `${cardId}.webp`);
+    const imgPath = join(this.projectRoot, 'data', 'card-images', `${cardId}.webp`);
     return existsSync(imgPath) ? imgPath : null;
   }
 
