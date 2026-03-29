@@ -32,6 +32,8 @@ export class Bot extends EventEmitter {
   private projectRoot: string;
   /** Tracks which photo side we're expecting next per inventory item. */
   private expectedPhoto: { inventoryId: number; side: PhotoSide } | null = null;
+  /** Track last processed update_id to deduplicate events from 409 reconnects. */
+  private lastProcessedUpdateId = 0;
 
   constructor(config: BotConfig) {
     super();
@@ -41,9 +43,20 @@ export class Bot extends EventEmitter {
     this.projectRoot = config.projectRoot;
     mkdirSync(this.photosDir, { recursive: true });
 
-    this.bot = new TelegramBot(config.token, { polling: true });
-    console.log(`Telegram bot polling started (chatId: ${this.chatId})`);
+    // Create bot WITHOUT polling initially — start polling after clearing stale connections
+    this.bot = new TelegramBot(config.token, { polling: false });
     this.setupHandlers();
+
+    // Delete any stale webhook/polling sessions, then start polling.
+    // This prevents 409 Conflict errors from leftover bot instances.
+    this.bot.deleteWebHook().then(() => {
+      this.bot.startPolling({ restart: false });
+      console.log(`Telegram bot polling started (chatId: ${this.chatId})`);
+    }).catch(err => {
+      console.error('Failed to initialize polling:', err.message);
+      // Start polling anyway — it may work after the stale session times out
+      this.bot.startPolling({ restart: false });
+    });
   }
 
   private setupHandlers(): void {
@@ -54,6 +67,14 @@ export class Bot extends EventEmitter {
         console.log(`Unauthorized: expected ${this.chatId}, got ${msg.chat.id}`);
         return;
       }
+      // Deduplicate: skip if we already processed this update (409 reconnects re-deliver)
+      const updateId = (msg as any).update_id ?? msg.message_id;
+      if (updateId <= this.lastProcessedUpdateId) {
+        console.log(`Skipping duplicate update ${updateId} (already processed)`);
+        return;
+      }
+      this.lastProcessedUpdateId = updateId;
+
       const command = match![1] as TelegramEvent & { type: 'command' } extends { command: infer C } ? C : never;
       this.emit('event', {
         type: 'command',
@@ -65,6 +86,9 @@ export class Bot extends EventEmitter {
     // Photo handler
     this.bot.on('photo', async (msg) => {
       if (!this.isAuthorized(msg.chat.id)) return;
+      const photoUpdateId = (msg as any).update_id ?? msg.message_id;
+      if (photoUpdateId <= this.lastProcessedUpdateId) return;
+      this.lastProcessedUpdateId = photoUpdateId;
 
       // Get the highest resolution photo
       const photos = msg.photo!;
@@ -89,6 +113,9 @@ export class Bot extends EventEmitter {
       if (!this.isAuthorized(msg.chat.id)) return;
       // Skip commands (already handled by onText)
       if (msg.text?.startsWith('/')) return;
+      const textUpdateId = (msg as any).update_id ?? msg.message_id;
+      if (textUpdateId <= this.lastProcessedUpdateId) return;
+      this.lastProcessedUpdateId = textUpdateId;
 
       this.emit('event', {
         type: 'text',
@@ -112,6 +139,8 @@ export class Bot extends EventEmitter {
 
     // Error handling
     this.bot.on('polling_error', (err) => {
+      // Suppress 409 Conflict spam — just means another instance is still winding down
+      if (err.message?.includes('409 Conflict')) return;
       console.error('Telegram polling error:', err.message);
       if ('response' in err && (err as any).response?.body) {
         console.error('Response:', JSON.stringify((err as any).response.body));
@@ -187,11 +216,17 @@ export class Bot extends EventEmitter {
 
   /** Edit a previously sent message (e.g., to remove inline keyboard after selection). */
   async editMessage(messageId: number, text: string, parseMode?: 'Markdown' | 'HTML'): Promise<void> {
-    await this.bot.editMessageText(text, {
-      chat_id: this.chatId,
-      message_id: messageId,
-      parse_mode: parseMode,
-    });
+    try {
+      await this.bot.editMessageText(text, {
+        chat_id: this.chatId,
+        message_id: messageId,
+        parse_mode: parseMode,
+      });
+    } catch (err: any) {
+      // Ignore "message is not modified" — happens when editing to the same content
+      if (err?.response?.body?.description?.includes('message is not modified')) return;
+      throw err;
+    }
   }
 
   /** Send a photo from a local file path. */

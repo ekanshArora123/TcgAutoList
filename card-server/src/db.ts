@@ -18,6 +18,15 @@ export function initDatabase(dbPath?: string): Database.Database {
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
   db.exec(schema);
 
+  // Migrations: add columns to existing tables (safe to re-run)
+  const migrations = [
+    'ALTER TABLE inventory ADD COLUMN front_photo_path TEXT',
+    'ALTER TABLE inventory ADD COLUMN back_photo_path TEXT',
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch { /* column already exists */ }
+  }
+
   return db;
 }
 

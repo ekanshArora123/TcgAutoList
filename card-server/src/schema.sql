@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS inventory (
     qty           INTEGER DEFAULT 1,                              -- how many of this exact card from this source
     tags          TEXT,                                            -- comma-separated hidden details: "hidden crease", "surface marks", "trade", etc.
     status        TEXT DEFAULT 'unlisted',                         -- unlisted, photo_requested, listed, skipped, sold
+    front_photo_path TEXT,                                         -- local path to front photo
+    back_photo_path  TEXT,                                         -- local path to back photo
     ebay_listing_id TEXT,
     listed_at     TEXT,
     created_at    TEXT DEFAULT (datetime('now'))

@@ -254,6 +254,11 @@ export class CollectionService {
     return this.inventory.updateStatus(inventoryId, status);
   }
 
+  /** Store front and back photo paths for an inventory item. */
+  setPhotos(inventoryId: number, frontPhotoPath: string, backPhotoPath: string): InventoryItem | null {
+    return this.inventory.setPhotos(inventoryId, frontPhotoPath, backPhotoPath);
+  }
+
   /** Override the pricing SKU for borderline condition cards. */
   setPricingSku(inventoryId: number, pricingSkuId: number | null): InventoryItem | null {
     return this.inventory.setPricingSku(inventoryId, pricingSkuId);

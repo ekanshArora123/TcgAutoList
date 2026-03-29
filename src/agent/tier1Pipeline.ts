@@ -16,7 +16,7 @@ export interface ListingTemplate {
   price: number;
   condition: string;
   category: string;
-  photoPath: string;
+  photoPaths: string[];
 }
 
 /**
@@ -26,7 +26,7 @@ export interface ListingTemplate {
 export function buildListingTemplate(
   detail: InventoryDetail,
   price: Price,
-  photoPath: string,
+  photoPaths: string[],
 ): ListingTemplate {
   const conditionMap: Record<string, string> = {
     'MINT': 'Brand New',
@@ -51,7 +51,7 @@ export function buildListingTemplate(
     price: price.estimated_price!,
     condition: ebayCondition,
     category: 'Pokemon Individual Cards', // eBay category
-    photoPath,
+    photoPaths,
   };
 }
 
@@ -106,6 +106,6 @@ function buildDescription(detail: InventoryDetail, price: Price): string {
  */
 export async function postToEbay(listing: ListingTemplate): Promise<string> {
   // STUB — will be replaced with ebay-mcp integration
-  console.log(`[eBay STUB] Would post listing: ${listing.title} @ $${listing.price.toFixed(2)}`);
+  console.log(`[eBay STUB] Would post listing: ${listing.title} @ $${listing.price.toFixed(2)} (${listing.photoPaths.length} photos)`);
   return `ebay-stub-${Date.now()}`;
 }

@@ -72,11 +72,13 @@ export const InventorySchema = z.object({
   qty: z.number().default(1),
   tags: z.string().nullable(),
   status: InventoryStatus.default('unlisted'),
+  front_photo_path: z.string().nullable().default(null),
+  back_photo_path: z.string().nullable().default(null),
   ebay_listing_id: z.string().nullable(),
   listed_at: z.string().nullable(),
 });
 
-export const CreateInventoryInput = InventorySchema.omit({ inventory_id: true, ebay_listing_id: true, listed_at: true });
+export const CreateInventoryInput = InventorySchema.omit({ inventory_id: true, front_photo_path: true, back_photo_path: true, ebay_listing_id: true, listed_at: true });
 export const UpdateInventoryInput = InventorySchema.partial().required({ inventory_id: true });
 export const SearchInventoryInput = z.object({
   sku_id: z.number().optional(),

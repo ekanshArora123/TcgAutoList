@@ -38,6 +38,9 @@ export interface CardWorkflowState {
   tier: 1 | 2 | 3 | null;
   price: Price | null;
   photoPath: string | null;
+  backPhotoPath: string | null;
+  /** Which photo side we're currently waiting for. */
+  awaitingSide: PhotoSide | null;
   /** Confidence from the pricing algorithm. */
   confidence: number | null;
 }

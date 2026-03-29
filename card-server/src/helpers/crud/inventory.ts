@@ -14,6 +14,7 @@ export class InventoryHelper {
     markListed: Database.Statement;
     markSold: Database.Statement;
     updateStatus: Database.Statement;
+    setPhotos: Database.Statement;
     setPricingSku: Database.Statement;
     delete: Database.Statement;
   };
@@ -61,6 +62,7 @@ export class InventoryHelper {
       `),
       markSold: db.prepare("UPDATE inventory SET status = 'sold' WHERE inventory_id = ?"),
       updateStatus: db.prepare('UPDATE inventory SET status = @status WHERE inventory_id = @inventory_id'),
+      setPhotos: db.prepare('UPDATE inventory SET front_photo_path = @front_photo_path, back_photo_path = @back_photo_path WHERE inventory_id = @inventory_id'),
       setPricingSku: db.prepare('UPDATE inventory SET pricing_sku_id = @pricing_sku_id WHERE inventory_id = @inventory_id'),
       delete: db.prepare('DELETE FROM inventory WHERE inventory_id = ?'),
     };
@@ -227,7 +229,7 @@ export class InventoryHelper {
     const params: Record<string, unknown> = { inventory_id: input.inventory_id };
     const oldSkuId = existing.sku_id;
 
-    const updatable = ['sku_id', 'pricing_sku_id', 'qty', 'tags', 'status', 'ebay_listing_id', 'listed_at'] as const;
+    const updatable = ['sku_id', 'pricing_sku_id', 'qty', 'tags', 'status', 'front_photo_path', 'back_photo_path', 'ebay_listing_id', 'listed_at'] as const;
     for (const field of updatable) {
       if (input[field] !== undefined) {
         fields.push(`${field} = @${field}`);
@@ -259,6 +261,11 @@ export class InventoryHelper {
 
   updateStatus(inventoryId: number, status: string): InventoryItem | null {
     this.stmts.updateStatus.run({ inventory_id: inventoryId, status });
+    return this.getById(inventoryId);
+  }
+
+  setPhotos(inventoryId: number, frontPhotoPath: string, backPhotoPath: string): InventoryItem | null {
+    this.stmts.setPhotos.run({ inventory_id: inventoryId, front_photo_path: frontPhotoPath, back_photo_path: backPhotoPath });
     return this.getById(inventoryId);
   }
 

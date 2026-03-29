@@ -36,6 +36,8 @@ export class Orchestrator {
   private pricing: PricingService;
   private state: CardWorkflowState | null = null;
   private paused = false;
+  /** Prevents concurrent handleNext execution. */
+  private processingNext = false;
 
   constructor(deps: OrchestratorDeps) {
     this.bot = deps.bot;
@@ -98,6 +100,9 @@ export class Orchestrator {
       return;
     }
 
+    // Prevent concurrent /next processing (guards against 409 reconnect duplicates)
+    if (this.processingNext) return;
+
     if (this.state && this.state.step !== 'idle' && this.state.step !== 'done') {
       await this.bot.sendMessage(
         `Already processing a card (step: ${this.state.step}). Send /skip to skip it.`
@@ -105,82 +110,88 @@ export class Orchestrator {
       return;
     }
 
-    // Get next unlisted card
-    const detail = this.collection.getNextUnlisted();
-    if (!detail) {
-      await this.bot.sendMessage('No more unlisted cards! All done.');
-      return;
-    }
+    this.processingNext = true;
 
-    // Initialize workflow state
-    this.state = {
-      inventoryId: detail.inventory_id,
-      inventoryDetail: detail,
-      step: 'pricing',
-      tier: null,
-      price: null,
-      photoPath: null,
-      backPhotoPath: null,
-      awaitingSide: null,
-      confidence: null,
-    };
+    try {
+      // Get next unlisted card
+      const detail = this.collection.getNextUnlisted();
+      if (!detail) {
+        await this.bot.sendMessage('No more unlisted cards! All done.');
+        return;
+      }
 
-    // Check for existing price in DB first (fast, no network)
-    let price: Price | null = this.pricing.getLatestPriceForItem(detail.inventory_id);
+      // Initialize workflow state
+      this.state = {
+        inventoryId: detail.inventory_id,
+        inventoryDetail: detail,
+        step: 'pricing',
+        tier: null,
+        price: null,
+        photoPath: null,
+        backPhotoPath: null,
+        awaitingSide: null,
+        confidence: null,
+      };
 
-    // If no price or stale (older than 14 days), fetch fresh from TCGplayer
-    const isStale = price && this.isPriceStale(price.calculation_date);
-    if (!price || isStale) {
-      await this.bot.sendMessage('Fetching price...');
-      const cardId = detail.card_id;
-      try {
-        const result = await this.pricing.computeAndStorePrice(
-          cardId,
-          detail.condition,
-          detail.finish,
-        );
-        if (result) price = result;
-      } catch (err) {
-        // Keep existing price if fetch fails
-        if (!price) {
-          await this.bot.sendMessage('Failed to fetch price. No existing price in DB.');
+      // Check for existing price in DB first (fast, no network)
+      let price: Price | null = this.pricing.getLatestPriceForItem(detail.inventory_id);
+
+      // If no price or stale (older than 14 days), fetch fresh from TCGplayer
+      const isStale = price && this.isPriceStale(price.calculation_date);
+      if (!price || isStale) {
+        await this.bot.sendMessage('Fetching price...');
+        const cardId = detail.card_id;
+        try {
+          const result = await this.pricing.computeAndStorePrice(
+            cardId,
+            detail.condition,
+            detail.finish,
+          );
+          if (result) price = result;
+        } catch (err) {
+          // Keep existing price if fetch fails
+          if (!price) {
+            await this.bot.sendMessage('Failed to fetch price. No existing price in DB.');
+          }
         }
       }
-    }
 
-    this.state.price = price;
-    this.state.confidence = price?.confidence_percent ?? 0;
+      this.state.price = price;
+      this.state.confidence = price?.confidence_percent ?? 0;
 
-    // Get specialty info for tier routing (now in InventoryDetail)
-    const specialtyTwo = detail.specialty_two ?? 'None';
+      // Get specialty info for tier routing (now in InventoryDetail)
+      const specialtyTwo = detail.specialty_two ?? 'None';
 
-    // Route to tier
-    this.state.step = 'tier_routing';
-    const tierResult = routeToTier(price, specialtyTwo);
-    this.state.tier = tierResult.tier;
+      // Route to tier
+      this.state.step = 'tier_routing';
+      const tierResult = routeToTier(price, specialtyTwo);
+      this.state.tier = tierResult.tier;
 
-    // Send card summary to user (with digital image if available)
-    const summary = renderCardSummary(detail, price);
-    const summaryText = `${summary}\n\nTier: ${tierResult.tier} — ${tierResult.reason}`;
-    const cardImagePath = this.bot.getCardImagePath(detail.card_id);
+      // Send card summary to user (with digital image if available)
+      const summary = renderCardSummary(detail, price);
+      const summaryText = `${summary}\n\nTier: ${tierResult.tier} — ${tierResult.reason}`;
+      const cardImagePath = this.bot.getCardImagePath(detail.card_id);
 
-    if (cardImagePath) {
-      await this.bot.sendPhoto(cardImagePath, summaryText, 'Markdown');
-    } else {
-      await this.bot.sendMessage(`${summaryText}\n\n_No digital image available_`, 'Markdown');
-    }
+      if (cardImagePath) {
+        await this.bot.sendPhoto(cardImagePath, summaryText, 'Markdown');
+      } else {
+        await this.bot.sendMessage(`${summaryText}\n\n_No digital image available_`, 'Markdown');
+      }
 
-    // Execute the appropriate tier
-    switch (tierResult.tier) {
-      case 1:
-        await this.executeTier1();
-        break;
-      case 2:
-        await this.executeTier2Stub();
-        break;
-      case 3:
-        await this.executeTier3Stub();
-        break;
+      // Execute the appropriate tier
+      switch (tierResult.tier) {
+        case 1:
+          await this.executeTier1();
+          break;
+        case 2:
+          await this.executeTier2Stub();
+          break;
+        case 3:
+          await this.executeTier3Stub();
+          break;
+      }
+    } finally {
+      this.processingNext = false;
     }
   }
 
