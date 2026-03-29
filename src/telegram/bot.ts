@@ -10,7 +10,7 @@
 
 import TelegramBot from 'node-telegram-bot-api';
 import { EventEmitter } from 'events';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { writeFile } from 'fs/promises';
 import type { TelegramEvent, PhotoSide } from '../types.js';
@@ -38,13 +38,18 @@ export class Bot extends EventEmitter {
     mkdirSync(this.photosDir, { recursive: true });
 
     this.bot = new TelegramBot(config.token, { polling: true });
+    console.log(`Telegram bot polling started (chatId: ${this.chatId})`);
     this.setupHandlers();
   }
 
   private setupHandlers(): void {
     // Command handler
-    this.bot.onText(/^\/(next|status|skip|pause)$/, (msg, match) => {
-      if (!this.isAuthorized(msg.chat.id)) return;
+    this.bot.onText(/^\/(next|status|skip|pause)(?:@\S+)?$/, (msg, match) => {
+      console.log(`Received command from chat ${msg.chat.id}: ${msg.text}`);
+      if (!this.isAuthorized(msg.chat.id)) {
+        console.log(`Unauthorized: expected ${this.chatId}, got ${msg.chat.id}`);
+        return;
+      }
       const command = match![1] as TelegramEvent & { type: 'command' } extends { command: infer C } ? C : never;
       this.emit('event', {
         type: 'command',
@@ -104,6 +109,13 @@ export class Bot extends EventEmitter {
     // Error handling
     this.bot.on('polling_error', (err) => {
       console.error('Telegram polling error:', err.message);
+      if ('response' in err && (err as any).response?.body) {
+        console.error('Response:', JSON.stringify((err as any).response.body));
+      }
+    });
+
+    this.bot.on('error', (err) => {
+      console.error('Telegram bot error:', err.message);
     });
   }
 
@@ -179,10 +191,20 @@ export class Bot extends EventEmitter {
   }
 
   /** Send a photo from a local file path. */
-  async sendPhoto(filePath: string, caption?: string): Promise<void> {
+  async sendPhoto(filePath: string, caption?: string, parseMode?: 'Markdown' | 'HTML'): Promise<void> {
     await this.bot.sendPhoto(this.chatId, filePath, {
       caption,
+      parse_mode: parseMode,
     });
+  }
+
+  /**
+   * Get the path to a card's digital image, or null if not available.
+   * Images are stored as `data/card-images/{cardId}.webp`.
+   */
+  getCardImagePath(cardId: string): string | null {
+    const imgPath = join(process.cwd(), 'data', 'card-images', `${cardId}.webp`);
+    return existsSync(imgPath) ? imgPath : null;
   }
 
   /** Stop polling and clean up. */

@@ -120,6 +120,8 @@ export class Orchestrator {
       tier: null,
       price: null,
       photoPath: null,
+      backPhotoPath: null,
+      awaitingSide: null,
       confidence: null,
     };
 
@@ -157,12 +159,16 @@ export class Orchestrator {
     const tierResult = routeToTier(price, specialtyTwo);
     this.state.tier = tierResult.tier;
 
-    // Send card summary to user
+    // Send card summary to user (with digital image if available)
     const summary = renderCardSummary(detail, price);
-    await this.bot.sendMessage(
-      `${summary}\n\nTier: ${tierResult.tier} — ${tierResult.reason}`,
-      'Markdown',
-    );
+    const summaryText = `${summary}\n\nTier: ${tierResult.tier} — ${tierResult.reason}`;
+    const cardImagePath = this.bot.getCardImagePath(detail.card_id);
+
+    if (cardImagePath) {
+      await this.bot.sendPhoto(cardImagePath, summaryText, 'Markdown');
+    } else {
+      await this.bot.sendMessage(summaryText, 'Markdown');
+    }
 
     // Execute the appropriate tier
     switch (tierResult.tier) {
@@ -182,8 +188,9 @@ export class Orchestrator {
   private async executeTier1(): Promise<void> {
     if (!this.state) return;
 
-    // Request front photo
+    // Request front photo first
     this.state.step = 'awaiting_photo';
+    this.state.awaitingSide = 'front';
     this.bot.setExpectedPhoto(this.state.inventoryId, 'front');
 
     const photoMsg = renderPhotoRequest(this.state.inventoryDetail, 'front');
@@ -204,18 +211,39 @@ export class Orchestrator {
       return;
     }
 
-    this.state.photoPath = filePath;
-    this.bot.clearExpectedPhoto();
+    if (this.state.awaitingSide === 'front') {
+      // Front photo received — now request back
+      this.state.photoPath = filePath;
+      this.state.awaitingSide = 'back';
+      this.bot.setExpectedPhoto(this.state.inventoryId, 'back');
 
-    // Build and post listing
+      const photoMsg = renderPhotoRequest(this.state.inventoryDetail, 'back');
+      await this.bot.sendInlineKeyboard(
+        photoMsg,
+        buildPhotoRequestKeyboard(this.state.inventoryId),
+        'Markdown',
+      );
+      return;
+    }
+
+    // Back photo received — proceed with listing
+    this.state.backPhotoPath = filePath;
+    this.bot.clearExpectedPhoto();
+    this.state.awaitingSide = null;
+
     this.state.step = 'building_listing';
-    await this.bot.sendMessage('Photo received. Building listing...');
+    await this.bot.sendMessage('Photos received. Building listing...');
 
     if (this.state.tier === 1 && this.state.price && this.state.price.estimated_price !== null) {
+      const photoPaths = [this.state.photoPath!, this.state.backPhotoPath!];
+
+      // Save photo paths to DB
+      this.collection.setPhotos(this.state.inventoryId, photoPaths[0], photoPaths[1]);
+
       const listing = buildListingTemplate(
         this.state.inventoryDetail,
         this.state.price,
-        filePath,
+        photoPaths,
       );
 
       this.state.step = 'posting';
