@@ -109,8 +109,17 @@ export default function AnalyticsPage() {
         <div className="chart-card full-width">
           <h3>Price Distribution</h3>
           <div className="chart-controls">
-            <label>Max Price: <input type="number" value={histMaxPrice} onChange={(e) => setHistMaxPrice(Number(e.target.value))} /></label>
-            <label>Bin Size: <input type="number" value={histBinSize} onChange={(e) => setHistBinSize(Number(e.target.value))} /></label>
+            <label>Max Price: <input type="number" value={histMaxPrice} step="any" onChange={(e) => setHistMaxPrice(Number(e.target.value))} /></label>
+            <label>Bin Size: <input type="number" value={histBinSize} step="any" min="0.01" onChange={(e) => setHistBinSize(Number(e.target.value))} /></label>
+            <span style={{ fontSize: 11, color: "#484f58" }}>Presets:</span>
+            {[0.25, 0.5, 1, 2, 5, 10].map((s) => (
+              <button
+                key={s}
+                className="nav-btn"
+                style={{ fontSize: 11, padding: "3px 8px", background: histBinSize === s ? "#1f6feb" : undefined, color: histBinSize === s ? "#fff" : undefined }}
+                onClick={() => { setHistBinSize(s); fetchPriceHistogram(histMaxPrice, s).then(setHistogram); }}
+              >${s}</button>
+            ))}
             <button className="nav-btn" onClick={reloadHistogram} style={{ fontSize: 12, padding: "4px 10px" }}>Update</button>
           </div>
           <ResponsiveContainer width="100%" height={300}>

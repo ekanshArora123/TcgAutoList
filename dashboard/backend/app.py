@@ -173,16 +173,19 @@ def analytics_summary():
         by_status = {r["status"]: r["count"] for r in status_rows}
 
         manual_checks = db.execute("""
-            SELECT COUNT(*) as c FROM prices p
-            JOIN skus s ON p.sku_id = s.sku_id
+            SELECT COUNT(*) as c FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
+                AND p.calculation_date = s.latest_calc_date
             WHERE p.manual_check_necessary = 1 AND p.manually_checked = 0
-            AND p.calculation_date = s.latest_calc_date
         """).fetchone()["c"]
 
         avg_confidence = db.execute("""
-            SELECT AVG(p.confidence_percent) as avg_conf FROM prices p
-            JOIN skus s ON p.sku_id = s.sku_id
-            WHERE p.calculation_date = s.latest_calc_date AND p.confidence_percent IS NOT NULL
+            SELECT AVG(p.confidence_percent) as avg_conf FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
+                AND p.calculation_date = s.latest_calc_date
+            WHERE p.confidence_percent IS NOT NULL
         """).fetchone()["avg_conf"]
 
         return jsonify({
@@ -212,28 +215,33 @@ def price_histogram():
     try:
         rows = db.execute("""
             SELECT p.estimated_price
-            FROM prices p
-            JOIN skus s ON p.sku_id = s.sku_id
-            WHERE p.calculation_date = s.latest_calc_date
-              AND p.estimated_price IS NOT NULL
+            FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
+                AND p.calculation_date = s.latest_calc_date
+            WHERE p.estimated_price IS NOT NULL
         """).fetchall()
 
         bins = {}
         over_max = 0
+        # Format labels: use integers if bin_size is whole, otherwise 2 decimals
+        def fmt_price(v):
+            return f"${v:.0f}" if bin_size == int(bin_size) else f"${v:.2f}"
+
         for r in rows:
             price = r["estimated_price"]
             if price > max_price:
                 over_max += 1
             else:
                 bucket = int(price / bin_size) * bin_size
-                label = f"${bucket:.0f}-${bucket + bin_size:.0f}"
+                label = f"{fmt_price(bucket)}-{fmt_price(bucket + bin_size)}"
                 bins[label] = bins.get(label, 0) + 1
 
         # Sort bins by numeric value
         sorted_bins = sorted(bins.items(), key=lambda x: float(x[0].split("-")[0].replace("$", "")))
         result = [{"range": k, "count": v} for k, v in sorted_bins]
         if over_max:
-            result.append({"range": f">${max_price:.0f}", "count": over_max})
+            result.append({"range": f">{fmt_price(max_price)}", "count": over_max})
 
         return jsonify(result)
     finally:
@@ -248,22 +256,23 @@ def confidence_distribution():
         rows = db.execute("""
             SELECT
                 CASE
-                    WHEN confidence_percent IS NULL THEN 'No Data'
-                    WHEN confidence_percent >= 90 THEN '90-100'
-                    WHEN confidence_percent >= 80 THEN '80-89'
-                    WHEN confidence_percent >= 70 THEN '70-79'
-                    WHEN confidence_percent >= 60 THEN '60-69'
-                    WHEN confidence_percent >= 50 THEN '50-59'
-                    WHEN confidence_percent >= 40 THEN '40-49'
-                    WHEN confidence_percent >= 30 THEN '30-39'
-                    WHEN confidence_percent >= 20 THEN '20-29'
-                    WHEN confidence_percent >= 10 THEN '10-19'
+                    WHEN p.confidence_percent IS NULL THEN 'No Data'
+                    WHEN p.confidence_percent >= 90 THEN '90-100'
+                    WHEN p.confidence_percent >= 80 THEN '80-89'
+                    WHEN p.confidence_percent >= 70 THEN '70-79'
+                    WHEN p.confidence_percent >= 60 THEN '60-69'
+                    WHEN p.confidence_percent >= 50 THEN '50-59'
+                    WHEN p.confidence_percent >= 40 THEN '40-49'
+                    WHEN p.confidence_percent >= 30 THEN '30-39'
+                    WHEN p.confidence_percent >= 20 THEN '20-29'
+                    WHEN p.confidence_percent >= 10 THEN '10-19'
                     ELSE '0-9'
                 END as bucket,
                 COUNT(*) as count
-            FROM prices p
-            JOIN skus s ON p.sku_id = s.sku_id
-            WHERE p.calculation_date = s.latest_calc_date
+            FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            LEFT JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
+                AND p.calculation_date = s.latest_calc_date
             GROUP BY bucket
             ORDER BY bucket
         """).fetchall()
