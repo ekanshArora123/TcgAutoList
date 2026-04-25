@@ -71,6 +71,7 @@ export interface Summary {
 export interface HistogramBin {
   range: string;
   count: number;
+  total_value: number;
 }
 
 export interface ConfidenceBucket {

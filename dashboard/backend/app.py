@@ -234,20 +234,23 @@ def price_histogram():
             WHERE p.estimated_price IS NOT NULL
         """).fetchall()
 
-        # Build bin counts: one per adjacent pair of breakpoints, plus overflow
+        # Build bin counts and value sums per bucket, plus overflow
         bin_counts = [0] * (len(breaks) - 1)
-        over_max = 0
+        bin_values = [0.0] * (len(breaks) - 1)
+        over_max_count = 0
+        over_max_value = 0.0
         max_break = breaks[-1]
 
         for r in rows:
             price = r["estimated_price"]
             if price >= max_break:
-                over_max += 1
+                over_max_count += 1
+                over_max_value += price
                 continue
-            # Find which bin this price falls into
             for i in range(len(breaks) - 1):
                 if breaks[i] <= price < breaks[i + 1]:
                     bin_counts[i] += 1
+                    bin_values[i] += price
                     break
 
         def fmt(v):
@@ -258,9 +261,10 @@ def price_histogram():
             result.append({
                 "range": f"{fmt(breaks[i])}-{fmt(breaks[i + 1])}",
                 "count": bin_counts[i],
+                "total_value": round(bin_values[i], 2),
             })
-        if over_max:
-            result.append({"range": f">{fmt(max_break)}", "count": over_max})
+        if over_max_count:
+            result.append({"range": f">{fmt(max_break)}", "count": over_max_count, "total_value": round(over_max_value, 2)})
 
         return jsonify(result)
     finally:

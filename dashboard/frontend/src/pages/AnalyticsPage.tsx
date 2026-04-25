@@ -147,24 +147,32 @@ export default function AnalyticsPage() {
           </div>
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart data={(() => {
-              const total = histogram.reduce((s, b) => s + b.count, 0);
-              return histogram.map((b) => ({ ...b, pct: total > 0 ? +((b.count / total) * 100).toFixed(1) : 0 }));
+              const totalCount = histogram.reduce((s, b) => s + b.count, 0);
+              const totalValue = histogram.reduce((s, b) => s + b.total_value, 0);
+              return histogram.map((b) => ({
+                ...b,
+                pctQty: totalCount > 0 ? +((b.count / totalCount) * 100).toFixed(1) : 0,
+                pctValue: totalValue > 0 ? +((b.total_value / totalValue) * 100).toFixed(1) : 0,
+              }));
             })()}>
               <XAxis dataKey="range" tick={{ fill: "#8b949e", fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
               <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#d29922", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
               <Tooltip content={({ active, payload, label }: any) => {
                 if (!active || !payload?.length) return null;
+                const d = payload[0]?.payload;
                 return (
                   <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-                    <div style={{ color: "#e1e4e8", fontWeight: 600 }}>{label}</div>
-                    <div style={{ color: "#1f6feb" }}>Count: {payload[0]?.value?.toLocaleString()}</div>
-                    <div style={{ color: "#d29922" }}>{payload[1]?.value}% of collection</div>
+                    <div style={{ color: "#e1e4e8", fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: "#1f6feb" }}>Count: {d?.count?.toLocaleString()}</div>
+                    <div style={{ color: "#d29922" }}>{d?.pctQty}% of cards</div>
+                    <div style={{ color: "#3fb950" }}>{d?.pctValue}% of value (${d?.total_value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</div>
                   </div>
                 );
               }} />
               <Bar yAxisId="left" dataKey="count" fill="#1f6feb" radius={[2, 2, 0, 0]} name="Count" />
-              <Line yAxisId="right" type="monotone" dataKey="pct" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="% of Collection" />
+              <Line yAxisId="right" type="monotone" dataKey="pctQty" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="% of Cards" />
+              <Line yAxisId="right" type="monotone" dataKey="pctValue" stroke="#3fb950" strokeWidth={2} dot={{ fill: "#3fb950", r: 3 }} name="% of Value" />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
