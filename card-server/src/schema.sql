@@ -68,6 +68,43 @@ CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory(sku_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_status ON inventory(status);
 
 -----------------------------------------------------
+-- market_snapshots: append-only historical market data
+-- One row per card+condition+finish+source per collection date.
+-- Stores aggregate stats from external marketplaces for trend analysis.
+-----------------------------------------------------
+CREATE TABLE IF NOT EXISTS market_snapshots (
+    snapshot_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id                 TEXT NOT NULL REFERENCES cards(id),
+    condition               TEXT NOT NULL,
+    finish                  TEXT NOT NULL DEFAULT 'Regular',
+    snapshot_date           TEXT NOT NULL,               -- ISO YYYY-MM-DD
+    source                  TEXT NOT NULL DEFAULT 'tcgplayer',  -- 'tcgplayer', 'ebay', etc.
+
+    -- Listing aggregates
+    listing_count           INTEGER,
+    lowest_listing_price    REAL,
+    median_listing_price    REAL,
+    mean_listing_price      REAL,
+    p25_listing_price       REAL,
+    p75_listing_price       REAL,
+
+    -- Sales aggregates (from recent solds available at fetch time)
+    recent_sales_count      INTEGER,
+    avg_sale_price          REAL,
+    median_sale_price       REAL,
+    min_sale_price          REAL,
+    max_sale_price          REAL,
+    newest_sale_date        TEXT,
+    oldest_sale_date        TEXT,
+
+    UNIQUE(card_id, condition, finish, snapshot_date, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_card ON market_snapshots(card_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_date ON market_snapshots(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_snapshots_card_date ON market_snapshots(card_id, snapshot_date);
+
+-----------------------------------------------------
 -- prices: historical price estimates per SKU
 -- Composite PK on (sku_id, calculation_date) for time-series pricing
 -----------------------------------------------------
