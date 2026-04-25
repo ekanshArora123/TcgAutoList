@@ -207,9 +207,21 @@ def analytics_summary():
 
 @app.route("/api/analytics/price-histogram")
 def price_histogram():
-    """Price distribution histogram with configurable bins."""
-    max_price = float(request.args.get("max_price", 100))
-    bin_size = float(request.args.get("bin_size", 2))
+    """Price distribution histogram with custom breakpoints.
+
+    Query params:
+      breaks: comma-separated breakpoints, e.g. "0,0.2,0.5,1,5,10,30,60,100"
+              The last value is the upper cap; anything above goes into a ">" bucket.
+    """
+    breaks_str = request.args.get("breaks", "0,1,2,5,10,20,30,50,100")
+
+    try:
+        breaks = sorted(set(float(b) for b in breaks_str.split(",") if b.strip()))
+    except ValueError:
+        return jsonify({"error": "Invalid breaks parameter"}), 400
+
+    if len(breaks) < 2:
+        return jsonify({"error": "Need at least 2 breakpoints"}), 400
 
     db = get_db()
     try:
@@ -222,26 +234,33 @@ def price_histogram():
             WHERE p.estimated_price IS NOT NULL
         """).fetchall()
 
-        bins = {}
+        # Build bin counts: one per adjacent pair of breakpoints, plus overflow
+        bin_counts = [0] * (len(breaks) - 1)
         over_max = 0
-        # Format labels: use integers if bin_size is whole, otherwise 2 decimals
-        def fmt_price(v):
-            return f"${v:.0f}" if bin_size == int(bin_size) else f"${v:.2f}"
+        max_break = breaks[-1]
 
         for r in rows:
             price = r["estimated_price"]
-            if price > max_price:
+            if price >= max_break:
                 over_max += 1
-            else:
-                bucket = int(price / bin_size) * bin_size
-                label = f"{fmt_price(bucket)}-{fmt_price(bucket + bin_size)}"
-                bins[label] = bins.get(label, 0) + 1
+                continue
+            # Find which bin this price falls into
+            for i in range(len(breaks) - 1):
+                if breaks[i] <= price < breaks[i + 1]:
+                    bin_counts[i] += 1
+                    break
 
-        # Sort bins by numeric value
-        sorted_bins = sorted(bins.items(), key=lambda x: float(x[0].split("-")[0].replace("$", "")))
-        result = [{"range": k, "count": v} for k, v in sorted_bins]
+        def fmt(v):
+            return f"${v:g}"
+
+        result = []
+        for i in range(len(breaks) - 1):
+            result.append({
+                "range": f"{fmt(breaks[i])}-{fmt(breaks[i + 1])}",
+                "count": bin_counts[i],
+            })
         if over_max:
-            result.append({"range": f">{fmt_price(max_price)}", "count": over_max})
+            result.append({"range": f">{fmt(max_break)}", "count": over_max})
 
         return jsonify(result)
     finally:

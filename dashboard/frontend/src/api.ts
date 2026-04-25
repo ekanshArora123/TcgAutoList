@@ -135,8 +135,8 @@ export function fetchSummary(): Promise<Summary> {
   return fetchJson(`${BASE}/analytics/summary`);
 }
 
-export function fetchPriceHistogram(maxPrice = 100, binSize = 2): Promise<HistogramBin[]> {
-  return fetchJson(`${BASE}/analytics/price-histogram?max_price=${maxPrice}&bin_size=${binSize}`);
+export function fetchPriceHistogram(breaks: number[]): Promise<HistogramBin[]> {
+  return fetchJson(`${BASE}/analytics/price-histogram?breaks=${breaks.join(",")}`);
 }
 
 export function fetchConfidenceDistribution(): Promise<ConfidenceBucket[]> {

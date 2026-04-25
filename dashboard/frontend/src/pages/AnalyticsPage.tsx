@@ -46,12 +46,28 @@ export default function AnalyticsPage() {
   const [rarities, setRarities] = useState<RarityBreakdown[]>([]);
   const [topCards, setTopCards] = useState<TopCard[]>([]);
   const [sets, setSets] = useState<SetBreakdown[]>([]);
-  const [histMaxPrice, setHistMaxPrice] = useState(100);
-  const [histBinSize, setHistBinSize] = useState(2);
+  const PRESETS: Record<string, number[]> = {
+    "Fine": [0, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100],
+    "Standard": [0, 1, 2, 5, 10, 20, 30, 50, 100],
+    "Coarse": [0, 5, 10, 25, 50, 100, 250, 500],
+    "Under $10": [0, 0.25, 0.5, 1, 2, 3, 4, 5, 7, 10],
+    "High Value": [0, 10, 25, 50, 100, 200, 500, 1000],
+  };
+  const [breaksInput, setBreaksInput] = useState("0, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50, 100");
+  const [activePreset, setActivePreset] = useState<string | null>(null);
+
+  const parseBreaks = (s: string): number[] => {
+    const nums = s.split(",").map((b) => parseFloat(b.trim())).filter((n) => !isNaN(n));
+    return [...new Set(nums)].sort((a, b) => a - b);
+  };
+
+  const loadHistogram = (breaks: number[]) => {
+    if (breaks.length >= 2) fetchPriceHistogram(breaks).then(setHistogram);
+  };
 
   useEffect(() => {
     fetchSummary().then(setSummary);
-    fetchPriceHistogram(histMaxPrice, histBinSize).then(setHistogram);
+    loadHistogram(parseBreaks(breaksInput));
     fetchConfidenceDistribution().then(setConfidence);
     fetchEraBreakdown().then(setEras);
     fetchConditionBreakdown().then(setConditions);
@@ -59,10 +75,6 @@ export default function AnalyticsPage() {
     fetchTopCards(25).then(setTopCards);
     fetchSetBreakdown().then(setSets);
   }, []);
-
-  const reloadHistogram = () => {
-    fetchPriceHistogram(histMaxPrice, histBinSize).then(setHistogram);
-  };
 
   if (!summary) return <div className="loading">Loading analytics...</div>;
 
@@ -109,18 +121,29 @@ export default function AnalyticsPage() {
         <div className="chart-card full-width">
           <h3>Price Distribution</h3>
           <div className="chart-controls">
-            <label>Max Price: <input type="number" value={histMaxPrice} step="any" onChange={(e) => setHistMaxPrice(Number(e.target.value))} /></label>
-            <label>Bin Size: <input type="number" value={histBinSize} step="any" min="0.01" onChange={(e) => setHistBinSize(Number(e.target.value))} /></label>
+            <label>Breakpoints: <input
+              type="text"
+              value={breaksInput}
+              onChange={(e) => { setBreaksInput(e.target.value); setActivePreset(null); }}
+              style={{ width: 320 }}
+              placeholder="0, 1, 5, 10, 50, 100"
+            /></label>
+            <button className="nav-btn" onClick={() => loadHistogram(parseBreaks(breaksInput))} style={{ fontSize: 12, padding: "4px 10px" }}>Update</button>
+          </div>
+          <div className="chart-controls">
             <span style={{ fontSize: 11, color: "#484f58" }}>Presets:</span>
-            {[0.25, 0.5, 1, 2, 5, 10].map((s) => (
+            {Object.entries(PRESETS).map(([name, breaks]) => (
               <button
-                key={s}
+                key={name}
                 className="nav-btn"
-                style={{ fontSize: 11, padding: "3px 8px", background: histBinSize === s ? "#1f6feb" : undefined, color: histBinSize === s ? "#fff" : undefined }}
-                onClick={() => { setHistBinSize(s); fetchPriceHistogram(histMaxPrice, s).then(setHistogram); }}
-              >${s}</button>
+                style={{ fontSize: 11, padding: "3px 8px", background: activePreset === name ? "#1f6feb" : undefined, color: activePreset === name ? "#fff" : undefined }}
+                onClick={() => {
+                  setBreaksInput(breaks.join(", "));
+                  setActivePreset(name);
+                  loadHistogram(breaks);
+                }}
+              >{name}</button>
             ))}
-            <button className="nav-btn" onClick={reloadHistogram} style={{ fontSize: 12, padding: "4px 10px" }}>Update</button>
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={histogram}>
