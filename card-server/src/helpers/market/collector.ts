@@ -80,6 +80,15 @@ export class MarketCollector {
     const today = new Date().toISOString().split('T')[0];
     const start = Date.now();
 
+    // Filter out cards already collected today
+    const alreadyCollected = new Set(this.getCardIdsCollectedOnDate(today));
+    const remaining = cardIds.filter(id => !alreadyCollected.has(id));
+
+    if (verbose && alreadyCollected.size > 0) {
+      const skipped = cardIds.length - remaining.length;
+      console.log(`Skipping ${skipped} cards already collected today. ${remaining.length} remaining.\n`);
+    }
+
     const report: CollectionReport = {
       date: today,
       cards_processed: 0,
@@ -89,8 +98,8 @@ export class MarketCollector {
       duration_ms: 0,
     };
 
-    for (let i = 0; i < cardIds.length; i++) {
-      const cardId = cardIds[i];
+    for (let i = 0; i < remaining.length; i++) {
+      const cardId = remaining[i];
 
       if (i > 0 && delayMs > 0) {
         await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -107,7 +116,7 @@ export class MarketCollector {
           const card = this.cards.getById(cardId);
           const name = card?.card_name ?? cardId;
           console.log(
-            `[${i + 1}/${cardIds.length}] ${name}: ${result.snapshots} snapshots, ${result.prices} prices`,
+            `[${i + 1}/${remaining.length}] ${name}: ${result.snapshots} snapshots, ${result.prices} prices`,
           );
         }
       } catch (err) {
@@ -291,6 +300,14 @@ export class MarketCollector {
         WHERE snapshot_date >= ?
       )
     `).all(cutoffStr) as { card_id: string }[];
+    return rows.map(r => r.card_id);
+  }
+
+  /** Get card IDs that already have snapshots for a given date. */
+  private getCardIdsCollectedOnDate(date: string): string[] {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT card_id FROM market_snapshots WHERE snapshot_date = ?',
+    ).all(date) as { card_id: string }[];
     return rows.map(r => r.card_id);
   }
 
