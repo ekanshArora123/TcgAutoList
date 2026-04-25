@@ -41,6 +41,10 @@ export interface CollectorOptions {
   delayMs?: number;
   /** Log progress to console. Default true. */
   verbose?: boolean;
+  /** How long to wait (ms) when rate-limited before retrying. Default 120000 (2 min). */
+  rateLimitPauseMs?: number;
+  /** Max number of rate-limit retries before giving up. Default 50 (enough for ~3500 cards). */
+  maxRetries?: number;
 }
 
 // ─── Collector ──────────────────────────────────────────────
@@ -77,6 +81,8 @@ export class MarketCollector {
   ): Promise<CollectionReport> {
     const delayMs = options.delayMs ?? 500;
     const verbose = options.verbose ?? true;
+    const rateLimitPauseMs = options.rateLimitPauseMs ?? 120_000;
+    const maxRetries = options.maxRetries ?? 50;
     const today = new Date().toISOString().split('T')[0];
     const start = Date.now();
 
@@ -98,7 +104,10 @@ export class MarketCollector {
       duration_ms: 0,
     };
 
-    for (let i = 0; i < remaining.length; i++) {
+    let retryCount = 0;
+    let i = 0;
+
+    while (i < remaining.length) {
       const cardId = remaining[i];
 
       if (i > 0 && delayMs > 0) {
@@ -119,11 +128,27 @@ export class MarketCollector {
             `[${i + 1}/${remaining.length}] ${name}: ${result.snapshots} snapshots, ${result.prices} prices`,
           );
         }
+        i++;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        report.errors.push({ card_id: cardId, error: message });
-        if (verbose) {
-          console.error(`[${i + 1}/${cardIds.length}] ERROR ${cardId}: ${message}`);
+
+        if (this.isRateLimitError(message) && retryCount < maxRetries) {
+          retryCount++;
+          const pauseSec = rateLimitPauseMs / 1000;
+          if (verbose) {
+            console.log(
+              `\nRate limited at card ${i + 1}/${remaining.length}. ` +
+              `Pausing ${pauseSec}s before retry (attempt ${retryCount}/${maxRetries})...`,
+            );
+          }
+          await new Promise(resolve => setTimeout(resolve, rateLimitPauseMs));
+          // Don't increment i — retry the same card
+        } else {
+          report.errors.push({ card_id: cardId, error: message });
+          if (verbose) {
+            console.error(`[${i + 1}/${remaining.length}] ERROR ${cardId}: ${message}`);
+          }
+          i++;
         }
       }
     }
@@ -134,11 +159,17 @@ export class MarketCollector {
       console.log(
         `\nCollection complete: ${report.cards_processed} cards, ` +
         `${report.snapshots_written} snapshots, ${report.prices_written} prices, ` +
-        `${report.errors.length} errors, ${(report.duration_ms / 1000).toFixed(1)}s`,
+        `${report.errors.length} errors, ${retryCount} rate-limit pauses, ` +
+        `${(report.duration_ms / 1000).toFixed(1)}s`,
       );
     }
 
     return report;
+  }
+
+  /** Check if an error message indicates rate limiting (403/429). */
+  private isRateLimitError(message: string): boolean {
+    return message.includes('403') || message.includes('429') || message.includes('rate limit');
   }
 
   /**
