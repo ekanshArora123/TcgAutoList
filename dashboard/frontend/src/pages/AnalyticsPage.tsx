@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  ComposedChart, BarChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
 import {
@@ -145,13 +145,27 @@ export default function AnalyticsPage() {
               >{name}</button>
             ))}
           </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={histogram}>
+          <ResponsiveContainer width="100%" height={320}>
+            <ComposedChart data={(() => {
+              const total = histogram.reduce((s, b) => s + b.count, 0);
+              return histogram.map((b) => ({ ...b, pct: total > 0 ? +((b.count / total) * 100).toFixed(1) : 0 }));
+            })()}>
               <XAxis dataKey="range" tick={{ fill: "#8b949e", fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
-              <YAxis tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="count" fill="#1f6feb" radius={[2, 2, 0, 0]} />
-            </BarChart>
+              <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#d29922", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+              <Tooltip content={({ active, payload, label }: any) => {
+                if (!active || !payload?.length) return null;
+                return (
+                  <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+                    <div style={{ color: "#e1e4e8", fontWeight: 600 }}>{label}</div>
+                    <div style={{ color: "#1f6feb" }}>Count: {payload[0]?.value?.toLocaleString()}</div>
+                    <div style={{ color: "#d29922" }}>{payload[1]?.value}% of collection</div>
+                  </div>
+                );
+              }} />
+              <Bar yAxisId="left" dataKey="count" fill="#1f6feb" radius={[2, 2, 0, 0]} name="Count" />
+              <Line yAxisId="right" type="monotone" dataKey="pct" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="% of Collection" />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
 
