@@ -351,6 +351,222 @@ body {
   margin-bottom: 8px;
 }
 
+/* ── Collection Grid ─────────────────────────── */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.card-tile {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s;
+}
+
+.card-tile:hover {
+  border-color: #1f6feb;
+}
+
+.card-tile-image {
+  position: relative;
+  aspect-ratio: 63 / 88;
+  background: #0d1117;
+  overflow: hidden;
+}
+
+.card-tile-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.card-tile-no-image {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  color: #484f58;
+  font-size: 12px;
+}
+
+.first-edition-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #d29922;
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.card-tile-info {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.card-tile-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e1e4e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-tile-name .card-number {
+  color: #484f58;
+  font-weight: 400;
+}
+
+.card-tile-set {
+  font-size: 11px;
+  color: #8b949e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-tile-price-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.card-tile-price {
+  font-size: 14px;
+  font-weight: 600;
+  color: #3fb950;
+}
+
+.card-tile-price.no-price {
+  color: #484f58;
+}
+
+.card-tile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #21262d;
+  color: #8b949e;
+}
+
+.tag-special {
+  background: #3a2500;
+  color: #d29922;
+}
+
+.tag-review {
+  background: #5a1e1e;
+  color: #f85149;
+}
+
+/* Price range buttons */
+.price-range-btn {
+  border: 1px solid #30363d;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.price-range-btn:hover {
+  border-color: #1f6feb;
+  color: #e1e4e8 !important;
+}
+
+/* Toggle label */
+.toggle-label {
+  font-size: 12px;
+  color: #8b949e;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.advanced-toggle {
+  font-weight: 600;
+  color: #a371f7;
+}
+
+/* Advanced card tile */
+.card-tile-advanced {
+  grid-column: span 2;
+}
+
+.card-tile-advanced .card-tile-advanced-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #21262d;
+}
+
+.adv-section {
+  font-size: 11px;
+}
+
+.adv-header {
+  font-weight: 700;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+.adv-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 1px 0;
+  color: #8b949e;
+}
+
+.adv-row span:first-child {
+  color: #484f58;
+}
+
+.adv-row span:last-child {
+  color: #e1e4e8;
+  text-align: right;
+}
+
+@media (max-width: 600px) {
+  .card-tile-advanced .card-tile-advanced-info {
+    grid-template-columns: 1fr;
+  }
+  .card-tile-advanced {
+    grid-column: span 1;
+  }
+}
+
 /* Kill recharts tooltip animation/transition */
 .recharts-tooltip-wrapper {
   transition: none !important;

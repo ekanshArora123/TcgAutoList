@@ -1,9 +1,10 @@
 import { useState } from "react";
+import CollectionGridPage from "./pages/CollectionGridPage";
 import CollectionPage from "./pages/CollectionPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import "./App.css";
 
-type Page = "collection" | "analytics";
+type Page = "collection" | "info" | "analytics";
 
 function App() {
   const [page, setPage] = useState<Page>("collection");
@@ -20,6 +21,12 @@ function App() {
             Collection
           </button>
           <button
+            className={`nav-btn ${page === "info" ? "active" : ""}`}
+            onClick={() => setPage("info")}
+          >
+            Info
+          </button>
+          <button
             className={`nav-btn ${page === "analytics" ? "active" : ""}`}
             onClick={() => setPage("analytics")}
           >
@@ -28,7 +35,9 @@ function App() {
         </div>
       </nav>
       <main className="main-content">
-        {page === "collection" ? <CollectionPage /> : <AnalyticsPage />}
+        {page === "collection" && <CollectionGridPage />}
+        {page === "info" && <CollectionPage />}
+        {page === "analytics" && <AnalyticsPage />}
       </main>
     </div>
   );

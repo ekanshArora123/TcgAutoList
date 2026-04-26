@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import math
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -9,6 +9,7 @@ CORS(app)
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _DEFAULT_DB = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "card-server", "data", "cards.db"))
+_IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "card-images"))
 DB_PATH = os.environ.get("DB_PATH", _DEFAULT_DB)
 
 
@@ -139,6 +140,179 @@ def get_filters():
         finishes = [r["finish"] for r in db.execute("SELECT DISTINCT finish FROM skus ORDER BY finish").fetchall()]
         statuses = [r["status"] for r in db.execute("SELECT DISTINCT status FROM inventory ORDER BY status").fetchall()]
         return jsonify({"sets": sets, "eras": eras, "rarities": rarities, "conditions": conditions, "finishes": finishes, "statuses": statuses})
+    finally:
+        db.close()
+
+
+# ── Card images ────────────────────────────────────────────
+
+
+@app.route("/api/images/<card_id>")
+def card_image(card_id):
+    """Serve card image by TCGplayer product ID."""
+    filename = f"{card_id}.webp"
+    filepath = os.path.join(_IMAGES_DIR, filename)
+    if not os.path.exists(filepath):
+        return "", 404
+    return send_from_directory(_IMAGES_DIR, filename)
+
+
+@app.route("/api/collection")
+def collection_grid():
+    """Card collection with images — supports all filters including price range."""
+    q = request.args.get("q", "").strip()
+    set_name = request.args.get("set_name", "").strip()
+    era = request.args.get("era", "").strip()
+    rarity = request.args.get("rarity", "").strip()
+    condition = request.args.get("condition", "").strip()
+    finish = request.args.get("finish", "").strip()
+    status = request.args.get("status", "").strip()
+    manual_check = request.args.get("manual_check", "").strip()
+    specialty = request.args.get("specialty", "").strip()
+    tags_contain = request.args.get("tags_contain", "").strip()
+    price_min = request.args.get("price_min", "").strip()
+    price_max = request.args.get("price_max", "").strip()
+    confidence_min = request.args.get("confidence_min", "").strip()
+    confidence_max = request.args.get("confidence_max", "").strip()
+    has_image = request.args.get("has_image", "").strip()
+    sort = request.args.get("sort", "card_name").strip()
+    order = request.args.get("order", "asc").strip().upper()
+    page = max(int(request.args.get("page", 1)), 1)
+    per_page = min(int(request.args.get("per_page", 48)), 200)
+
+    allowed_sorts = {
+        "card_name": "c.card_name",
+        "set_name": "c.set_name",
+        "era": "c.era",
+        "rarity": "c.rarity",
+        "condition": "s.condition",
+        "estimated_price": "p.estimated_price",
+        "confidence": "p.confidence_percent",
+        "status": "i.status",
+        "card_number": "c.card_number",
+    }
+    sort_col = allowed_sorts.get(sort, "c.card_name")
+    order = order if order in ("ASC", "DESC") else "ASC"
+
+    conditions_sql = []
+    params = []
+
+    if q:
+        conditions_sql.append("c.card_name LIKE ?")
+        params.append(f"%{q}%")
+    if set_name:
+        conditions_sql.append("c.set_name = ?")
+        params.append(set_name)
+    if era:
+        conditions_sql.append("c.era = ?")
+        params.append(era)
+    if rarity:
+        conditions_sql.append("c.rarity = ?")
+        params.append(rarity)
+    if condition:
+        conditions_sql.append("s.condition = ?")
+        params.append(condition)
+    if finish:
+        conditions_sql.append("s.finish = ?")
+        params.append(finish)
+    if status:
+        conditions_sql.append("i.status = ?")
+        params.append(status)
+    if manual_check == "true":
+        conditions_sql.append("p.manual_check_necessary = 1 AND p.manually_checked = 0")
+    if specialty:
+        conditions_sql.append("s.specialty_one = ?")
+        params.append(specialty)
+    if tags_contain:
+        conditions_sql.append("i.tags LIKE ?")
+        params.append(f"%{tags_contain}%")
+    if price_min:
+        conditions_sql.append("p.estimated_price >= ?")
+        params.append(float(price_min))
+    if price_max:
+        conditions_sql.append("p.estimated_price <= ?")
+        params.append(float(price_max))
+    if confidence_min:
+        conditions_sql.append("p.confidence_percent >= ?")
+        params.append(int(confidence_min))
+    if confidence_max:
+        conditions_sql.append("p.confidence_percent <= ?")
+        params.append(int(confidence_max))
+
+    where = f"WHERE {' AND '.join(conditions_sql)}" if conditions_sql else ""
+
+    # Build list of card_ids that have images on disk
+    image_ids = set()
+    if has_image or True:  # always compute for the has_image field
+        try:
+            image_ids = {f.rsplit(".", 1)[0] for f in os.listdir(_IMAGES_DIR) if f.endswith(".webp")}
+        except OSError:
+            pass
+
+    if has_image == "true":
+        id_list = ",".join(f"'{cid}'" for cid in image_ids)
+        conditions_sql.append(f"s.card_id IN ({id_list})" if id_list else "1=0")
+        where = f"WHERE {' AND '.join(conditions_sql)}" if conditions_sql else ""
+    elif has_image == "false":
+        id_list = ",".join(f"'{cid}'" for cid in image_ids)
+        conditions_sql.append(f"s.card_id NOT IN ({id_list})" if id_list else "1=1")
+        where = f"WHERE {' AND '.join(conditions_sql)}" if conditions_sql else ""
+
+    db = get_db()
+    try:
+        from_clause = """
+            inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            JOIN cards c ON s.card_id = c.id
+            LEFT JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
+                AND p.calculation_date = s.latest_calc_date
+            LEFT JOIN market_snapshots ms ON s.card_id = ms.card_id
+                AND s.condition = ms.condition AND s.finish = ms.finish
+                AND ms.snapshot_date = (SELECT MAX(snapshot_date) FROM market_snapshots ms2 WHERE ms2.card_id = ms.card_id AND ms2.condition = ms.condition AND ms2.finish = ms.finish)
+        """
+
+        count_sql = f"SELECT COUNT(*) as total FROM {from_clause} {where}"
+        total = db.execute(count_sql, params).fetchone()["total"]
+
+        data_sql = f"""
+            SELECT
+                i.inventory_id, i.sku_id, i.qty, i.tags, i.status,
+                i.front_photo_path, i.back_photo_path, i.ebay_listing_id,
+                s.condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
+                c.card_name, c.set_name, c.rarity, c.card_number, c.era,
+                c.card_type, c.visual_layout, c.product_type,
+                p.estimated_price, p.estimated_liquid_value,
+                p.confidence_percent, p.manual_check_necessary, p.manually_checked,
+                p.estimated_low_price, p.estimated_high_price,
+                p.estimated_low_price_liquid, p.estimated_high_price_liquid,
+                p.calculation_date, p.algorithm_version,
+                ms.listing_count, ms.lowest_listing_price,
+                ms.median_listing_price, ms.mean_listing_price,
+                ms.p25_listing_price, ms.p75_listing_price,
+                ms.recent_sales_count, ms.avg_sale_price,
+                ms.median_sale_price, ms.min_sale_price, ms.max_sale_price,
+                ms.newest_sale_date, ms.oldest_sale_date,
+                ms.snapshot_date as market_snapshot_date
+            FROM {from_clause}
+            {where}
+            ORDER BY {sort_col} {order}
+            LIMIT ? OFFSET ?
+        """
+        rows = db.execute(data_sql, params + [per_page, (page - 1) * per_page]).fetchall()
+
+        items = []
+        for r in rows:
+            item = dict(r)
+            item["has_image"] = item["card_id"] in image_ids
+            items.append(item)
+
+        return jsonify({
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": math.ceil(total / per_page) if total else 0,
+        })
     finally:
         db.close()
 

@@ -163,3 +163,44 @@ export function fetchTopCards(n = 25): Promise<TopCard[]> {
 export function fetchSetBreakdown(): Promise<SetBreakdown[]> {
   return fetchJson(`${BASE}/analytics/set-breakdown`);
 }
+
+// ── Collection grid ──
+
+export interface CollectionItem extends CardItem {
+  product_type: string | null;
+  manually_checked: number | null;
+  estimated_low_price_liquid: number | null;
+  estimated_high_price_liquid: number | null;
+  listing_count: number | null;
+  lowest_listing_price: number | null;
+  median_listing_price: number | null;
+  mean_listing_price: number | null;
+  p25_listing_price: number | null;
+  p75_listing_price: number | null;
+  recent_sales_count: number | null;
+  avg_sale_price: number | null;
+  median_sale_price: number | null;
+  min_sale_price: number | null;
+  max_sale_price: number | null;
+  newest_sale_date: string | null;
+  oldest_sale_date: string | null;
+  market_snapshot_date: string | null;
+  has_image: boolean;
+}
+
+export interface CollectionResponse {
+  items: CollectionItem[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export function fetchCollection(params: Record<string, string>): Promise<CollectionResponse> {
+  const qs = new URLSearchParams(params).toString();
+  return fetchJson(`${BASE}/collection?${qs}`);
+}
+
+export function cardImageUrl(cardId: string): string {
+  return `${BASE}/images/${cardId}`;
+}
