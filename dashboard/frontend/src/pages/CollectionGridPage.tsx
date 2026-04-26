@@ -169,7 +169,7 @@ export default function CollectionGridPage() {
         {filters && (
           <select className="filter-select" value={specialty} onChange={(e) => { setSpecialty(e.target.value); setPage(1); }}>
             <option value="">All Specialties</option>
-            <option value="1st Edition">1st Edition</option>
+            <option value="First Edition">1st Edition</option>
             <option value="None">None (Standard)</option>
           </select>
         )}
@@ -216,7 +216,7 @@ export default function CollectionGridPage() {
 
 function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean }) {
   const [imgError, setImgError] = useState(false);
-  const isFirstEdition = card.specialty_one === "1st Edition";
+  const isFirstEdition = card.specialty_one === "1st Edition" || card.specialty_one === "First Edition";
 
   return (
     <div className={`card-tile ${advanced ? "card-tile-advanced" : ""}`}>
