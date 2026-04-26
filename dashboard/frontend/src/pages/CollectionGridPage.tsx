@@ -260,7 +260,6 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
 
         {/* Tags and specialties */}
         <div className="card-tile-tags">
-          {isFirstEdition && <span className="tag tag-special">1st Edition</span>}
           {card.specialty_two !== "None" && <span className="tag tag-special">{card.specialty_two}</span>}
           {card.tags && card.tags.split(",").map((t, i) => <span key={i} className="tag">{t.trim()}</span>)}
           {card.manual_check_necessary ? <span className="tag tag-review">Review</span> : null}
