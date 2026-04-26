@@ -441,6 +441,12 @@ body {
   text-overflow: ellipsis;
 }
 
+.card-tile-meta {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
 .card-tile-price-row {
   display: flex;
   align-items: center;

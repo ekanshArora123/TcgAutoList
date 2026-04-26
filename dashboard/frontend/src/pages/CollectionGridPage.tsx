@@ -242,6 +242,11 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
           {card.card_number ? <span className="card-number"> ({card.card_number})</span> : ""}
         </div>
         <div className="card-tile-set">{card.set_name || "Unknown Set"}</div>
+        <div className="card-tile-meta">
+          <span className="tag">{card.condition}</span>
+          {card.finish !== "Regular" && <span className="tag">{card.finish}</span>}
+          {isFirstEdition && <span className="tag tag-special">1st Ed</span>}
+        </div>
         <div className="card-tile-price-row">
           <span className={`card-tile-price ${card.estimated_price == null ? "no-price" : ""}`}>
             {fmt(card.estimated_price)}
