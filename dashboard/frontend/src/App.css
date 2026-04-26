@@ -351,6 +351,11 @@ body {
   margin-bottom: 8px;
 }
 
+/* Kill recharts tooltip animation/transition */
+.recharts-tooltip-wrapper {
+  transition: none !important;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   .charts-grid {

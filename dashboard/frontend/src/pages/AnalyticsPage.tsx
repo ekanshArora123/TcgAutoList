@@ -158,7 +158,7 @@ export default function AnalyticsPage() {
               <XAxis dataKey="range" tick={{ fill: "#8b949e", fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
               <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
               <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
-              <Tooltip content={({ active, payload, label }: any) => {
+              <Tooltip isAnimationActive={false} content={({ active, payload, label }: any) => {
                 if (!active || !payload?.length) return null;
                 const d = payload[0]?.payload;
                 return (
@@ -184,7 +184,7 @@ export default function AnalyticsPage() {
             <BarChart data={confidence}>
               <XAxis dataKey="bucket" tick={{ fill: "#8b949e", fontSize: 11 }} />
               <YAxis tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
               <Bar dataKey="count" fill="#a371f7" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -206,7 +206,7 @@ export default function AnalyticsPage() {
               >
                 {eras.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Pie>
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -227,7 +227,7 @@ export default function AnalyticsPage() {
               >
                 {eras.filter(e => e.total_value > 0).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Pie>
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -239,7 +239,7 @@ export default function AnalyticsPage() {
             <BarChart data={conditions} layout="vertical">
               <XAxis type="number" tick={{ fill: "#8b949e", fontSize: 11 }} />
               <YAxis dataKey="condition" type="category" tick={{ fill: "#8b949e", fontSize: 11 }} width={60} />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
               <Bar dataKey="quantity" fill="#3fb950" radius={[0, 2, 2, 0]} name="Count" />
             </BarChart>
           </ResponsiveContainer>
@@ -252,7 +252,7 @@ export default function AnalyticsPage() {
             <BarChart data={rarities.slice(0, 15)} layout="vertical">
               <XAxis type="number" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
               <YAxis dataKey="rarity" type="category" tick={{ fill: "#8b949e", fontSize: 10 }} width={120} />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
               <Bar dataKey="total_value" fill="#d29922" radius={[0, 2, 2, 0]} name="Total Value" />
             </BarChart>
           </ResponsiveContainer>
@@ -265,7 +265,7 @@ export default function AnalyticsPage() {
             <BarChart data={sets.slice(0, 20)}>
               <XAxis dataKey="set_name" tick={{ fill: "#8b949e", fontSize: 9 }} angle={-45} textAnchor="end" height={100} />
               <YAxis tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
               <Bar dataKey="total_value" fill="#79c0ff" radius={[2, 2, 0, 0]} name="Total Value" />
             </BarChart>
           </ResponsiveContainer>
