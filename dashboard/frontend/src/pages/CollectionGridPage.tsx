@@ -246,6 +246,7 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
           <span className="tag">{card.condition}</span>
           {card.finish !== "Regular" && <span className="tag">{card.finish}</span>}
           {isFirstEdition && <span className="tag tag-special">1st Ed</span>}
+          {card.qty > 1 && <span className="tag tag-special">Qty: {card.qty}</span>}
         </div>
         <div className="card-tile-price-row">
           <span className={`card-tile-price ${card.estimated_price == null ? "no-price" : ""}`}>
