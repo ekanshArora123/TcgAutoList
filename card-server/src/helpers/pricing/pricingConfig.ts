@@ -7,7 +7,7 @@
 
 // ─── Algorithm Metadata ─────────────────────────────────────
 
-export const ALGORITHM_VERSION = 'lowest-listing-v1';
+export const ALGORITHM_VERSION = 'blended-v2';
 
 // ─── Price Thresholds ───────────────────────────────────────
 
@@ -89,6 +89,18 @@ export const CONFIDENCE_CHEAP_DIVERGENT = 75;
 
 /** Confidence when sold average overrides stale listings. */
 export const CONFIDENCE_SOLDS_OVERRIDE = 60;
+
+/** Confidence when using 50/50 blend of listing + monthly sold avg. */
+export const CONFIDENCE_BLENDED = 70;
+
+/** Blend ratio for listing vs sold avg when listing is too high. */
+export const BLEND_RATIO = 0.5;
+
+/** Number of days to look back for "last month" sold average in blend calculation. */
+export const BLEND_SOLDS_DAYS = 30;
+
+/** Number of days to look back for "last week" solds in divergence check. */
+export const DIVERGENCE_RECENT_DAYS = 7;
 
 /** Confidence when solds are higher than listing (healthy undercutting). */
 export const CONFIDENCE_SOLDS_HIGHER = 75;

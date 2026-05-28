@@ -374,7 +374,7 @@ async function fetchSoldListingsPage(
 
   const payload = {
     variants,
-    listingType: 'All',
+    listingType: 'standard',  // Exclude custom/photo listings
     conditions,
     languages: [1], // English
     limit: 25,
@@ -401,14 +401,17 @@ async function fetchSoldListingsPage(
     const json: any = await response.json();
     if (!json?.data || !Array.isArray(json.data)) return [];
 
-    return json.data.map((sale: any) => ({
-      tcgplayer_id: tcgplayerId,
-      condition: parseConditionFromSalesApi(sale.condition ?? condition ?? ''),
-      finish: parseFinishFromSalesApi(sale.variant ?? ''),
-      sold_price: (sale.purchasePrice ?? 0) + (sale.shippingPrice ?? 0),
-      sold_date: sale.orderDate ?? '',
-      seller_name: null,
-    }));
+    return json.data
+      // Post-filter: exclude custom/photo listings as a safety net
+      .filter((sale: any) => !sale.customListingId)
+      .map((sale: any) => ({
+        tcgplayer_id: tcgplayerId,
+        condition: parseConditionFromSalesApi(sale.condition ?? condition ?? ''),
+        finish: parseFinishFromSalesApi(sale.variant ?? ''),
+        sold_price: (sale.purchasePrice ?? 0) + (sale.shippingPrice ?? 0),
+        sold_date: sale.orderDate ?? '',
+        seller_name: null,
+      }));
   } catch (err) {
     if (err instanceof Error && err.message.includes('TCGplayer sales API error')) throw err;
     return [];

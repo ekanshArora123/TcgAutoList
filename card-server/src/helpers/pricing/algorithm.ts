@@ -7,9 +7,12 @@
  *   For illiquid cards, recent sold prices are a better signal.
  *   TCGplayer "market price" is unreliable and is NOT used.
  *
- * CURRENT VERSION (v1):
- *   Anchors on the lowest active TCGplayer listing, with sold data as
- *   a sanity check and fallback. Flags edge cases for manual review.
+ * CURRENT VERSION (v2):
+ *   Anchors on the lowest active TCGplayer listing. When the listing is
+ *   >30% above recent sales, blends 50% listing + 50% last-month sold avg.
+ *   Divergence check uses max(last 7 days, last 3 sales) for robustness.
+ *   MINT condition is priced as NM. Custom/photo listings are excluded
+ *   at the fetch layer.
  *
  * FUTURE VERSIONS:
  *   v2: Factor in sales velocity (sales per 48hr window). If a card sells
@@ -41,6 +44,7 @@ import {
   CONFIDENCE_SOLDS_OVERRIDE,
   CONFIDENCE_SOLDS_HIGHER,
   CONFIDENCE_SOLDS_CONFIRM,
+  CONFIDENCE_BLENDED,
   CONFIDENCE_VOLUME_BONUS,
   CONFIDENCE_MAX,
   CONFIDENCE_NO_SOLDS,
@@ -48,6 +52,9 @@ import {
   CONFIDENCE_FEW_SOLDS,
   LOW_ESTIMATE_MULTIPLIER,
   HIGH_ESTIMATE_MULTIPLIER,
+  BLEND_RATIO,
+  BLEND_SOLDS_DAYS,
+  DIVERGENCE_RECENT_DAYS,
 } from './pricingConfig.js';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -117,13 +124,22 @@ export interface PricingResult {
  *   5. Compute liquid value and derived prices.
  */
 export function computePrice(input: PricingInput): PricingResult {
+  // MINT cards are priced as NM — TCGplayer has no MINT-specific data
+  const effectiveInput = input.condition === 'MINT'
+    ? { ...input, condition: 'NM' }
+    : input;
+
   const reasons: string[] = [];
   let estimatedPrice: number | null = null;
   let confidence = 0;
   let manualCheck = false;
 
-  const lowestListing = getLowestListingPrice(input.activeListings);
-  const soldStats = computeSoldStats(input.soldListings);
+  if (input.condition === 'MINT') {
+    reasons.push('MINT condition — pricing as Near Mint.');
+  }
+
+  const lowestListing = getLowestListingPrice(effectiveInput.activeListings);
+  const soldStats = computeSoldStats(effectiveInput.soldListings);
 
   // ── Step 1: Try lowest active listing ──
 
@@ -139,7 +155,11 @@ export function computePrice(input: PricingInput): PricingResult {
     const isCheapCard = lowestListing < CHEAP_CARD_THRESHOLD;
 
     if (soldStats !== null) {
-      const divergence = Math.abs(lowestListing - soldStats.average) / soldStats.average;
+      // Divergence check: use avg of max(last 7 days, last 3 sales) for robustness
+      const divergenceSalePrice = computeDivergenceSalePrice(effectiveInput.soldListings);
+      const effectiveSalePrice = divergenceSalePrice ?? soldStats.average;
+      const divergence = Math.abs(lowestListing - effectiveSalePrice) / effectiveSalePrice;
+      const listingIsHigher = lowestListing > effectiveSalePrice;
 
       if (divergence > PRICE_DIVERGENCE_THRESHOLD) {
         if (isCheapCard) {
@@ -147,27 +167,36 @@ export function computePrice(input: PricingInput): PricingResult {
           // inconsistent shipping ($0 bundled vs $1 single-card).
           confidence = CONFIDENCE_CHEAP_DIVERGENT;
           reasons.push(
-            `Sold average ($${soldStats.average.toFixed(2)}) diverges ${(divergence * 100).toFixed(0)}% from listing. ` +
+            `Sold price ($${effectiveSalePrice.toFixed(2)}) diverges ${(divergence * 100).toFixed(0)}% from listing. ` +
             `Card is under $${CHEAP_CARD_THRESHOLD} — sold prices are unreliable (shipping noise). Keeping listing price.`
           );
-        } else if (soldStats.average < lowestListing) {
-          estimatedPrice = soldStats.average;
-          confidence = CONFIDENCE_SOLDS_OVERRIDE;
-          manualCheck = true;
-          reasons.push(
-            `Sold average ($${soldStats.average.toFixed(2)}) is ${(divergence * 100).toFixed(0)}% below lowest listing. ` +
-            `Listings may be stale — using sold average instead. Flagged for review.`
-          );
+        } else if (listingIsHigher) {
+          // Listing is >30% above recent sales — blend 50/50 with monthly sold avg
+          const monthAvg = computeMonthSoldAvg(effectiveInput.soldListings);
+          if (monthAvg !== null) {
+            estimatedPrice = round(BLEND_RATIO * lowestListing + BLEND_RATIO * monthAvg);
+            confidence = CONFIDENCE_BLENDED;
+            reasons.push(
+              `Listing ($${lowestListing.toFixed(2)}) is ${(divergence * 100).toFixed(0)}% above recent sales ($${effectiveSalePrice.toFixed(2)}). ` +
+              `Blending 50/50 with last-month sold avg ($${monthAvg.toFixed(2)}) → $${estimatedPrice.toFixed(2)}.`
+            );
+          } else {
+            // No monthly sales data — keep listing price
+            reasons.push(
+              `Listing is ${(divergence * 100).toFixed(0)}% above recent sales but no monthly sold data — keeping listing price.`
+            );
+          }
         } else {
+          // Solds are higher than listing — undercutting is healthy
           confidence = CONFIDENCE_SOLDS_HIGHER;
           reasons.push(
-            `Sold average ($${soldStats.average.toFixed(2)}) is above lowest listing — ` +
+            `Sold price ($${effectiveSalePrice.toFixed(2)}) is above lowest listing — ` +
             `someone is undercutting. Lowest listing is a competitive price.`
           );
         }
       } else {
         confidence = CONFIDENCE_SOLDS_CONFIRM;
-        reasons.push(`Sold average ($${soldStats.average.toFixed(2)}) confirms listing price (${(divergence * 100).toFixed(0)}% divergence).`);
+        reasons.push(`Sold price ($${effectiveSalePrice.toFixed(2)}) confirms listing price (${(divergence * 100).toFixed(0)}% divergence).`);
       }
 
       if (soldStats.count >= MIN_SOLDS_FOR_CONFIDENCE) {
@@ -310,21 +339,25 @@ export function extrapolateAcrossConditions(
   sourceCondition: string,
   targetCondition: string,
 ): number | null {
-  if (sourceCondition === targetCondition) return sourcePrice;
+  // MINT is priced as NM — no premium
+  const effectiveSource = sourceCondition === 'MINT' ? 'NM' : sourceCondition;
+  const effectiveTarget = targetCondition === 'MINT' ? 'NM' : targetCondition;
+
+  if (effectiveSource === effectiveTarget) return sourcePrice;
 
   // Resolve in-between source to a primary price
-  const resolvedSourcePrice = resolveInBetweenSource(sourcePrice, sourceCondition);
-  const resolvedSourceCondition = getResolvedPrimary(sourceCondition);
+  const resolvedSourcePrice = resolveInBetweenSource(sourcePrice, effectiveSource);
+  const resolvedSourceCondition = getResolvedPrimary(effectiveSource);
 
   if (resolvedSourcePrice === null || resolvedSourceCondition === null) return null;
 
   // If the target is a primary condition, extrapolate directly
-  if (isPrimary(targetCondition)) {
-    return extrapolateBetweenPrimaries(resolvedSourcePrice, resolvedSourceCondition, targetCondition);
+  if (isPrimary(effectiveTarget)) {
+    return extrapolateBetweenPrimaries(resolvedSourcePrice, resolvedSourceCondition, effectiveTarget);
   }
 
   // If the target is an in-between condition, compute both neighbors then average
-  const neighbors = IN_BETWEEN_CONDITIONS[targetCondition];
+  const neighbors = IN_BETWEEN_CONDITIONS[effectiveTarget];
   if (!neighbors) return null;
 
   const [betterCondition, worseCondition] = neighbors;
@@ -385,6 +418,60 @@ function getResolvedPrimary(condition: string): string | null {
   if (isPrimary(condition)) return condition;
   const neighbors = IN_BETWEEN_CONDITIONS[condition];
   return neighbors ? neighbors[0] : null;
+}
+
+// ─── Divergence & Blend Helpers ──────────────────────────────
+
+/**
+ * Compute the sale price used for the divergence check.
+ *
+ * Uses whichever group has more entries:
+ *   - Sales from the last 7 days
+ *   - The 3 most recent sales
+ * Returns the average of the chosen group.
+ */
+function computeDivergenceSalePrice(solds: TcgPlayerSoldListing[]): number | null {
+  if (solds.length === 0) return null;
+
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - DIVERGENCE_RECENT_DAYS);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+
+  // Last 7 days' sales
+  const lastWeekSolds = solds.filter(s => s.sold_date >= cutoffStr);
+
+  // Last 3 sales by date (most recent first)
+  const sorted = [...solds].sort((a, b) => b.sold_date.localeCompare(a.sold_date));
+  const last3 = sorted.slice(0, 3);
+
+  // Use whichever group has more entries
+  const group = lastWeekSolds.length >= last3.length ? lastWeekSolds : last3;
+
+  if (group.length === 0) return null;
+
+  const sum = group.reduce((acc, s) => acc + s.sold_price, 0);
+  return round(sum / group.length);
+}
+
+/**
+ * Compute the average sold price over the last month.
+ * Used for the 50/50 blend when listing is too high.
+ */
+function computeMonthSoldAvg(solds: TcgPlayerSoldListing[]): number | null {
+  if (solds.length === 0) return null;
+
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - BLEND_SOLDS_DAYS);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+
+  const monthSolds = solds.filter(s => s.sold_date >= cutoffStr);
+
+  if (monthSolds.length === 0) return null;
+
+  const sum = monthSolds.reduce((acc, s) => acc + s.sold_price, 0);
+  return round(sum / monthSolds.length);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────

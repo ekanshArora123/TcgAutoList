@@ -223,9 +223,12 @@ export class PricingService {
   ): Promise<(Price & { reasoning: string }) | null> {
     await this.ensureCardExists(tcgplayerId);
 
+    // MINT has no TCGplayer data — fetch NM data instead
+    const fetchCondition = condition === 'MINT' ? 'NM' : condition;
+
     const [solds, listings] = await Promise.all([
-      fetchSoldListings(tcgplayerId, condition, finish),
-      fetchActiveListings(tcgplayerId, condition, finish),
+      fetchSoldListings(tcgplayerId, fetchCondition, finish),
+      fetchActiveListings(tcgplayerId, fetchCondition, finish),
     ]);
 
     const sku = this.skus.getOrCreate({
