@@ -402,8 +402,9 @@ async function fetchSoldListingsPage(
     if (!json?.data || !Array.isArray(json.data)) return [];
 
     return json.data
-      // Post-filter: exclude custom/photo listings as a safety net
-      .filter((sale: any) => !sale.customListingId)
+      // Post-filter: exclude custom/photo listings as a safety net.
+      // customListingId is "0" (string) for standard listings, non-zero for custom.
+      .filter((sale: any) => sale.customListingId === '0' || sale.customListingId === 0 || !sale.customListingId)
       .map((sale: any) => ({
         tcgplayer_id: tcgplayerId,
         condition: parseConditionFromSalesApi(sale.condition ?? condition ?? ''),
