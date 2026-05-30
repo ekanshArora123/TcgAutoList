@@ -271,6 +271,60 @@ export class MarketCollector {
       count++;
     }
 
+    // Price any MINT SKUs using the NM data (TCGplayer has no MINT condition)
+    count += this.priceMintSkusFromNm(cardId, fetchResults, date);
+
+    return count;
+  }
+
+  /**
+   * MINT cards are priced as NM. After processing TCGplayer data (which never
+   * includes MINT), check if this card has any MINT SKUs and copy the NM price.
+   */
+  private priceMintSkusFromNm(
+    cardId: string,
+    fetchResults: MarketFetchResult[],
+    date: string,
+  ): number {
+    const mintSkus = this.skus.search({ card_id: cardId })
+      .filter(s => s.condition === 'MINT');
+
+    if (mintSkus.length === 0) return 0;
+
+    let count = 0;
+    for (const mintSku of mintSkus) {
+      // Find the NM data for the same finish
+      const nmResult = fetchResults.find(
+        r => r.condition === 'NM' && r.finish === mintSku.finish,
+      );
+      if (!nmResult) continue;
+
+      const priceResult = computePrice({
+        activeListings: nmResult.activeListings,
+        soldListings: nmResult.soldListings,
+        condition: 'MINT', // algorithm maps this to NM internally
+        finish: mintSku.finish,
+        hasManualReviewSpecialty: mintSku.specialty_two !== 'None',
+      });
+
+      this.prices.upsert({
+        sku_id: mintSku.sku_id,
+        calculation_date: date,
+        estimated_price: priceResult.estimated_price,
+        estimated_liquid_value: priceResult.estimated_liquid_value,
+        confidence_percent: priceResult.confidence_percent,
+        manual_check_necessary: priceResult.manual_check_necessary,
+        manually_checked: false,
+        algorithm_version: priceResult.algorithm_version,
+        estimated_low_price: priceResult.estimated_low_price,
+        estimated_high_price: priceResult.estimated_high_price,
+        estimated_low_price_liquid: priceResult.estimated_low_price_liquid,
+        estimated_high_price_liquid: priceResult.estimated_high_price_liquid,
+      });
+
+      count++;
+    }
+
     return count;
   }
 
