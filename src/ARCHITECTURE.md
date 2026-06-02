@@ -21,88 +21,113 @@ src/
 └── __tests__/                <- Tests for the above
 ```
 
-## The Problem
-
-This mixes three different scopes:
-
-1. **Telegram service** — An I/O service (like card-server is for DB/TCGplayer). Receives commands, sends messages, handles photos.
-2. **eBay service** — Another I/O service (stub). Posts listings, manages active listings.
-3. **Orchestrator / Manager** — The high-level controller that coordinates card-server + telegram + eBay to execute the listing workflow.
-
-Telegram and eBay are **peer services** to card-server — each wraps an external system. The orchestrator sits above all three.
-
-## Restructuring Options
-
-### Option A: Separate sibling services (recommended direction)
+## Target Structure (Option A — Separate Services)
 
 ```
 project/
-├── card-server/          <- Data + pricing microservice (exists)
-├── telegram-server/      <- Telegram I/O microservice (extract from src/)
-├── ebay-server/          <- eBay I/O microservice (new, currently stub in tier1Pipeline)
-├── dashboard/            <- Web UI (exists)
-└── src/                  <- Orchestrator + agent logic ONLY
-    ├── index.ts
-    ├── orchestrator.ts
-    ├── tierRouter.ts
-    ├── tier1Pipeline.ts
-    ├── llm.ts / tools.ts / systemPrompt.ts
-    └── types.ts
+├── services/
+│   ├── card-server/       <- Data + pricing service (exists, move here)
+│   ├── telegram/          <- Telegram I/O service (extract from src/)
+│   └── ebay/              <- eBay I/O service (new, currently stub)
+├── dashboard/             <- Web UI (exists, stays at top level)
+├── orchestrator/          <- Workflow engine (extract from src/agent/)
+│   ├── orchestrator.ts    <- State machine
+│   ├── tierRouter.ts      <- Tier routing logic
+│   ├── tier1Pipeline.ts   <- Template listing builder
+│   ├── llm.ts             <- LLM client for Tier 2/3
+│   ├── tools.ts           <- Tool schemas for LLM
+│   └── systemPrompt.ts    <- Dynamic prompts
+└── src/
+    ├── index.ts           <- Entry point: wires services + orchestrator
+    └── types.ts           <- Shared types
 ```
 
-**Pros:** Clear boundaries. Each service is independently testable. Matches the mental model (card-server:DB :: telegram-server:Telegram :: ebay-server:eBay).
-**Cons:** More folders. Telegram is thin enough that a separate "server" may be over-engineering.
+### Hierarchy
 
-### Option B: Fold Telegram + eBay into card-server
+**Top level (peer to each other):**
+- `dashboard/` — User-facing web control plane
+- `orchestrator/` — Automated workflow engine
+- `src/` — Entry point / wiring
 
-card-server becomes the unified backend for all external I/O (DB, TCGplayer, Telegram, eBay).
+**Services (inside `services/`, peer to each other):**
+- `card-server/` — Owns: SQLite DB, pricing algorithm, TCGplayer API, market data
+- `telegram/` — Owns: Telegram bot API, message sending/receiving, photo handling
+- `ebay/` — Owns: eBay Sell API, listing CRUD, category mapping, photo upload
+
+Dashboard and orchestrator both consume the services. They sit at the same level because they're both "consumers" — one driven by a web UI, the other driven by automated workflows.
+
+### Service Boundary Principle
+
+Each service owns an external system and provides abstraction over it. Callers should not need to know the service's internal API format, auth mechanism, or data model.
+
+**card-server** already follows this well (CollectionService/PricingService hide DB schema and TCGplayer API details).
+
+**telegram** should follow the same pattern — expose `sendMessage()`, `requestPhoto()`, `onCommand()` etc. without leaking `node-telegram-bot-api` internals. (Current `bot.ts` already does this reasonably well.)
+
+**ebay** should expose `createListing()`, `updateListing()`, `getListing()` etc. without leaking the eBay Sell API's 325-tool complexity.
+
+### Future: card-server internal separation
+
+card-server currently bundles two distinct concerns:
+1. **Database access** — CRUD operations, schema, queries
+2. **TCGplayer/pricing** — External API calls, pricing algorithm
+
+These could eventually be separated into `db-server` and `pricing-server` (or similar), with Telegram and eBay as additional peer services. For now, keeping them together in card-server is fine — the internal `helpers/` structure already separates them cleanly.
+
+## What the Orchestrator Does
+
+### Current (Tier 1 only)
+
+A state machine driven by Telegram `/next` commands:
+
+1. `/next` → picks next unlisted card from DB (via card-server)
+2. Fetches/refreshes price (via card-server)
+3. Routes to Tier 1/2/3 based on confidence + card properties
+4. **Tier 1:** requests front photo → waits → requests back photo → waits → builds listing template → calls `postToEbay()` [stub] → marks as listed
+5. `/status`, `/skip`, `/pause` — workflow controls
+6. Handles inline keyboard callbacks (skip, approve, override, details)
+7. Detects price override text input [stub — not executed]
+8. Tier 2/3 stubs — fall through to Tier 1 with a warning message
+
+### Full Functionality (future)
+
+Everything above, plus:
+- **Tier 2/3 LLM:** Spawn per-card Claude conversations with scoped tools and context
+- **LLM relay:** Forward user free-text from Telegram/dashboard to the active LLM conversation
+- **Price overrides:** Actually apply user-specified prices
+- **eBay posting:** Real `postToEbay()` via ebay service
+- **Sell/hold decisions:** Use market data trends to recommend listing or holding
+- **Dashboard triggers:** Accept commands from dashboard (not just Telegram)
+- **Multi-input:** Dashboard and Telegram as parallel input channels to the same orchestrator
+
+### How it interacts with the new organization
+
+The orchestrator imports and calls service functions:
 
 ```
-project/
-├── card-server/          <- All external I/O (DB, TCGplayer, Telegram, eBay)
-│   └── src/services/
-│       ├── collectionService.ts
-│       ├── pricingService.ts
-│       ├── telegramService.ts    <- new
-│       └── ebayService.ts        <- new
-├── dashboard/
-└── src/                  <- Orchestrator only
+orchestrator
+├── calls card-server   → getNextUnlisted(), computePrice(), markAsListed()
+├── calls telegram      → sendMessage(), requestPhoto(), onCommand()
+├── calls ebay          → createListing(), uploadPhotos()
+└── calls llm (internal)→ Claude API for Tier 2/3 reasoning
 ```
 
-**Pros:** Fewer top-level folders. One place for all "talk to external systems" code.
-**Cons:** card-server becomes a monolith. Telegram depends on `node-telegram-bot-api` which is unrelated to cards. eBay has its own auth/API complexity. Muddies the "card data" identity.
-
-### Option C: Hybrid — keep Telegram in src/, extract eBay
-
-Telegram stays in `src/` because it's tightly coupled to the orchestrator (it IS the user interface for the orchestrator). eBay becomes a sibling service because it's more like card-server (CRUD against an external platform).
+Dashboard also calls services + orchestrator:
 
 ```
-project/
-├── card-server/          <- Data + pricing
-├── ebay-server/          <- eBay listing CRUD (new)
-├── dashboard/            <- Web UI
-└── src/                  <- Orchestrator + Telegram (user interface)
-    ├── telegram/
-    ├── agent/
-    └── index.ts
+dashboard
+├── calls card-server   → searchInventory(), getAnalytics(), getPriceHistory()
+├── calls orchestrator  → triggerNext(), getStatus(), overridePrice()
+├── calls telegram      → (maybe) send notifications
+└── calls ebay          → viewListings(), editListing()
 ```
 
-## Where Does the Orchestrator Live?
+## Migration Steps
 
-The orchestrator is the **project-level controller**. It doesn't belong inside any microservice. Options:
-
-1. **Keep in `src/`** (current) — `src/` = "the app that runs the show". Simple.
-2. **Move to `dashboard/`** — If dashboard becomes the primary control plane, the orchestrator could live alongside it. But dashboard is a web UI; the orchestrator is a background process. Mixing them is awkward unless dashboard becomes a full backend service.
-3. **Top-level `orchestrator/`** — Explicit separation. Makes sense if `src/` feels too generic.
-
-**Recommendation:** Keep in `src/` for now. Rename mentally: `src/` = "the listing engine". When dashboard gains control capabilities, it will call into the orchestrator via an API, not absorb it.
-
-## Decision Needed
-
-Choose between Options A, B, or C above. Key question: **is Telegram/eBay functionality different enough from card data to warrant separate services, or is "all external I/O" a coherent single service?**
-
-Factors:
-- Telegram is ~2 files and tightly coupled to orchestrator UX
-- eBay will be substantial (listing CRUD, auth, category mapping, photo upload)
-- card-server is already well-scoped as "card data + pricing"
-- Dashboard will eventually need to call Telegram and eBay functions too
+1. [ ] Create `services/` folder, move `card-server/` into it
+2. [ ] Extract `src/telegram/` → `services/telegram/`
+3. [ ] Create `services/ebay/` (extract from `tier1Pipeline.ts` stub)
+4. [ ] Extract `src/agent/` → `orchestrator/`
+5. [ ] Update all import paths
+6. [ ] Update `src/index.ts` to wire the new locations
+7. [ ] Update build config (`tsconfig.json`, `package.json`)
