@@ -7,18 +7,25 @@ from typing import Any, Optional
 
 from .skus import SkusHelper
 
-_DETAIL_SELECT = """
-    SELECT
-      i.*,
-      s.condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
-      c.card_name, c.set_name, c.rarity, c.card_number,
-      p.estimated_price
+# Canonical "owned card with its current price" join. The price row is the one
+# whose calculation_date matches the SKU's latest_calc_date, priced against
+# pricing_sku_id when set (else the card's own SKU). Single source of truth —
+# every inventory+price read (CRUD, reporting, analytics) builds on this FROM.
+INV_SKU_CARD_PRICE_FROM = """
     FROM inventory i
     JOIN skus s ON i.sku_id = s.sku_id
     JOIN cards c ON s.card_id = c.id
     LEFT JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
       AND p.calculation_date = s.latest_calc_date
 """
+
+_DETAIL_SELECT = """
+    SELECT
+      i.*,
+      s.condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
+      c.card_name, c.set_name, c.rarity, c.card_number,
+      p.estimated_price
+""" + INV_SKU_CARD_PRICE_FROM
 
 _UPDATABLE = (
     "sku_id", "pricing_sku_id", "qty", "tags", "status",
@@ -141,6 +148,12 @@ class InventoryHelper:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_all_statuses(self) -> list[str]:
+        rows = self.db.execute(
+            "SELECT DISTINCT status FROM inventory WHERE status IS NOT NULL ORDER BY status"
+        ).fetchall()
+        return [r["status"] for r in rows]
+
     def get_stats(self) -> dict[str, Any]:
         status_rows = self.db.execute(
             "SELECT status, COUNT(*) as count FROM inventory GROUP BY status"
@@ -153,13 +166,7 @@ class InventoryHelper:
             total += row["count"]
 
         value_row = self.db.execute(
-            """
-            SELECT SUM(p.estimated_price * i.qty) as total_value
-            FROM inventory i
-            JOIN skus s ON i.sku_id = s.sku_id
-            LEFT JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
-              AND p.calculation_date = s.latest_calc_date
-            """
+            "SELECT SUM(p.estimated_price * i.qty) as total_value" + INV_SKU_CARD_PRICE_FROM
         ).fetchone()
 
         return {

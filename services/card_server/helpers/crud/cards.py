@@ -113,6 +113,12 @@ class CardsHelper:
         ).fetchall()
         return [r["rarity"] for r in rows]
 
+    def get_all_eras(self) -> list[str]:
+        rows = self.db.execute(
+            "SELECT DISTINCT era FROM cards WHERE era IS NOT NULL ORDER BY era"
+        ).fetchall()
+        return [r["era"] for r in rows]
+
     def count(self, product_line: Optional[str] = None) -> int:
         if product_line:
             row = self.db.execute(

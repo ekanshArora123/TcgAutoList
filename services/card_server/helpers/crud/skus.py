@@ -130,6 +130,10 @@ class SkusHelper:
         rows = self.db.execute("SELECT DISTINCT condition FROM skus ORDER BY condition").fetchall()
         return [r["condition"] for r in rows]
 
+    def get_all_finishes(self) -> list[str]:
+        rows = self.db.execute("SELECT DISTINCT finish FROM skus ORDER BY finish").fetchall()
+        return [r["finish"] for r in rows]
+
     def get_all_specialties(self) -> list[str]:
         rows = self.db.execute(
             "SELECT DISTINCT specialty_one FROM skus WHERE specialty_one != 'None' ORDER BY specialty_one"

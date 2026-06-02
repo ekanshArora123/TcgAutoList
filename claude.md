@@ -71,7 +71,7 @@ Tier thresholds are configurable in `dashboard/backend/orchestrator/types.py` (`
 
 ## card-server Structure
 
-The orchestrator calls **two service files**. Everything else is internal.
+Three service files are public: the orchestrator calls `collection_service` + `pricing_service`; the dashboard calls `reporting_service`. Everything else is internal.
 
 ```
 services/card_server/         (imported as `services.card_server`)
@@ -82,7 +82,8 @@ services/card_server/         (imported as `services.card_server`)
 ├── types.py                  <- Pydantic models + type aliases
 ├── services/
 │   ├── collection_service.py <- Cards + SKUs + Inventory management
-│   └── pricing_service.py    <- Pricing operations + TCGplayer fetch workflows
+│   ├── pricing_service.py    <- Pricing operations + TCGplayer fetch workflows
+│   └── reporting_service.py  <- Read-only browse + analytics for the dashboard (no writes)
 ├── helpers/                  <- INTERNAL (services compose these)
 │   ├── crud/                 <- Pure DB CRUD (cards, skus, inventory, prices)
 │   ├── pricing/

@@ -54,7 +54,7 @@ Each service owns one external system and provides abstraction over it. Callers 
 
 ### backend (dashboard/backend/)
 - Flask REST API serving the frontend
-- **Important:** Backend should NOT duplicate functionality owned by card-server. DB queries, pricing logic, and TCGplayer interactions should go through card-server services. (The read-only dashboard `app.py` currently queries SQLite directly for reporting; write operations should go through `card_server` services.)
+- **Important:** Backend does NOT duplicate functionality owned by card-server. `app.py` holds no SQL — it's a thin HTTP layer that delegates all reads/analytics to `card_server`'s `ReportingService` and serializes the result.
 - The whole backend is now Python, so it can import `card_server` services directly — the former TS/Python language boundary is resolved.
 
 ### orchestrator (dashboard/backend/orchestrator/)
