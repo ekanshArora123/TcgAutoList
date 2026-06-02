@@ -13,7 +13,7 @@ project/
 │   └── backend/
 │       ├── app.py             <- Flask REST API
 │       └── orchestrator/      <- Workflow engine (state machine)
-├── src/                       <- Entry point + shared types (package `shared`)
+├── shared/                    <- Entry point + shared types (package `shared`)
 │   ├── main.py                <- Wires services + orchestrator, starts app
 │   └── types.py               <- Shared types (re-exports card_server models)
 └── docs/                      <- Reference docs (pricing algorithm, TCGplayer API)

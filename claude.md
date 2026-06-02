@@ -17,7 +17,7 @@ See `STRUCTURE.md` for full folder layout.
 | `ebay` | `services/ebay/` | eBay listing service [stub]. |
 | `orchestrator` | `dashboard/backend/orchestrator/` | Coded event loop. Picks card, fetches price, routes by tier, drives workflow. |
 | `dashboard` | `dashboard/` | Web UI (React frontend + Flask backend). |
-| `entry point` | `src/main.py` | Wires services + orchestrator, starts app. |
+| `entry point` | `shared/main.py` | Wires services + orchestrator, starts app. |
 
 ### Tiered Escalation Model
 
@@ -31,7 +31,7 @@ LLM involvement scales with pricing difficulty. Most cards go through a dumb cod
 
 Estimated cost for 10,000 cards: **~9.75M tokens**
 
-Tier thresholds are configurable in `src/types.py` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card-server/card_server/helpers/pricing/config.py`.
+Tier thresholds are configurable in `shared/types.py` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card-server/card_server/helpers/pricing/config.py`.
 
 ### Key Design Decisions
 
