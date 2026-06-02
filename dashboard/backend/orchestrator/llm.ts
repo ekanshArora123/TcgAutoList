@@ -16,7 +16,7 @@
  * - Tier 3: ~10,000-15,000 tokens per card
  */
 
-import type { InventoryDetail, Price } from '../types.js';
+import type { InventoryDetail, Price } from '../../../src/types.js';
 // import Anthropic from '@anthropic-ai/sdk';  // Will use when implemented
 
 /** Active LLM conversation state. */

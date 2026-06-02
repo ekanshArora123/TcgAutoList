@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaPath = join(__dirname, '..', '..', 'card-server', 'src', 'schema.sql');
+const schemaPath = join(__dirname, '..', '..', '..', '..', 'services', 'card-server', 'src', 'schema.sql');
 
 /** Get today's date as YYYY-MM-DD. */
 function todayStr(): string {

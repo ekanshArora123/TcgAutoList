@@ -7,17 +7,13 @@
  * Handles ~80% of cards with zero token cost.
  */
 
-import type { InventoryDetail, Price } from '../types.js';
+import type { InventoryDetail, Price } from '../../../src/types.js';
+import { postToEbay } from '../../../services/ebay/index.js';
+import type { ListingTemplate } from '../../../services/ebay/index.js';
 
-/** Template listing data ready for eBay posting. */
-export interface ListingTemplate {
-  title: string;
-  description: string;
-  price: number;
-  condition: string;
-  category: string;
-  photoPaths: string[];
-}
+// Re-export for consumers that import from here
+export { postToEbay };
+export type { ListingTemplate };
 
 /**
  * Build a template eBay listing from card data and price.
@@ -96,16 +92,4 @@ function buildDescription(detail: InventoryDetail, price: Price): string {
   lines.push('Cards over $25 ship in a tracked bubble mailer.');
 
   return lines.join('\n');
-}
-
-/**
- * Post a listing to eBay.
- *
- * TODO: Implement when eBay integration is ready.
- * For now, returns a stub listing ID.
- */
-export async function postToEbay(listing: ListingTemplate): Promise<string> {
-  // STUB — will be replaced with ebay-mcp integration
-  console.log(`[eBay STUB] Would post listing: ${listing.title} @ $${listing.price.toFixed(2)} (${listing.photoPaths.length} photos)`);
-  return `ebay-stub-${Date.now()}`;
 }

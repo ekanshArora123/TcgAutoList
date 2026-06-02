@@ -9,7 +9,7 @@
 import type {
   Card as _Card, Sku as _Sku, InventoryItem as _InventoryItem,
   InventoryDetail as _InventoryDetail, Price as _Price,
-} from '../card-server/src/types.js';
+} from '../services/card-server/src/types.js';
 
 // Re-export card-server types that the orchestrator uses
 export type Card = _Card;

@@ -7,7 +7,7 @@
  * Tier 2 prompts are pricing-focused. Tier 3 prompts give full authority.
  */
 
-import type { InventoryDetail, Price } from '../types.js';
+import type { InventoryDetail, Price } from '../../../src/types.js';
 
 /**
  * PSEUDOCODE: Build a Tier 2 system prompt.

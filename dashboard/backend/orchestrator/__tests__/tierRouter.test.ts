@@ -7,8 +7,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { routeToTier } from '../agent/tierRouter.js';
-import type { Price, TierConfig } from '../types.js';
+import { routeToTier } from '../tierRouter.js';
+import type { Price, TierConfig } from '../../../../src/types.js';
 
 // Helper to build a Price object with defaults
 function makePrice(overrides: Partial<Price> = {}): Price {

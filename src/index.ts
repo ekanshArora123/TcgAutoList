@@ -12,11 +12,11 @@
 import 'dotenv/config';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { initDatabase, closeDatabase, getDb } from '../card-server/src/db.js';
-import { CollectionService } from '../card-server/src/services/collectionService.js';
-import { PricingService } from '../card-server/src/services/pricingService.js';
-import { Bot } from './telegram/bot.js';
-import { Orchestrator } from './agent/orchestrator.js';
+import { initDatabase, closeDatabase, getDb } from '../services/card-server/src/db.js';
+import { CollectionService } from '../services/card-server/src/services/collectionService.js';
+import { PricingService } from '../services/card-server/src/services/pricingService.js';
+import { Bot } from '../services/telegram/bot.js';
+import { Orchestrator } from '../dashboard/backend/orchestrator/orchestrator.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

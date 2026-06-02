@@ -13,8 +13,8 @@ import { EventEmitter } from 'events';
 import { mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { writeFile } from 'fs/promises';
-import type { TelegramEvent, PhotoSide } from '../types.js';
-import type { InventoryDetail } from '../types.js';
+import type { TelegramEvent, PhotoSide } from '../../src/types.js';
+import type { InventoryDetail } from '../../src/types.js';
 
 export interface BotConfig {
   token: string;

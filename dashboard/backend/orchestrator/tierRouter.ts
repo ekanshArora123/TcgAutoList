@@ -7,8 +7,8 @@
  * Tier 3 (<40% confidence): LLM with full context. ~5% of cards.
  */
 
-import type { Price, TierConfig } from '../types.js';
-import { DEFAULT_TIER_CONFIG } from '../types.js';
+import type { Price, TierConfig } from '../../../src/types.js';
+import { DEFAULT_TIER_CONFIG } from '../../../src/types.js';
 
 export interface TierResult {
   tier: 1 | 2 | 3;

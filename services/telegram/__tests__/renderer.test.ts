@@ -8,8 +8,8 @@ import {
   renderCardDetails, renderPriceInfo, renderCardSummary,
   renderPhotoRequest, renderListingConfirmation,
   buildReviewKeyboard, buildPhotoRequestKeyboard,
-} from '../telegram/renderer.js';
-import type { InventoryDetail, Price } from '../types.js';
+} from '../renderer.js';
+import type { InventoryDetail, Price } from '../../../src/types.js';
 
 function makeDetail(overrides: Partial<InventoryDetail> = {}): InventoryDetail {
   return {

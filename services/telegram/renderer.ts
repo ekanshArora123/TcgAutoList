@@ -3,7 +3,7 @@
  * Telegram messages with inline keyboards.
  */
 
-import type { InventoryDetail, Price } from '../types.js';
+import type { InventoryDetail, Price } from '../../src/types.js';
 
 /** Format card details for display. */
 export function renderCardDetails(detail: InventoryDetail): string {

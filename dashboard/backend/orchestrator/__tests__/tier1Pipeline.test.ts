@@ -6,8 +6,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildListingTemplate } from '../agent/tier1Pipeline.js';
-import type { InventoryDetail, Price } from '../types.js';
+import { buildListingTemplate } from '../tier1Pipeline.js';
+import type { InventoryDetail, Price } from '../../../../src/types.js';
 
 function makeDetail(overrides: Partial<InventoryDetail> = {}): InventoryDetail {
   return {

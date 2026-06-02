@@ -13,16 +13,16 @@
  * Context resets per card. All durable state is in SQLite.
  */
 
-import type { TelegramEvent, CardWorkflowState, Price, InventoryDetail } from '../types.js';
-import type { Bot } from '../telegram/bot.js';
-import type { CollectionService } from '../../card-server/src/services/collectionService.js';
-import type { PricingService } from '../../card-server/src/services/pricingService.js';
+import type { TelegramEvent, CardWorkflowState, Price, InventoryDetail } from '../../../src/types.js';
+import type { Bot } from '../../../services/telegram/bot.js';
+import type { CollectionService } from '../../../services/card-server/src/services/collectionService.js';
+import type { PricingService } from '../../../services/card-server/src/services/pricingService.js';
 import { routeToTier } from './tierRouter.js';
 import { buildListingTemplate, postToEbay } from './tier1Pipeline.js';
 import {
   renderCardSummary, renderPhotoRequest, renderListingConfirmation,
   renderStatus, buildPhotoRequestKeyboard, buildReviewKeyboard,
-} from '../telegram/renderer.js';
+} from '../../../services/telegram/renderer.js';
 
 export interface OrchestratorDeps {
   bot: Bot;

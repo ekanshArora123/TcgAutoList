@@ -8,8 +8,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'events';
-import { Orchestrator } from '../agent/orchestrator.js';
-import type { TelegramEvent, InventoryDetail, Price } from '../types.js';
+import { Orchestrator } from '../orchestrator.js';
+import type { TelegramEvent, InventoryDetail, Price } from '../../../../src/types.js';
 
 // ─── Mock Bot ────────────────────────────────────────────────
 

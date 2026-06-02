@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_DB = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "card-server", "data", "cards.db"))
+_DEFAULT_DB = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "services", "card-server", "data", "cards.db"))
 _IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "card-images"))
 DB_PATH = os.environ.get("DB_PATH", _DEFAULT_DB)
 

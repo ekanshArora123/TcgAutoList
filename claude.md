@@ -8,16 +8,16 @@ Automates listing ~10,000 Pokemon cards on eBay using an agentic architecture wi
 
 ## Architecture
 
+See `STRUCTURE.md` for full folder layout.
+
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `card-server` | `card-server/` | Standalone MCP server. SQLite DB + CRUD + TCGplayer fetching + pricing algorithm. |
-| `ebay-mcp` | npm package | External MCP server for eBay Sell API (325 tools). Not yet integrated. |
-| `telegram/bot` | `src/telegram/` | Transport layer (NOT MCP). Routes commands/photos/text between user and orchestrator. |
-| `orchestrator` | `src/agent/` | Coded event loop (NOT an LLM). Picks card, fetches price, routes by tier, drives workflow. |
-
-**Why Telegram is not MCP:** MCP is for standalone, reusable tool providers. Telegram is tightly coupled to this workflow and only makes sense as a transport layer for the orchestrator.
-
-**Why the orchestrator is code, not LLM:** Most cards (Tier 1, ~80%) need zero LLM involvement. The orchestrator is a TypeScript state machine that only spawns LLM conversations for Tier 2/3 edge cases.
+| `card-server` | `services/card-server/` | Data microservice. SQLite DB + CRUD + TCGplayer fetching + pricing algorithm. |
+| `telegram` | `services/telegram/` | Transport layer. Routes commands/photos/text between user and orchestrator. |
+| `ebay` | `services/ebay/` | eBay listing service [stub]. |
+| `orchestrator` | `dashboard/backend/orchestrator/` | Coded event loop. Picks card, fetches price, routes by tier, drives workflow. |
+| `dashboard` | `dashboard/` | Web UI (React frontend + Flask backend). |
+| `entry point` | `src/index.ts` | Wires services + orchestrator, starts app. |
 
 ### Tiered Escalation Model
 
@@ -29,9 +29,9 @@ LLM involvement scales with pricing difficulty. Most cards go through a dumb cod
 | **2** | Confidence 40-79%, OR $50-200, OR manual flag | Scoped context + pricing tools | ~5K | ~15% |
 | **3** | Confidence < 40%, OR > $200, OR graded/errors, OR no data | Full context + all tools | ~12K | ~5% |
 
-Estimated cost for 10,000 cards: **~9.75M tokens (~$4-8 with Sonnet/Haiku mix).**
+Estimated cost for 10,000 cards: **~9.75M tokens**
 
-Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `card-server/src/helpers/pricing/pricingConfig.ts`.
+Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card-server/src/helpers/pricing/pricingConfig.ts`.
 
 ### Key Design Decisions
 
@@ -41,6 +41,7 @@ Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pric
 - **One photo at a time.** Request photo, wait, continue.
 - **All durable state in SQLite.** Program can stop/restart without losing progress. DB tracks card status (e.g., `photo_requested`).
 - **Idempotent.** Re-running skips already-listed cards.
+- **Services as microservices.** card-server, telegram, and ebay each own one external system. Don't duplicate owned functionality.
 
 ## Implementation Status
 
@@ -49,23 +50,15 @@ Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pric
 | card-server (DB, CRUD, services, MCP) | Done | 30+ MCP tools, all 4 table helpers |
 | TCGplayer API (listings, solds, card info) | Done | See `docs/tcgplayer-api.md` for API reference |
 | Pricing algorithm v1 | Done | See `docs/pricing-algorithm.md` for full details |
-| MySQL -> SQLite migration | Done | `card-server/src/migrate.ts` |
+| MySQL -> SQLite migration | Done | `services/card-server/src/migrate.ts` |
 | Telegram bot | Done | Commands, photos, inline keyboards, dedup |
 | Tier routing | Done | Confidence-based, configurable thresholds |
 | Tier 1 pipeline | Done | Template listing builder, photo request flow |
 | Orchestrator (Tier 1) | Done | Full state machine for the dumb pipe |
-| **eBay posting** | **Stub** | `tier1Pipeline.ts` — returns stub ID, needs ebay-mcp wiring |
+| **eBay posting** | **Stub** | `services/ebay/index.ts` — returns stub ID |
 | **Price override** | **Stub** | Orchestrator detects numeric input but doesn't execute |
 | **Tier 2/3 LLM** | **Stub** | `llm.ts`, `tools.ts`, `systemPrompt.ts` are pseudocode |
-
-### Tier 2/3 Implementation Plan
-
-Three files need real implementation (currently pseudocode stubs):
-
-1. **`tools.ts`** — Tool schemas + execution routing. Tier 2 gets pricing/research tools only. Tier 3 gets full card-server + eBay + manual review tools.
-2. **`systemPrompt.ts`** — Dynamic per-card prompts. Injects card details, pricing data, confidence, reasoning. Tier 2 = pricing-focused. Tier 3 = full analysis.
-3. **`llm.ts`** — Claude API client with agentic tool-use loop (send message -> tool calls -> execute -> feed back -> repeat). Conversation lifecycle: create per card, relay Telegram free-text, reset when done.
-4. **Wire into orchestrator** — Replace `executeTier2Stub()` / `executeTier3Stub()`.
+| **Python conversion** | **Planned** | See `CONVERSION_PLAN.md` |
 
 ### Future Work
 
@@ -74,13 +67,14 @@ Three files need real implementation (currently pseudocode stubs):
 - **Tier 2.5:** Sell/hold sentiment analysis using price history and market trends.
 - **In-between condition listing choice:** When a card is LP-NM, prompt user to choose LP or NM for the listing.
 - **Bulk re-pricing:** Re-fetch prices for cards with stale data (>14 days old).
+- **Dashboard as control plane:** Trigger workflows, override prices, manage listings from web UI.
 
 ## card-server Structure
 
 The orchestrator calls **two service files**. Everything else is internal.
 
 ```
-card-server/src/
+services/card-server/src/
 ├── index.ts                  <- MCP entry: 30+ tools, delegates to services
 ├── db.ts                     <- SQLite init/close
 ├── schema.sql                <- 4-table schema (cards, skus, inventory, prices)
@@ -88,15 +82,23 @@ card-server/src/
 ├── services/
 │   ├── collectionService.ts  <- Cards + SKUs + Inventory management
 │   └── pricingService.ts     <- Pricing operations + TCGplayer fetch workflows
-└── helpers/                  <- INTERNAL (services compose these)
-    ├── crud/                 <- Pure DB CRUD (cards, skus, inventory, prices)
-    ├── pricing/
-    │   ├── algorithm.ts      <- Pricing algorithm (see docs/pricing-algorithm.md)
-    │   └── pricingConfig.ts  <- All pricing magic numbers
-    └── tcgplayer/
-        ├── fetchPrices.ts    <- Active + sold listings (see docs/tcgplayer-api.md)
-        ├── fetchCardInfo.ts  <- Card metadata fetching
-        └── formatters.ts     <- Condition/finish format conversion
+├── helpers/                  <- INTERNAL (services compose these)
+│   ├── crud/                 <- Pure DB CRUD (cards, skus, inventory, prices)
+│   ├── pricing/
+│   │   ├── algorithm.ts      <- Pricing algorithm (see docs/pricing-algorithm.md)
+│   │   └── pricingConfig.ts  <- All pricing magic numbers
+│   ├── tcgplayer/
+│   │   ├── fetchPrices.ts    <- Active + sold listings (see docs/tcgplayer-api.md)
+│   │   ├── fetchCardInfo.ts  <- Card metadata fetching
+│   │   └── formatters.ts     <- Condition/finish format conversion
+│   └── market/
+│       ├── collector.ts      <- Market data collection orchestration
+│       ├── fetchers.ts       <- External API calls
+│       ├── aggregators.ts    <- Raw data → aggregate stats
+│       └── snapshots.ts      <- DB read/write for market_snapshots
+├── collect.ts                <- CLI runner for market data collection
+├── dedup-inventory.ts        <- One-off utility script
+└── migrate.ts                <- MySQL -> SQLite migration (historical)
 ```
 
 ## Database Schema
@@ -119,11 +121,15 @@ card-server/src/
 - **Cross-condition extrapolation:** 30% discount per tier, compounding. Always flagged for manual review.
 - **Liquid value:** `(sell_price * 0.85) - shipping_cost`. Shipping: <$5 = $0, $5-25 = $1 (PWE), >$25 = $5 (tracked).
 
-All pricing constants live in `card-server/src/helpers/pricing/pricingConfig.ts`.
+All pricing constants live in `services/card-server/src/helpers/pricing/pricingConfig.ts`.
 
 ## Tech Stack
 
+Currently TypeScript (converting to Python). See `CONVERSION_PLAN.md`.
+
 Node.js + TypeScript (ES2022, ESM) | SQLite via `better-sqlite3` | `@modelcontextprotocol/sdk` | `node-telegram-bot-api` | Zod | dotenv
+
+Dashboard: React + Vite (frontend) | Flask (backend)
 
 ## Environment Variables
 
@@ -133,7 +139,7 @@ See `.env.example`. Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional
 
 ```bash
 npm run build && npm run start    # Parent project
-cd card-server && npm run build   # card-server (standalone)
+cd services/card-server && npm run build   # card-server (standalone)
 ```
 
 ## Git Workflow
@@ -142,7 +148,7 @@ cd card-server && npm run build   # card-server (standalone)
 
 ## Common Tasks for AI Assistants
 
-- **Adding an MCP tool:** Zod schema in `types.ts` -> handler in `collectionService.ts` or `pricingService.ts` -> register in `index.ts`.
-- **Changing the pricing algorithm:** Edit `helpers/pricing/algorithm.ts`. Constants are in `pricingConfig.ts`.
-- **Adding a TCGplayer data source:** Fetch function in `helpers/tcgplayer/` -> format conversions in `formatters.ts` -> wire into service.
+- **Adding an MCP tool:** Zod schema in `services/card-server/src/types.ts` -> handler in `collectionService.ts` or `pricingService.ts` -> register in `services/card-server/src/index.ts`.
+- **Changing the pricing algorithm:** Edit `services/card-server/src/helpers/pricing/algorithm.ts`. Constants are in `pricingConfig.ts`.
+- **Adding a TCGplayer data source:** Fetch function in `services/card-server/src/helpers/tcgplayer/` -> format conversions in `formatters.ts` -> wire into service.
 - **Changing condition/finish mappings:** Edit `formatters.ts`.

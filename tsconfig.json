@@ -15,6 +15,12 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/**/*", "card-server/src/**/*"],
+  "include": [
+      "src/**/*",
+      "services/card-server/src/**/*",
+      "services/telegram/**/*",
+      "services/ebay/**/*",
+      "dashboard/backend/orchestrator/**/*"
+    ],
   "exclude": ["node_modules", "dist", "**/__tests__/**"]
 }

@@ -11,7 +11,7 @@
     "import": "tsx src/index.ts import",
     "server:collection": "tsx src/servers/collection/index.ts",
     "server:cardinfo": "tsx src/servers/cardinfo/index.ts",
-    "test": "node --import tsx --test src/**/__tests__/**/*.test.ts"
+    "test": "node --import tsx --test dashboard/backend/orchestrator/__tests__/*.test.ts services/telegram/__tests__/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
