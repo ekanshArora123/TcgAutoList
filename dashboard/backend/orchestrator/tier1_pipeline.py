@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ebay_service.service import ListingTemplate, post_to_ebay
+from services.ebay.service import ListingTemplate, post_to_ebay
 
 __all__ = ["build_listing_template", "post_to_ebay", "ListingTemplate"]
 

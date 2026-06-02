@@ -4,8 +4,8 @@
 #  First run sets up the venv, installs deps, and npm-installs
 #  the frontend. Ctrl-C stops both.
 #
-#  Full agent (Telegram) instead of the dashboard:
-#    "$PY" -m shared.main      (needs .env tokens)
+#  Full agent (Telegram) instead of the dashboard (run from repo root):
+#    "$PY" -m dashboard.backend.orchestrator.main      (needs .env tokens)
 # ============================================================
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -25,10 +25,10 @@ if [ -z "$PY" ]; then
     PY="$(venv_py)"
 fi
 
-# --- Install packages if card_server isn't importable yet ---
-if ! "$PY" -c "import card_server" >/dev/null 2>&1; then
-    echo "Installing Python dependencies (pip install -e .)..."
-    "$PY" -m pip install -e . >/dev/null
+# --- Install Python dependencies if not present yet ---
+if ! "$PY" -c "import flask, mcp, telegram" >/dev/null 2>&1; then
+    echo "Installing Python dependencies (pip install -r requirements.txt)..."
+    "$PY" -m pip install -r requirements.txt >/dev/null
 fi
 
 # --- Frontend deps ---

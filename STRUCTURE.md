@@ -5,7 +5,7 @@
 ```
 project/
 ├── services/                  <- Microservices (each owns an external system)
-│   ├── card-server/           <- DB + TCGplayer + pricing
+│   ├── card_server/           <- DB + TCGplayer + pricing (data/cards.db lives here)
 │   ├── telegram/              <- Telegram bot I/O
 │   └── ebay/                  <- eBay listing CRUD [stub]
 ├── dashboard/                 <- Web UI + orchestrator (control plane)
@@ -13,22 +13,27 @@ project/
 │   └── backend/
 │       ├── app.py             <- Flask REST API
 │       └── orchestrator/      <- Workflow engine (state machine)
-├── shared/                    <- Entry point + shared types (package `shared`)
-│   ├── main.py                <- Wires services + orchestrator, starts app
-│   └── types.py               <- Shared types (re-exports card_server models)
+│           ├── main.py        <- Entry point: wires services + orchestrator, starts app
+│           └── types.py       <- Shared types (re-exports card_server models)
+├── tests/                     <- pytest suite
+├── requirements.txt           <- Python deps (no packaging / no install)
 └── docs/                      <- Reference docs (pricing algorithm, TCGplayer API)
 ```
+
+Imports resolve via the repo root on `sys.path` (run `python -m <dotted.path>` from
+the root). Folders use underscores so they're valid module names, e.g.
+`services.card_server`, `dashboard.backend.orchestrator`.
 
 ## Services (services/)
 
 Each service owns one external system and provides abstraction over it. Callers should not know the service's internal API format, auth, or data model.
 
-### card-server (services/card-server/)
+### card-server (services/card_server/)
 - **Owns:** SQLite database, TCGplayer API, pricing algorithm, market data collection
 - **Exposes:** CollectionService + PricingService (simple API for coded callers), MCP tools (rich API for LLM)
 - **Internal:** CRUD helpers, TCGplayer fetchers, pricing math, market aggregators
 - **Status:** Done
-- **Standalone:** Importable as the `card_server` package (`services/card-server/card_server/`). Can run independently as an MCP server via `python -m card_server.index`.
+- **Standalone:** Imported as `services.card_server`. Runs independently as an MCP server via `python -m services.card_server.index` (from the repo root).
 
 ### telegram (services/telegram/)
 - **Owns:** Telegram Bot API (send/receive messages, photos, inline keyboards)

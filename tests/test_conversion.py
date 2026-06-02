@@ -9,19 +9,19 @@ Run: pytest -q
 
 from __future__ import annotations
 
-from card_server.helpers.pricing.algorithm import (
+from services.card_server.helpers.pricing.algorithm import (
     compute_liquid_value,
     compute_price,
     extrapolate_across_conditions,
 )
-from card_server.helpers.tcgplayer.formatters import (
+from services.card_server.helpers.tcgplayer.formatters import (
     format_condition_for_api,
     format_finish_for_api,
     parse_condition_from_api,
 )
-from orchestrator.tier1_pipeline import build_listing_template
-from orchestrator.tier_router import route_to_tier
-from telegram_service.renderer import render_card_summary, render_listing_confirmation
+from dashboard.backend.orchestrator.tier1_pipeline import build_listing_template
+from dashboard.backend.orchestrator.tier_router import route_to_tier
+from services.telegram.renderer import render_card_summary, render_listing_confirmation
 
 
 # ─── Pricing algorithm ───────────────────────────────────────

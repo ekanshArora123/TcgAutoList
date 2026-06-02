@@ -21,7 +21,7 @@ _db: Optional[sqlite3.Connection] = None
 def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
     """Open (and migrate) the SQLite database. Idempotent schema creation."""
     global _db
-    resolved = Path(db_path) if db_path else _THIS_DIR.parent / "data" / "cards.db"
+    resolved = Path(db_path) if db_path else _THIS_DIR / "data" / "cards.db"
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
     _db = sqlite3.connect(str(resolved), isolation_level=None, check_same_thread=False)

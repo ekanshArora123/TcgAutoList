@@ -7,7 +7,7 @@ Initializes all components and starts the listing workflow:
 4. Start orchestrator event loop
 5. Handle graceful shutdown
 
-Ported from src/index.ts. Run: python -m shared.main
+Run from the repo root: python -m dashboard.backend.orchestrator.main
 """
 
 from __future__ import annotations
@@ -20,13 +20,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from card_server.db import close_database, get_db, init_database
-from card_server.services.collection_service import CollectionService
-from card_server.services.pricing_service import PricingService
-from orchestrator.orchestrator import Orchestrator
-from telegram_service.bot import Bot
+from services.card_server.db import close_database, get_db, init_database
+from services.card_server.services.collection_service import CollectionService
+from services.card_server.services.pricing_service import PricingService
+from services.telegram.bot import Bot
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from .orchestrator import Orchestrator
+
+# main.py lives at dashboard/backend/orchestrator/main.py -> repo root is 3 up.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _require_env(name: str) -> str:
@@ -49,7 +51,7 @@ async def main() -> None:
         sys.exit(1)
 
     db_path = os.environ.get("DB_PATH") or str(
-        _PROJECT_ROOT / "services" / "card-server" / "data" / "cards.db"
+        _PROJECT_ROOT / "services" / "card_server" / "data" / "cards.db"
     )
     photos_dir = os.environ.get("PHOTOS_DIR") or str(_PROJECT_ROOT / "photos")
 

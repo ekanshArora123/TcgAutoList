@@ -4,15 +4,15 @@ Standalone script that collects market data for owned cards. Run manually or via
 Task Scheduler / cron. Ported from collect.ts.
 
 Usage:
-  python -m card_server.collect                  # collect all owned cards
-  python -m card_server.collect --stale          # cards not collected in 7+ days
-  python -m card_server.collect --stale 14        # not collected in 14+ days
-  python -m card_server.collect --cohort          # same-set neighbors (not owned)
-  python -m card_server.collect --cards 123,456   # specific card IDs
-  python -m card_server.collect --delay 1000      # 1s between API calls (default 500ms)
+  python -m services.card_server.collect                  # collect all owned cards
+  python -m services.card_server.collect --stale          # cards not collected in 7+ days
+  python -m services.card_server.collect --stale 14        # not collected in 14+ days
+  python -m services.card_server.collect --cohort          # same-set neighbors (not owned)
+  python -m services.card_server.collect --cards 123,456   # specific card IDs
+  python -m services.card_server.collect --delay 1000      # 1s between API calls (default 500ms)
 
 Environment:
-  DB_PATH                — SQLite database path (default: card-server/data/cards.db)
+  DB_PATH                — SQLite database path (default: services/card_server/data/cards.db)
   TCGPLAYER_AUTH_COOKIE  — Optional, enables full sold data pagination
 """
 

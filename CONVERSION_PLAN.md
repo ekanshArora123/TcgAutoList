@@ -1,9 +1,12 @@
 # Python Conversion Plan
 
 > **Status: COMPLETE.** The TypeScript codebase has been fully converted to Python.
-> `card_server`, `telegram_service`, `ebay_service`, `orchestrator`, and `shared` are
-> installable packages mapped in `pyproject.toml` (`pip install -e .`). The React
-> frontend remains TypeScript. This document is retained as the historical file map.
+> There is no packaging/install — dependencies are in `requirements.txt` and imports
+> resolve via the repo root on `sys.path` (run `python -m <dotted.path>` from the root).
+> Folders use underscores so they're valid module names (`services.card_server`,
+> `services.telegram`, `services.ebay`, `dashboard.backend.orchestrator`). The entry
+> point + shared types live in `dashboard/backend/orchestrator/` (main.py, types.py).
+> The React frontend remains TypeScript. This document is retained as the historical file map.
 
 Convert the TypeScript codebase to Python to unify the project language. The dashboard backend is already Python. The Anthropic SDK (for Tier 2/3 LLM) is more natural in Python.
 
@@ -91,14 +94,14 @@ Convert bottom-up: services first (no dependencies on each other), then orchestr
 1. `types.ts` → integrate into a shared types module (or each service defines its own)
 2. `index.ts` → `main.py` or integrate into dashboard backend startup
 
-**Decision:** After conversion, `src/` may no longer be needed. The dashboard backend can be the entry point that starts both the Flask API and the orchestrator.
+**Decision (done):** `src/` was removed; its entry point (`main.py`) and shared types (`types.py`) now live in `dashboard/backend/orchestrator/`. Run the full app with `python -m dashboard.backend.orchestrator.main`.
 
 ## Post-Conversion Cleanup
 
 - [x] Remove `package.json`, `tsconfig.json`, `node_modules/` from root and card-server
 - [x] Remove `dist/` build artifacts
 - [x] Update `.gitignore` (add `__pycache__/`, `*.pyc`, `.venv/`, `*.egg-info/`)
-- [x] Create top-level `pyproject.toml` (declares deps + package-dir mapping)
+- [x] Create top-level `requirements.txt` (deps; no packaging/install — repo-root imports)
 - [x] Update `CLAUDE.md` tech stack section
 - [x] Update command equivalents (see CLAUDE.md Commands — `python -m ...`)
 - [x] Verify dashboard backend / orchestrator can import `card_server` services directly (language boundary resolved)

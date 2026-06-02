@@ -4,8 +4,8 @@ REM  TcgAutoList - run the dashboard (Flask backend + React UI)
 REM  First run sets up the venv, installs deps, and npm-installs
 REM  the frontend. Opens two windows; close them to stop.
 REM
-REM  Full agent (Telegram) instead of the dashboard:
-REM    .venv\Scripts\python.exe -m shared.main   (needs .env tokens)
+REM  Full agent (Telegram) instead of the dashboard (run from repo root):
+REM    .venv\Scripts\python.exe -m dashboard.backend.orchestrator.main  (needs .env)
 REM ============================================================
 setlocal
 cd /d "%~dp0"
@@ -17,11 +17,11 @@ if not exist ".venv\Scripts\python.exe" (
     if errorlevel 1 python -m venv .venv
 )
 
-REM --- Install packages if card_server is not importable yet ---
-.venv\Scripts\python.exe -c "import card_server" 1>nul 2>nul
+REM --- Install Python dependencies if not present yet ---
+.venv\Scripts\python.exe -c "import flask, mcp, telegram" 1>nul 2>nul
 if errorlevel 1 (
-    echo Installing Python dependencies [pip install -e .] ...
-    .venv\Scripts\python.exe -m pip install -e .
+    echo Installing Python dependencies [pip install -r requirements.txt] ...
+    .venv\Scripts\python.exe -m pip install -r requirements.txt
 )
 
 REM --- Frontend deps ---

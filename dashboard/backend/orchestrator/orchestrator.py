@@ -17,11 +17,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from card_server.services.collection_service import CollectionService
-from card_server.services.pricing_service import PricingService
-from shared.types import CardWorkflowState
-from telegram_service.bot import Bot
-from telegram_service.renderer import (
+from services.card_server.services.collection_service import CollectionService
+from services.card_server.services.pricing_service import PricingService
+from services.telegram.bot import Bot
+from services.telegram.renderer import (
     build_photo_request_keyboard,
     build_review_keyboard,
     render_card_summary,
@@ -32,6 +31,7 @@ from telegram_service.renderer import (
 
 from .tier1_pipeline import build_listing_template, post_to_ebay
 from .tier_router import route_to_tier
+from .types import CardWorkflowState
 
 
 class Orchestrator:

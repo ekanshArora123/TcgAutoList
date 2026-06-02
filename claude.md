@@ -12,12 +12,12 @@ See `STRUCTURE.md` for full folder layout.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `card-server` | `services/card-server/` | Data microservice. SQLite DB + CRUD + TCGplayer fetching + pricing algorithm. |
+| `card-server` | `services/card_server/` | Data microservice. SQLite DB + CRUD + TCGplayer fetching + pricing algorithm. |
 | `telegram` | `services/telegram/` | Transport layer. Routes commands/photos/text between user and orchestrator. |
 | `ebay` | `services/ebay/` | eBay listing service [stub]. |
 | `orchestrator` | `dashboard/backend/orchestrator/` | Coded event loop. Picks card, fetches price, routes by tier, drives workflow. |
 | `dashboard` | `dashboard/` | Web UI (React frontend + Flask backend). |
-| `entry point` | `shared/main.py` | Wires services + orchestrator, starts app. |
+| `entry point` | `dashboard/backend/orchestrator/main.py` | Wires services + orchestrator, starts app. |
 
 ### Tiered Escalation Model
 
@@ -31,7 +31,7 @@ LLM involvement scales with pricing difficulty. Most cards go through a dumb cod
 
 Estimated cost for 10,000 cards: **~9.75M tokens**
 
-Tier thresholds are configurable in `shared/types.py` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card-server/card_server/helpers/pricing/config.py`.
+Tier thresholds are configurable in `dashboard/backend/orchestrator/types.py` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card_server/helpers/pricing/config.py`.
 
 ### Key Design Decisions
 
@@ -50,13 +50,13 @@ Tier thresholds are configurable in `shared/types.py` (`DEFAULT_TIER_CONFIG`). P
 | card-server (DB, CRUD, services, MCP) | Done | 30+ MCP tools, all 4 table helpers |
 | TCGplayer API (listings, solds, card info) | Done | See `docs/tcgplayer-api.md` for API reference |
 | Pricing algorithm v1 | Done | See `docs/pricing-algorithm.md` for full details |
-| MySQL -> SQLite migration | Done | `card_server/migrate.py` |
+| MySQL -> SQLite migration | Done | `services/card_server/migrate.py` |
 | Telegram bot | Done | Commands, photos, inline keyboards |
 | Tier routing | Done | Confidence-based, configurable thresholds |
 | Tier 1 pipeline | Done | Template listing builder, photo request flow |
 | Orchestrator (Tier 1) | Done | Full state machine for the dumb pipe |
 | **Python conversion** | **Done** | Full TS→Python port. React frontend stays TS. See `CONVERSION_PLAN.md` |
-| **eBay posting** | **Stub** | `ebay_service/service.py` — returns stub ID |
+| **eBay posting** | **Stub** | `services/ebay/service.py` — returns stub ID |
 | **Price override** | **Stub** | Orchestrator detects numeric input but doesn't execute |
 | **Tier 2/3 LLM** | **Stub** | `llm.py`, `tools.py`, `system_prompt.py` are pseudocode |
 
@@ -74,7 +74,8 @@ Tier thresholds are configurable in `shared/types.py` (`DEFAULT_TIER_CONFIG`). P
 The orchestrator calls **two service files**. Everything else is internal.
 
 ```
-services/card-server/card_server/   (importable Python package `card_server`)
+services/card_server/         (imported as `services.card_server`)
+├── data/cards.db             <- SQLite database (gitignored)
 ├── index.py                  <- MCP entry (FastMCP): 30+ tools, delegates to services
 ├── db.py                     <- SQLite init/close
 ├── schema.sql                <- 4-table schema (cards, skus, inventory, prices)
@@ -121,7 +122,7 @@ services/card-server/card_server/   (importable Python package `card_server`)
 - **Cross-condition extrapolation:** 30% discount per tier, compounding. Always flagged for manual review.
 - **Liquid value:** `(sell_price * 0.85) - shipping_cost`. Shipping: <$5 = $0, $5-25 = $1 (PWE), >$25 = $5 (tracked).
 
-All pricing constants live in `services/card-server/card_server/helpers/pricing/config.py`.
+All pricing constants live in `services/card_server/helpers/pricing/config.py`.
 
 ## Tech Stack
 
@@ -129,7 +130,7 @@ Python (3.11+). The TypeScript codebase was fully converted to Python (see `CONV
 
 Python | SQLite via stdlib `sqlite3` | `mcp` (FastMCP) | `python-telegram-bot` | Pydantic | `httpx` | `python-dotenv`
 
-Each microservice is an installable package (mapped in `pyproject.toml`): `card_server`, `telegram_service`, `ebay_service`, `orchestrator`, `shared`. Run `pip install -e .` to make them importable.
+**No packaging / no install.** Dependencies are in `requirements.txt` (`pip install -r requirements.txt`). Imports resolve via the repo root being on `sys.path` — always run modules from the repo root with `python -m <dotted.path>`. Import paths mirror the folder layout: `services.card_server.*`, `services.telegram.*`, `services.ebay.*`, `dashboard.backend.orchestrator.*`. (Folders use underscores, not hyphens, so they're valid module names.)
 
 Dashboard: React + Vite + TypeScript (frontend) | Flask (backend)
 
@@ -140,14 +141,22 @@ See `.env.example`. Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional
 ## Commands
 
 ```bash
-python -m venv .venv && .venv/Scripts/python -m pip install -e .   # one-time setup (Windows path)
-python -m shared.main                       # run the app (entry point)
-python -m card_server.index                 # card-server MCP server (stdio)
-python -m card_server.collect               # market data collection runner
+# One-time setup
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt   # (Windows path)
 
-# Dashboard
-cd dashboard/backend && python app.py       # Flask API on :5000
-cd dashboard/frontend && npm run dev         # Vite dev server on :5173
+# Easiest: run the whole dashboard
+run.bat            # Windows
+./run.sh           # bash / Git-Bash
+
+# Or run pieces manually (always from the repo root so imports resolve):
+python -m dashboard.backend.orchestrator.main   # the full app (entry point; needs .env)
+python -m services.card_server.index            # card-server MCP server (stdio)
+python -m services.card_server.collect          # market data collection runner
+python dashboard/backend/app.py                 # Flask API on :5000
+cd dashboard/frontend && npm run dev            # Vite dev server on :5173
+
+pytest -q                                       # run tests
 ```
 
 ## Git Workflow
@@ -156,7 +165,13 @@ cd dashboard/frontend && npm run dev         # Vite dev server on :5173
 
 ## Common Tasks for AI Assistants
 
-- **Adding an MCP tool:** Pydantic/type in `card_server/types.py` -> handler method in `collection_service.py` or `pricing_service.py` -> register as an `@mcp.tool()` in `card_server/index.py`.
-- **Changing the pricing algorithm:** Edit `card_server/helpers/pricing/algorithm.py`. Constants are in `config.py`.
-- **Adding a TCGplayer data source:** Fetch function in `card_server/helpers/tcgplayer/` -> format conversions in `formatters.py` -> wire into service.
+- **Adding an MCP tool:** Pydantic/type in `services/card_server/types.py` -> handler method in `collection_service.py` or `pricing_service.py` -> register as an `@mcp.tool()` in `services/card_server/index.py`.
+- **Changing the pricing algorithm:** Edit `services/card_server/helpers/pricing/algorithm.py`. Constants are in `config.py`.
+- **Adding a TCGplayer data source:** Fetch function in `services/card_server/helpers/tcgplayer/` -> format conversions in `formatters.py` -> wire into service.
 - **Changing condition/finish mappings:** Edit `formatters.py`.
+
+## Testing
+
+Tests live in `tests/` (pytest). Run with `pytest -q` from the repo root.
+
+**Maintain the tests as the code changes** — when you add or change behavior (pricing logic, tier routing, formatters, listing/render output, service methods), update or add the corresponding test in the same change so `pytest` stays green. Don't land logic changes without adjusting the tests they affect.

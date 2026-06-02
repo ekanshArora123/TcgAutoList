@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
 # Re-export card_server data models that the orchestrator uses.
-from card_server.types import (  # noqa: F401
+from services.card_server.types import (  # noqa: F401
     Card,
     Sku,
     InventoryItem,

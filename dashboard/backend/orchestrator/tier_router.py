@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from shared.types import DEFAULT_TIER_CONFIG, TierConfig
+from .types import DEFAULT_TIER_CONFIG, TierConfig
 
 
 def route_to_tier(

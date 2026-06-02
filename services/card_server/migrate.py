@@ -6,7 +6,7 @@ Reads the UTF-16LE MySQL dump and populates the SQLite schema. Mapping:
   actualinventory -> inventory  (hashed SKU FK -> sku_id FK)
   cardprices      -> prices (hashed SKU PK -> sku_id PK)
 
-Run: python -m card_server.migrate [--dump-path <path>] [--db-path <path>]
+Run: python -m services.card_server.migrate [--dump-path <path>] [--db-path <path>]
 Ported from migrate.ts.
 """
 
@@ -27,9 +27,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dump-path",
         dest="dump_path",
-        default=str(_THIS_DIR.parent.parent.parent / "Old implementation files" / "database-dump.sql"),
+        default=str(_THIS_DIR.parent.parent / "Old implementation files" / "database-dump.sql"),
     )
-    parser.add_argument("--db-path", dest="db_path", default=str(_THIS_DIR.parent / "data" / "cards.db"))
+    parser.add_argument("--db-path", dest="db_path", default=str(_THIS_DIR / "data" / "cards.db"))
     return parser.parse_args()
 
 

@@ -4,7 +4,7 @@ Combined collection, card info, and pricing data service exposed over MCP via
 the Python SDK's FastMCP. Delegates to CollectionService / PricingService.
 Ported from index.ts (which used the TypeScript @modelcontextprotocol/sdk).
 
-Run:  python -m card_server.index
+Run:  python -m services.card_server.index
 """
 
 from __future__ import annotations

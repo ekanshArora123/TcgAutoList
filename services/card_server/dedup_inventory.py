@@ -5,7 +5,7 @@ Strategy: for each group of duplicates (same sku_id, qty, tags), keep ONE row.
 If any row was modified (status != 'unlisted', has photos, ebay_listing_id),
 keep that one; otherwise keep the lowest inventory_id. Delete the rest.
 
-Run: python -m card_server.dedup_inventory [--db-path <path>] [--dry-run]
+Run: python -m services.card_server.dedup_inventory [--db-path <path>] [--dry-run]
 Ported from dedup-inventory.ts.
 """
 
