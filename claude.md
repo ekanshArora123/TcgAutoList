@@ -8,7 +8,7 @@ Automates listing ~10,000 Pokemon cards on eBay using an agentic architecture wi
 
 ## Architecture
 
-See `STRUCTURE.md` for full folder layout.
+See `docs/STRUCTURE.md` for full folder layout.
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
@@ -55,7 +55,7 @@ Tier thresholds are configurable in `dashboard/backend/orchestrator/types.py` (`
 | Tier routing | Done | Confidence-based, configurable thresholds |
 | Tier 1 pipeline | Done | Template listing builder, photo request flow |
 | Orchestrator (Tier 1) | Done | Full state machine for the dumb pipe |
-| **Python conversion** | **Done** | Full TS→Python port. React frontend stays TS. See `CONVERSION_PLAN.md` |
+| **Python conversion** | **Done** | Full TS→Python port. React frontend stays TS. |
 | **eBay posting** | **Stub** | `services/ebay/service.py` — returns stub ID |
 | **Price override** | **Stub** | Orchestrator detects numeric input but doesn't execute |
 | **Tier 2/3 LLM** | **Stub** | `llm.py`, `tools.py`, `system_prompt.py` are pseudocode |
@@ -126,7 +126,7 @@ All pricing constants live in `services/card_server/helpers/pricing/config.py`.
 
 ## Tech Stack
 
-Python (3.11+). The TypeScript codebase was fully converted to Python (see `CONVERSION_PLAN.md` for the historical mapping). The React frontend remains TypeScript.
+Python (3.11+). The TypeScript codebase was fully converted to Python. The React frontend remains TypeScript.
 
 Python | SQLite via stdlib `sqlite3` | `mcp` (FastMCP) | `python-telegram-bot` | Pydantic | `httpx` | `python-dotenv`
 

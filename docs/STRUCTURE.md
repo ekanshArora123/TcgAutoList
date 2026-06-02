@@ -66,4 +66,4 @@ Each service owns one external system and provides abstraction over it. Callers 
 ## Language
 
 The backend/services are Python; the React frontend stays TypeScript. The TS→Python
-conversion is complete — see CONVERSION_PLAN.md for the historical file mapping.
+conversion is complete.
