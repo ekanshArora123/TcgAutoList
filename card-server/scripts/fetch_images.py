@@ -2,9 +2,9 @@
 Fetch card images from TCGplayer and save as .webp in data/card-images/.
 
 Usage:
-    python tools/fetch_images.py                  # fetch missing images for all inventory cards
-    python tools/fetch_images.py 100503 100505    # fetch specific card IDs
-    python tools/fetch_images.py --force 100503   # re-download even if exists
+    python card-server/scripts/fetch_images.py                  # fetch missing images for all inventory cards
+    python card-server/scripts/fetch_images.py 100503 100505    # fetch specific card IDs
+    python card-server/scripts/fetch_images.py --force 100503   # re-download even if exists
 
 Reads the SQLite DB to find all unique card (product) IDs in inventory,
 skips any that already have a .webp file, fetches the rest from TCGplayer's
@@ -25,8 +25,9 @@ from PIL import Image
 # ── Paths ──────────────────────────────────────────────────────
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent
-DB_PATH = PROJECT_ROOT / "card-server" / "data" / "cards.db"
+CARD_SERVER_ROOT = SCRIPT_DIR.parent
+PROJECT_ROOT = CARD_SERVER_ROOT.parent
+DB_PATH = CARD_SERVER_ROOT / "data" / "cards.db"
 IMAGES_DIR = PROJECT_ROOT / "data" / "card-images"
 
 # ── Config ─────────────────────────────────────────────────────
