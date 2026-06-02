@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ComposedChart, BarChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
+  PieChart, Pie, Cell,
 } from "recharts";
 import {
   fetchSummary, fetchPriceHistogram, fetchConfidenceDistribution,

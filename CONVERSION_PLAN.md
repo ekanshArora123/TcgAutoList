@@ -1,5 +1,10 @@
 # Python Conversion Plan
 
+> **Status: COMPLETE.** The TypeScript codebase has been fully converted to Python.
+> `card_server`, `telegram_service`, `ebay_service`, `orchestrator`, and `shared` are
+> installable packages mapped in `pyproject.toml` (`pip install -e .`). The React
+> frontend remains TypeScript. This document is retained as the historical file map.
+
 Convert the TypeScript codebase to Python to unify the project language. The dashboard backend is already Python. The Anthropic SDK (for Tier 2/3 LLM) is more natural in Python.
 
 ## Conversion Order
@@ -90,13 +95,13 @@ Convert bottom-up: services first (no dependencies on each other), then orchestr
 
 ## Post-Conversion Cleanup
 
-- [ ] Remove `package.json`, `tsconfig.json`, `node_modules/` from root and card-server
-- [ ] Remove `dist/` build artifacts
-- [ ] Update `.gitignore` (remove dist/, add `__pycache__/`, `*.pyc`, `.venv/`)
-- [ ] Create top-level `pyproject.toml` or `requirements.txt`
-- [ ] Update `CLAUDE.md` tech stack section
-- [ ] Update all npm script equivalents (Makefile or pyproject.toml scripts)
-- [ ] Verify dashboard backend can import card-server services directly (language boundary resolved)
+- [x] Remove `package.json`, `tsconfig.json`, `node_modules/` from root and card-server
+- [x] Remove `dist/` build artifacts
+- [x] Update `.gitignore` (add `__pycache__/`, `*.pyc`, `.venv/`, `*.egg-info/`)
+- [x] Create top-level `pyproject.toml` (declares deps + package-dir mapping)
+- [x] Update `CLAUDE.md` tech stack section
+- [x] Update command equivalents (see CLAUDE.md Commands — `python -m ...`)
+- [x] Verify dashboard backend / orchestrator can import `card_server` services directly (language boundary resolved)
 
 ## Risks
 

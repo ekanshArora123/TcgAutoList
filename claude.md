@@ -17,7 +17,7 @@ See `STRUCTURE.md` for full folder layout.
 | `ebay` | `services/ebay/` | eBay listing service [stub]. |
 | `orchestrator` | `dashboard/backend/orchestrator/` | Coded event loop. Picks card, fetches price, routes by tier, drives workflow. |
 | `dashboard` | `dashboard/` | Web UI (React frontend + Flask backend). |
-| `entry point` | `src/index.ts` | Wires services + orchestrator, starts app. |
+| `entry point` | `src/main.py` | Wires services + orchestrator, starts app. |
 
 ### Tiered Escalation Model
 
@@ -31,7 +31,7 @@ LLM involvement scales with pricing difficulty. Most cards go through a dumb cod
 
 Estimated cost for 10,000 cards: **~9.75M tokens**
 
-Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card-server/src/helpers/pricing/pricingConfig.ts`.
+Tier thresholds are configurable in `src/types.py` (`DEFAULT_TIER_CONFIG`). Pricing magic numbers are in `services/card-server/card_server/helpers/pricing/config.py`.
 
 ### Key Design Decisions
 
@@ -50,15 +50,15 @@ Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pric
 | card-server (DB, CRUD, services, MCP) | Done | 30+ MCP tools, all 4 table helpers |
 | TCGplayer API (listings, solds, card info) | Done | See `docs/tcgplayer-api.md` for API reference |
 | Pricing algorithm v1 | Done | See `docs/pricing-algorithm.md` for full details |
-| MySQL -> SQLite migration | Done | `services/card-server/src/migrate.ts` |
-| Telegram bot | Done | Commands, photos, inline keyboards, dedup |
+| MySQL -> SQLite migration | Done | `card_server/migrate.py` |
+| Telegram bot | Done | Commands, photos, inline keyboards |
 | Tier routing | Done | Confidence-based, configurable thresholds |
 | Tier 1 pipeline | Done | Template listing builder, photo request flow |
 | Orchestrator (Tier 1) | Done | Full state machine for the dumb pipe |
-| **eBay posting** | **Stub** | `services/ebay/index.ts` — returns stub ID |
+| **Python conversion** | **Done** | Full TS→Python port. React frontend stays TS. See `CONVERSION_PLAN.md` |
+| **eBay posting** | **Stub** | `ebay_service/service.py` — returns stub ID |
 | **Price override** | **Stub** | Orchestrator detects numeric input but doesn't execute |
-| **Tier 2/3 LLM** | **Stub** | `llm.ts`, `tools.ts`, `systemPrompt.ts` are pseudocode |
-| **Python conversion** | **Planned** | See `CONVERSION_PLAN.md` |
+| **Tier 2/3 LLM** | **Stub** | `llm.py`, `tools.py`, `system_prompt.py` are pseudocode |
 
 ### Future Work
 
@@ -74,31 +74,31 @@ Tier thresholds are configurable in `src/types.ts` (`DEFAULT_TIER_CONFIG`). Pric
 The orchestrator calls **two service files**. Everything else is internal.
 
 ```
-services/card-server/src/
-├── index.ts                  <- MCP entry: 30+ tools, delegates to services
-├── db.ts                     <- SQLite init/close
+services/card-server/card_server/   (importable Python package `card_server`)
+├── index.py                  <- MCP entry (FastMCP): 30+ tools, delegates to services
+├── db.py                     <- SQLite init/close
 ├── schema.sql                <- 4-table schema (cards, skus, inventory, prices)
-├── types.ts                  <- Zod schemas + TS types
+├── types.py                  <- Pydantic models + type aliases
 ├── services/
-│   ├── collectionService.ts  <- Cards + SKUs + Inventory management
-│   └── pricingService.ts     <- Pricing operations + TCGplayer fetch workflows
+│   ├── collection_service.py <- Cards + SKUs + Inventory management
+│   └── pricing_service.py    <- Pricing operations + TCGplayer fetch workflows
 ├── helpers/                  <- INTERNAL (services compose these)
 │   ├── crud/                 <- Pure DB CRUD (cards, skus, inventory, prices)
 │   ├── pricing/
-│   │   ├── algorithm.ts      <- Pricing algorithm (see docs/pricing-algorithm.md)
-│   │   └── pricingConfig.ts  <- All pricing magic numbers
+│   │   ├── algorithm.py      <- Pricing algorithm (see docs/pricing-algorithm.md)
+│   │   └── config.py         <- All pricing magic numbers
 │   ├── tcgplayer/
-│   │   ├── fetchPrices.ts    <- Active + sold listings (see docs/tcgplayer-api.md)
-│   │   ├── fetchCardInfo.ts  <- Card metadata fetching
-│   │   └── formatters.ts     <- Condition/finish format conversion
+│   │   ├── fetch_prices.py   <- Active + sold listings (see docs/tcgplayer-api.md)
+│   │   ├── fetch_card_info.py<- Card metadata fetching
+│   │   └── formatters.py     <- Condition/finish format conversion
 │   └── market/
-│       ├── collector.ts      <- Market data collection orchestration
-│       ├── fetchers.ts       <- External API calls
-│       ├── aggregators.ts    <- Raw data → aggregate stats
-│       └── snapshots.ts      <- DB read/write for market_snapshots
-├── collect.ts                <- CLI runner for market data collection
-├── dedup-inventory.ts        <- One-off utility script
-└── migrate.ts                <- MySQL -> SQLite migration (historical)
+│       ├── collector.py      <- Market data collection orchestration
+│       ├── fetchers.py       <- External API calls
+│       ├── aggregators.py    <- Raw data → aggregate stats
+│       └── snapshots.py      <- DB read/write for market_snapshots
+├── collect.py                <- CLI runner for market data collection
+├── dedup_inventory.py        <- One-off utility script
+└── migrate.py                <- MySQL -> SQLite migration (historical)
 ```
 
 ## Database Schema
@@ -121,15 +121,17 @@ services/card-server/src/
 - **Cross-condition extrapolation:** 30% discount per tier, compounding. Always flagged for manual review.
 - **Liquid value:** `(sell_price * 0.85) - shipping_cost`. Shipping: <$5 = $0, $5-25 = $1 (PWE), >$25 = $5 (tracked).
 
-All pricing constants live in `services/card-server/src/helpers/pricing/pricingConfig.ts`.
+All pricing constants live in `services/card-server/card_server/helpers/pricing/config.py`.
 
 ## Tech Stack
 
-Currently TypeScript (converting to Python). See `CONVERSION_PLAN.md`.
+Python (3.11+). The TypeScript codebase was fully converted to Python (see `CONVERSION_PLAN.md` for the historical mapping). The React frontend remains TypeScript.
 
-Node.js + TypeScript (ES2022, ESM) | SQLite via `better-sqlite3` | `@modelcontextprotocol/sdk` | `node-telegram-bot-api` | Zod | dotenv
+Python | SQLite via stdlib `sqlite3` | `mcp` (FastMCP) | `python-telegram-bot` | Pydantic | `httpx` | `python-dotenv`
 
-Dashboard: React + Vite (frontend) | Flask (backend)
+Each microservice is an installable package (mapped in `pyproject.toml`): `card_server`, `telegram_service`, `ebay_service`, `orchestrator`, `shared`. Run `pip install -e .` to make them importable.
+
+Dashboard: React + Vite + TypeScript (frontend) | Flask (backend)
 
 ## Environment Variables
 
@@ -138,8 +140,14 @@ See `.env.example`. Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional
 ## Commands
 
 ```bash
-npm run build && npm run start    # Parent project
-cd services/card-server && npm run build   # card-server (standalone)
+python -m venv .venv && .venv/Scripts/python -m pip install -e .   # one-time setup (Windows path)
+python -m shared.main                       # run the app (entry point)
+python -m card_server.index                 # card-server MCP server (stdio)
+python -m card_server.collect               # market data collection runner
+
+# Dashboard
+cd dashboard/backend && python app.py       # Flask API on :5000
+cd dashboard/frontend && npm run dev         # Vite dev server on :5173
 ```
 
 ## Git Workflow
@@ -148,7 +156,7 @@ cd services/card-server && npm run build   # card-server (standalone)
 
 ## Common Tasks for AI Assistants
 
-- **Adding an MCP tool:** Zod schema in `services/card-server/src/types.ts` -> handler in `collectionService.ts` or `pricingService.ts` -> register in `services/card-server/src/index.ts`.
-- **Changing the pricing algorithm:** Edit `services/card-server/src/helpers/pricing/algorithm.ts`. Constants are in `pricingConfig.ts`.
-- **Adding a TCGplayer data source:** Fetch function in `services/card-server/src/helpers/tcgplayer/` -> format conversions in `formatters.ts` -> wire into service.
-- **Changing condition/finish mappings:** Edit `formatters.ts`.
+- **Adding an MCP tool:** Pydantic/type in `card_server/types.py` -> handler method in `collection_service.py` or `pricing_service.py` -> register as an `@mcp.tool()` in `card_server/index.py`.
+- **Changing the pricing algorithm:** Edit `card_server/helpers/pricing/algorithm.py`. Constants are in `config.py`.
+- **Adding a TCGplayer data source:** Fetch function in `card_server/helpers/tcgplayer/` -> format conversions in `formatters.py` -> wire into service.
+- **Changing condition/finish mappings:** Edit `formatters.py`.

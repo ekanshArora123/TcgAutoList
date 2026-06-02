@@ -13,9 +13,9 @@ project/
 │   └── backend/
 │       ├── app.py             <- Flask REST API
 │       └── orchestrator/      <- Workflow engine (state machine)
-├── src/                       <- Entry point + shared types
-│   ├── index.ts               <- Wires services + orchestrator, starts app
-│   └── types.ts               <- Shared types (re-exports card-server types)
+├── src/                       <- Entry point + shared types (package `shared`)
+│   ├── main.py                <- Wires services + orchestrator, starts app
+│   └── types.py               <- Shared types (re-exports card_server models)
 └── docs/                      <- Reference docs (pricing algorithm, TCGplayer API)
 ```
 
@@ -28,7 +28,7 @@ Each service owns one external system and provides abstraction over it. Callers 
 - **Exposes:** CollectionService + PricingService (simple API for coded callers), MCP tools (rich API for LLM)
 - **Internal:** CRUD helpers, TCGplayer fetchers, pricing math, market aggregators
 - **Status:** Done
-- **Standalone:** Has its own package.json, tsconfig.json. Can run independently as MCP server.
+- **Standalone:** Importable as the `card_server` package (`services/card-server/card_server/`). Can run independently as an MCP server via `python -m card_server.index`.
 
 ### telegram (services/telegram/)
 - **Owns:** Telegram Bot API (send/receive messages, photos, inline keyboards)
@@ -49,8 +49,8 @@ Each service owns one external system and provides abstraction over it. Callers 
 
 ### backend (dashboard/backend/)
 - Flask REST API serving the frontend
-- **Important:** Backend should NOT duplicate functionality owned by card-server. DB queries, pricing logic, and TCGplayer interactions should go through card-server services.
-- Currently has a language boundary issue: backend is Python, card-server is TypeScript. Will be resolved during Python conversion.
+- **Important:** Backend should NOT duplicate functionality owned by card-server. DB queries, pricing logic, and TCGplayer interactions should go through card-server services. (The read-only dashboard `app.py` currently queries SQLite directly for reporting; write operations should go through `card_server` services.)
+- The whole backend is now Python, so it can import `card_server` services directly — the former TS/Python language boundary is resolved.
 
 ### orchestrator (dashboard/backend/orchestrator/)
 - State machine that drives the listing workflow
@@ -58,6 +58,7 @@ Each service owns one external system and provides abstraction over it. Callers 
 - Consumes all three services (card-server, telegram, ebay)
 - **Current:** Tier 1 pipeline works. Tier 2/3 LLM and eBay posting are stubs.
 
-## Conversion Plan
+## Language
 
-The entire TypeScript codebase will be converted to Python. See CONVERSION_PLAN.md for details.
+The backend/services are Python; the React frontend stays TypeScript. The TS→Python
+conversion is complete — see CONVERSION_PLAN.md for the historical file mapping.
