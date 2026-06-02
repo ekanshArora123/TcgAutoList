@@ -88,9 +88,6 @@ class CollectionService:
     def list_rarities(self) -> list[str]:
         return self.cards.get_all_rarities()
 
-    def list_eras(self) -> list[str]:
-        return self.cards.get_all_eras()
-
     # ─── SKU Operations ──────────────────────────────────────
 
     def resolve_sku(self, input: dict[str, Any]) -> dict:
@@ -105,14 +102,8 @@ class CollectionService:
     def list_conditions(self) -> list[str]:
         return self.skus.get_all_conditions()
 
-    def list_finishes(self) -> list[str]:
-        return self.skus.get_all_finishes()
-
     def list_specialties(self) -> list[str]:
         return self.skus.get_all_specialties()
-
-    def list_statuses(self) -> list[str]:
-        return self.inventory.get_all_statuses()
 
     # ─── Inventory Operations ────────────────────────────────
 

@@ -45,6 +45,16 @@ _SORT_COLUMNS = {
     "card_number": "c.card_number",
 }
 
+# Dimensions the `breakdown()` rollup supports. `col` is grouped/ordered on,
+# `name` is the output column alias when coalesced. era additionally surfaces
+# total_qty + avg_confidence.
+_BREAKDOWN_DIMS = {
+    "era": {"col": "c.era", "name": "era", "coalesce": True, "extra_aggs": True, "order": "total_value DESC"},
+    "rarity": {"col": "c.rarity", "name": "rarity", "coalesce": True, "extra_aggs": False, "order": "total_value DESC"},
+    "set": {"col": "c.set_name", "name": "set_name", "coalesce": True, "extra_aggs": False, "order": "total_value DESC"},
+    "condition": {"col": "s.condition", "name": "condition", "coalesce": False, "extra_aggs": False, "order": "quantity DESC"},
+}
+
 _CARD_COLUMNS = """
     i.inventory_id, i.sku_id, i.qty, i.tags, i.status,
     i.front_photo_path, i.back_photo_path, i.ebay_listing_id,
@@ -360,34 +370,37 @@ class ReportingService:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def era_breakdown(self) -> list[dict[str, Any]]:
-        return self._grouped_breakdown(
-            "COALESCE(c.era, 'Unknown') as era", "c.era", extra_aggs=True
-        )
+    def breakdown(self, dimension: str) -> list[dict[str, Any]]:
+        """Quantity + value rollup of owned cards grouped by one dimension.
 
-    def condition_breakdown(self) -> list[dict[str, Any]]:
+        `dimension` is one of _BREAKDOWN_DIMS (era/rarity/set/condition). Each
+        returns rows of {<dimension>, quantity, total_value, avg_price}; the era
+        view additionally yields total_qty + avg_confidence. Raises KeyError on an
+        unknown dimension.
+        """
+        cfg = _BREAKDOWN_DIMS[dimension]
+        label = (
+            f"COALESCE({cfg['col']}, 'Unknown') as {cfg['name']}"
+            if cfg["coalesce"]
+            else cfg["col"]
+        )
+        extra = (
+            ", SUM(i.qty) as total_qty, AVG(p.confidence_percent) as avg_confidence"
+            if cfg["extra_aggs"]
+            else ""
+        )
         rows = self.db.execute(
-            """
+            f"""
             SELECT
-                s.condition,
-                COUNT(*) as quantity,
-                AVG(p.estimated_price) as avg_price,
-                SUM(CASE WHEN p.estimated_price IS NOT NULL THEN p.estimated_price * i.qty ELSE 0 END) as total_value
+                {label},
+                COUNT(*) as quantity{extra},
+                SUM(CASE WHEN p.estimated_price IS NOT NULL THEN p.estimated_price * i.qty ELSE 0 END) as total_value,
+                AVG(p.estimated_price) as avg_price
             """
             + INV_SKU_CARD_PRICE_FROM
-            + "GROUP BY s.condition ORDER BY quantity DESC"
+            + f"GROUP BY {cfg['col']} ORDER BY {cfg['order']}"
         ).fetchall()
         return [dict(r) for r in rows]
-
-    def rarity_breakdown(self) -> list[dict[str, Any]]:
-        return self._grouped_breakdown(
-            "COALESCE(c.rarity, 'Unknown') as rarity", "c.rarity"
-        )
-
-    def set_breakdown(self) -> list[dict[str, Any]]:
-        return self._grouped_breakdown(
-            "COALESCE(c.set_name, 'Unknown') as set_name", "c.set_name"
-        )
 
     def top_cards(self, n: int = 25) -> list[dict[str, Any]]:
         """Top N most valuable owned cards."""
@@ -404,27 +417,6 @@ class ReportingService:
             + INV_SKU_CARD_PRICE_FROM
             + "WHERE p.estimated_price IS NOT NULL ORDER BY p.estimated_price DESC LIMIT ?",
             [n],
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    def _grouped_breakdown(
-        self, select_label: str, group_col: str, extra_aggs: bool = False
-    ) -> list[dict[str, Any]]:
-        """Quantity + total/avg value grouped by a card column, ordered by value.
-
-        `extra_aggs` adds total_qty and avg_confidence (the era view wants them).
-        """
-        extra = ", SUM(i.qty) as total_qty, AVG(p.confidence_percent) as avg_confidence" if extra_aggs else ""
-        rows = self.db.execute(
-            f"""
-            SELECT
-                {select_label},
-                COUNT(*) as quantity{extra},
-                SUM(CASE WHEN p.estimated_price IS NOT NULL THEN p.estimated_price * i.qty ELSE 0 END) as total_value,
-                AVG(p.estimated_price) as avg_price
-            """
-            + INV_SKU_CARD_PRICE_FROM
-            + f"GROUP BY {group_col} ORDER BY total_value DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 

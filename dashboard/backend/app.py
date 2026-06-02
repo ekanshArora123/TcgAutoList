@@ -105,27 +105,27 @@ def confidence_distribution():
 
 @app.route("/api/analytics/era-breakdown")
 def era_breakdown():
-    return jsonify(reporting.era_breakdown())
+    return jsonify(reporting.breakdown("era"))
 
 
 @app.route("/api/analytics/condition-breakdown")
 def condition_breakdown():
-    return jsonify(reporting.condition_breakdown())
+    return jsonify(reporting.breakdown("condition"))
 
 
 @app.route("/api/analytics/rarity-breakdown")
 def rarity_breakdown():
-    return jsonify(reporting.rarity_breakdown())
+    return jsonify(reporting.breakdown("rarity"))
+
+
+@app.route("/api/analytics/set-breakdown")
+def set_breakdown():
+    return jsonify(reporting.breakdown("set"))
 
 
 @app.route("/api/analytics/top-cards")
 def top_cards():
     return jsonify(reporting.top_cards(request.args.get("n", 25)))
-
-
-@app.route("/api/analytics/set-breakdown")
-def set_breakdown():
-    return jsonify(reporting.set_breakdown())
 
 
 if __name__ == "__main__":

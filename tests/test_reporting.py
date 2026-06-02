@@ -139,12 +139,21 @@ def test_top_cards_orders_by_value(db):
 
 def test_breakdowns(db):
     svc = ReportingService(db)
-    eras = {e["era"]: e for e in svc.era_breakdown()}
+    eras = {e["era"]: e for e in svc.breakdown("era")}
     assert eras["Vintage"]["total_value"] == 102.0
     assert eras["Vintage"]["quantity"] == 2
+    assert eras["Vintage"]["total_qty"] == 2  # era view adds the extra aggregates
 
-    conds = {c["condition"]: c for c in svc.condition_breakdown()}
+    conds = {c["condition"]: c for c in svc.breakdown("condition")}
     assert conds["NM"]["quantity"] == 2
 
-    rarities = {r["rarity"]: r for r in svc.rarity_breakdown()}
+    sets = {s["set_name"]: s for s in svc.breakdown("set")}
+    assert sets["Base Set"]["total_value"] == 100.0
+
+    rarities = {r["rarity"]: r for r in svc.breakdown("rarity")}
     assert rarities["Rare Holo"]["total_value"] == 100.0
+
+
+def test_breakdown_rejects_unknown_dimension(db):
+    with pytest.raises(KeyError):
+        ReportingService(db).breakdown("color")
