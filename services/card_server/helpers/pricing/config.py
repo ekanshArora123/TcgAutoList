@@ -19,6 +19,17 @@ PRICE_DIVERGENCE_THRESHOLD = 0.30
 # Minimum number of sold listings for "confident" pricing.
 MIN_SOLDS_FOR_CONFIDENCE = 3
 
+# ─── Recent-Sales Window ────────────────────────────────────
+
+# Sold-listing fetches can now return a card's full sales history (hundreds of
+# rows). Stats that feed pricing (fallback average, low/high range, data volume)
+# must use only RECENT sales, or stale historical prices drag the estimate.
+# Use whichever group is LARGER: all sales within RECENT_SOLDS_DAYS, or the
+# RECENT_SOLDS_MAX_COUNT most recent sales. (Divergence/blend windows are
+# separate — see DIVERGENCE_RECENT_DAYS / BLEND_SOLDS_DAYS.)
+RECENT_SOLDS_MAX_COUNT = 25
+RECENT_SOLDS_DAYS = 5
+
 # ─── Fees ───────────────────────────────────────────────────
 
 # Platform fee rate. Both TCGplayer and eBay take ~15%.

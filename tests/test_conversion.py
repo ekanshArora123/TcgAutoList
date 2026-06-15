@@ -10,6 +10,7 @@ Run: pytest -q
 from __future__ import annotations
 
 import asyncio
+from datetime import date, timedelta
 
 from services.card_server.helpers.pricing.algorithm import (
     compute_liquid_value,
@@ -88,6 +89,44 @@ def test_extrapolation_compounds_30_percent():
     assert extrapolate_across_conditions(10.0, "NM", "LP") == 7.0
     assert extrapolate_across_conditions(10.0, "NM", "MP") == 4.9
     assert extrapolate_across_conditions(10.0, "NM", "NM") == 10.0
+
+
+# ─── Recent-sales window ─────────────────────────────────────
+
+
+def _days_ago(n: int) -> str:
+    return (date.today() - timedelta(days=n)).isoformat()
+
+
+def test_fallback_average_uses_recent_sales_not_full_history():
+    # 25 recent sales at $10, plus 50 ancient sales at $2. With no listings the
+    # algorithm falls back to the sold average — it must reflect the recent ~$10,
+    # not get dragged toward $2 by the long history.
+    recent = [{"sold_price": 10.0, "sold_date": _days_ago(i)} for i in range(25)]
+    ancient = [{"sold_price": 2.0, "sold_date": _days_ago(300 + i)} for i in range(50)]
+    res = compute_price([], recent + ancient, "NM", "Holo", False)
+    assert res.estimated_price == 10.0  # full-history avg would be ~4.67
+
+
+def test_recent_window_prefers_5_days_when_busier_than_25_sales():
+    # 40 sales in the last 5 days at $10, plus 10 older sales at $50. The 5-day
+    # group (40) is larger than the last-25 group, so it wins -> avg $10.
+    fresh = [{"sold_price": 10.0, "sold_date": _days_ago(0)} for _ in range(40)]
+    older = [{"sold_price": 50.0, "sold_date": _days_ago(20)} for _ in range(10)]
+    res = compute_price([], fresh + older, "NM", "Holo", False)
+    assert res.estimated_price == 10.0
+
+
+def test_low_high_range_bounded_to_recent_sales():
+    # An ancient outlier sale must not blow out the low/high range, which is
+    # derived from sold min/max.
+    recent = [{"sold_price": 10.0, "sold_date": _days_ago(i)} for i in range(25)]
+    ancient = [{"sold_price": 100.0, "sold_date": _days_ago(400)}]
+    res = compute_price(
+        [{"listed_price": 11.0, "shipping_price": 0.0}], recent + ancient, "NM", "Holo", False
+    )
+    assert res.estimated_high_price == 10.0  # not 100 from the ancient sale
+    assert res.estimated_low_price == 10.0
 
 
 # ─── Formatters ──────────────────────────────────────────────

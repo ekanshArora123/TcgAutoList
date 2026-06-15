@@ -10,6 +10,10 @@ Anchors on the lowest active TCGplayer listing. When the listing is >30% above
 recent sales, blends 50% listing + 50% last-month sold avg. Divergence check
 uses max(last 7 days, last 3 sales). MINT is priced as NM.
 
+Sold stats (fallback average, low/high range, data volume) use only a RECENT
+window of sales — max(last 5 days, last 25 sales) — so a full sales history
+(now retrievable via paginated fetch) can't drag pricing toward stale values.
+
 Ported from algorithm.ts. Listings/solds are plain dicts:
   active listing: {listed_price, shipping_price, ...}
   sold listing:   {sold_price, sold_date, ...}
@@ -51,6 +55,8 @@ from .config import (
     BLEND_RATIO,
     BLEND_SOLDS_DAYS,
     DIVERGENCE_RECENT_DAYS,
+    RECENT_SOLDS_MAX_COUNT,
+    RECENT_SOLDS_DAYS,
 )
 
 
@@ -92,7 +98,11 @@ def compute_price(
         reasons.append("MINT condition — pricing as Near Mint.")
 
     lowest_listing = _get_lowest_listing_price(active_listings)
-    sold_stats = _compute_sold_stats(sold_listings)
+    # Cap sold stats to a recent window so a long sales history (now retrievable
+    # via paginated fetch) can't drag the price toward stale values. Divergence
+    # and blend helpers keep their own (broader) windows over the full list.
+    recent_solds = _recent_solds(sold_listings)
+    sold_stats = _compute_sold_stats(recent_solds)
 
     # ── Step 1: Try lowest active listing ──
     if lowest_listing is not None:
@@ -321,6 +331,26 @@ def _get_resolved_primary(condition: str) -> Optional[str]:
 
 
 # ─── Divergence & Blend Helpers ──────────────────────────────
+
+
+def _recent_solds(solds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Restrict sold data to a recent window so a long history can't skew stats.
+
+    Returns whichever group is LARGER: all sales within the last
+    RECENT_SOLDS_DAYS days, or the RECENT_SOLDS_MAX_COUNT most recent sales.
+    This keeps fast-moving cards on truly fresh data while still giving illiquid
+    cards a floor of recent comps. Mirrors the max(window, count) pattern used
+    for divergence.
+    """
+    if not solds:
+        return []
+
+    cutoff_str = (datetime.now() - timedelta(days=RECENT_SOLDS_DAYS)).date().isoformat()
+    within_window = [s for s in solds if s["sold_date"] >= cutoff_str]
+
+    most_recent = sorted(solds, key=lambda s: s["sold_date"], reverse=True)[:RECENT_SOLDS_MAX_COUNT]
+
+    return within_window if len(within_window) >= len(most_recent) else most_recent
 
 
 def _compute_divergence_sale_price(solds: list[dict[str, Any]]) -> Optional[float]:

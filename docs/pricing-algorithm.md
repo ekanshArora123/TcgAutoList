@@ -32,6 +32,15 @@ All pricing logic lives in `card-server/src/helpers/pricing/algorithm.ts`. All c
    - High estimate: sold max, or `lowest_listing * 1.15` if no solds
    - Liquid value for all price points
 
+### Recent-Sales Window
+
+The sold-listings fetch can return a card's full sales history (hundreds of rows). Feeding all of it into the sold stats would average in stale prices and produce an all-time min/max range. So the sold **stats** (fallback average, low/high range, data-volume bonus) use only a recent window:
+
+- **Window = whichever group is larger:** all sales within the last `RECENT_SOLDS_DAYS` (5), or the `RECENT_SOLDS_MAX_COUNT` (25) most recent sales.
+- Fast-moving cards stay on truly fresh data (the 5-day branch); illiquid cards still get a floor of 25 recent comps.
+- This is **separate** from the divergence window (`max(7 days, 3 sales)`) and the blend window (`30 days`), which operate over the full sold list with their own bounds.
+- Implemented in `_recent_solds()`; constants in `config.py`.
+
 ### Cheap Card Shipping Model (< $5)
 
 TCGplayer offers free shipping at $5+ with one seller. Most buyers bundle cheap cards.
