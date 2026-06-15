@@ -1,0 +1,20 @@
+# Reusable steps to install and build the React/Vite frontend.
+parameters:
+  - name: nodeVersion
+    type: string
+    default: '20.x'
+  - name: workingDirectory
+    type: string
+    default: 'dashboard/frontend'
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '${{ parameters.nodeVersion }}'
+    displayName: 'Use Node ${{ parameters.nodeVersion }}'
+
+  - script: |
+      npm ci
+      npm run build
+    displayName: 'Build frontend'
+    workingDirectory: '${{ parameters.workingDirectory }}'

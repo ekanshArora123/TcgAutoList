@@ -1,19 +1,78 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# TcgAutoList CI
+#
+# Two kinds of validation:
+#   1. Per-commit  — aggregated unit tests (network-free) + frontend build.
+#   2. Scheduled   — live TCGplayer API contract check. Pricing rides on
+#                    TCGplayer's undocumented internal APIs, which can break with
+#                    no change to our code, so we probe them on a timer (a
+#                    failing scheduled run notifies via ADO's build alerts).
 
 trigger:
-- main
+  branches:
+    include:
+      - main
+
+# Daily canary for the external API. `always: true` runs it even when nothing
+# changed — the whole point is to catch TCGplayer-side drift. Cron is UTC.
+schedules:
+  - cron: "0 13 * * *"
+    displayName: Daily TCGplayer API contract check
+    branches:
+      include:
+        - main
+    always: true
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: ubuntu-latest   # tests are pure-Python + in-memory SQLite; OS-agnostic
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+variables:
+  pythonVersion: '3.11'
+  nodeVersion: '20.x'
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+stages:
+  # ── Per-commit: unit tests + frontend build (skipped on scheduled runs) ──
+  - stage: Test
+    displayName: 'Unit tests + frontend'
+    condition: ne(variables['Build.Reason'], 'Schedule')
+    jobs:
+      - job: Backend
+        displayName: 'Backend (pytest)'
+        steps:
+          - template: yamlTemplates/pythonTemplate.yml
+            parameters:
+              pythonVersion: $(pythonVersion)
+              displayName: 'Run unit tests'        # default args -> excludes `external`
+
+      - job: Frontend
+        displayName: 'Frontend build'
+        steps:
+          - template: yamlTemplates/nodeTemplate.yml
+            parameters:
+              nodeVersion: $(nodeVersion)
+
+  # ── Scheduled (or manual): live TCGplayer contract check ──
+  - stage: ExternalChecks
+    displayName: 'Live TCGplayer API contract'
+    dependsOn: []          # independent: must still run when Test is skipped (schedule)
+    condition: in(variables['Build.Reason'], 'Schedule', 'Manual')
+    jobs:
+      - job: TcgplayerContract
+        displayName: 'TCGplayer contract (pytest -m external)'
+        steps:
+          - template: yamlTemplates/pythonTemplate.yml
+            parameters:
+              pythonVersion: $(pythonVersion)
+              pytestArgs: '-m external'            # command-line -m overrides pytest.ini
+              displayName: 'Run external API contract tests'
+        # Optional: to also exercise authed sold-listing pagination, define a
+        # secret pipeline variable TCGPLAYER_AUTH_COOKIE and map it as env on the
+        # pytest step. The tests pass without it (sold API falls back to ~5 rows).
+
+  # ── Deploy (per-commit only, after Test passes) ──
+  - stage: Deploy
+    dependsOn: Test
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'Schedule'))
+    jobs:
+      - job: Deploy
+        steps:
+          - script: echo Deploying all services

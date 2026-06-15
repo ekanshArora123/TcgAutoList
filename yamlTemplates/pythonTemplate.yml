@@ -1,0 +1,32 @@
+# Reusable steps to run the Python test suite from the repo root.
+#
+# The suite is aggregated (single `tests/` dir, run from the repo root so that
+# `services.*` / `dashboard.*` imports and the relative schema.sql path resolve).
+# Pass `pytestArgs: '-m external'` to run the scheduled live-API canary instead
+# of the default network-free unit run.
+parameters:
+  - name: pythonVersion
+    type: string
+    default: '3.11'
+  - name: pytestArgs
+    type: string
+    default: ''          # default run; pytest.ini already excludes `-m external`
+  - name: displayName
+    type: string
+    default: 'Run pytest'
+
+steps:
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '${{ parameters.pythonVersion }}'
+    displayName: 'Use Python ${{ parameters.pythonVersion }}'
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt
+    displayName: 'Install dependencies'
+
+  - script: |
+      python -m pytest -q ${{ parameters.pytestArgs }}
+    displayName: '${{ parameters.displayName }}'
+    workingDirectory: '$(Build.SourcesDirectory)'   # must run from repo root
