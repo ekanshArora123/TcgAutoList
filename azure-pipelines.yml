@@ -1,13 +1,26 @@
 # TcgAutoList CI
 #
-# Two kinds of validation:
-#   1. Per-commit  — aggregated unit tests (network-free) + frontend build.
-#   2. Scheduled   — live TCGplayer API contract check. Pricing rides on
-#                    TCGplayer's undocumented internal APIs, which can break with
-#                    no change to our code, so we probe them on a timer (a
-#                    failing scheduled run notifies via ADO's build alerts).
+# Branch workflow: feature branches -> PR into main -> merge. Nothing is
+# committed directly to main.
+#
+#   - PR into main      -> run the Test stage (gate the merge). No deploy.
+#   - Push to main      -> run Test, then Deploy (post-merge).
+#   - Scheduled/manual  -> live TCGplayer API contract check (ExternalChecks).
+#
+# Feature-branch pushes trigger nothing (trigger is main-only); validation
+# happens on the PR. Pricing rides on TCGplayer's undocumented internal APIs,
+# which can break with no change to our code, so the scheduled canary probes
+# them on a timer (a failing run notifies via ADO's build alerts).
 
 trigger:
+  branches:
+    include:
+      - main
+
+# PR validation: run the pipeline on pull requests targeting main so tests gate
+# the merge and main stays green/deployable. (GitHub-connected pipeline; PR
+# triggers come from the YAML.) Deploy is excluded on PRs via its condition.
+pr:
   branches:
     include:
       - main
@@ -82,10 +95,16 @@ stages:
                 # EBAY_CLIENT_SECRET: $(EBAY_CLIENT_SECRET)
                 # EBAY_ENVIRONMENT: $(EBAY_ENVIRONMENT)
 
-  # ── Deploy (per-commit only, after Test passes) ──
+  # ── Deploy: only on a real push/merge to main (never on PRs or schedule) ──
   - stage: Deploy
     dependsOn: Test
-    condition: and(succeeded(), ne(variables['Build.Reason'], 'Schedule'))
+    condition: >-
+      and(
+        succeeded(),
+        ne(variables['Build.Reason'], 'Schedule'),
+        ne(variables['Build.Reason'], 'PullRequest'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
     jobs:
       - job: Deploy
         steps:
