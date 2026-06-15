@@ -38,6 +38,7 @@ from services.card_server.helpers.tcgplayer.fetch_card_info import (
 from services.card_server.helpers.tcgplayer.fetch_prices import (
     MPAPI_HEADERS,
     TCGPLAYER_HEADERS,
+    fetch_sold_listings,
 )
 
 # Every test in this module is a live external check.
@@ -180,3 +181,62 @@ def test_sold_api_envelope_and_fields():
         for field in ("condition", "variant", "purchasePrice", "shippingPrice", "orderDate", "customListingId"):
             assert field in sale, f"sales API missing expected field '{field}'"
         assert isinstance(sale["purchasePrice"], (int, float)), "'purchasePrice' is not numeric"
+
+
+def test_auth_cookie_enables_full_sales_pagination():
+    """The auth cookie should unlock paginated sold-listings retrieval.
+
+    Without the cookie TCGplayer caps sold data at ~5 rows per query with no
+    pagination. With a valid cookie, every query reports `totalResults` and the
+    offset/limit=25 paging walks the whole set. This test confirms the cookie in
+    the environment is present, valid, and actually accepted by TCGplayer — i.e.
+    that large sales-history retrieval (which pricing relies on) is working.
+    """
+    cookie = os.environ.get("TCGPLAYER_AUTH_COOKIE")
+    if not cookie:
+        pytest.skip("TCGPLAYER_AUTH_COOKIE not set — cannot verify authed pagination")
+
+    url = f"https://mpapi.tcgplayer.com/v2/product/{PRODUCT_ID}/latestsales?mpfev=4952"
+    headers = dict(MPAPI_HEADERS)
+    headers["cookie"] = f"TCGAuthTicket_Production={cookie}"
+    base_payload = {
+        "variants": [],
+        "listingType": "standard",
+        "conditions": [],
+        "languages": [1],
+        "limit": 25,
+        "offset": 0,
+    }
+
+    # 1) The first page exposes the pagination envelope the pager drives off of.
+    page0 = _post(url, headers, base_payload)
+    for field in ("totalResults", "resultCount", "nextPage", "data"):
+        assert field in page0, f"sales API missing pagination field '{field}'"
+    assert page0["resultCount"] == len(page0["data"]), "resultCount disagrees with data length"
+
+    # A valid cookie returns a full page (up to 25); the unauthed cap is ~5. A
+    # tiny page here almost always means the cookie is missing/expired/rejected.
+    assert len(page0["data"]) > 5, (
+        f"authed first page returned only {len(page0['data'])} rows — the auth "
+        f"cookie is likely invalid or expired (unauthed responses cap at ~5)"
+    )
+
+    total = int(page0["totalResults"])
+    if total <= 25:
+        pytest.skip(f"probe card has only {total} sales; need >25 to exercise paging")
+
+    # 2) A second offset returns more rows — proves offset/limit paging works.
+    page1 = _post(url, headers, {**base_payload, "offset": 25})
+    assert page1["data"], "offset=25 returned no rows despite totalResults > 25"
+
+    # 3) End-to-end: the production pager aggregates well past a single page,
+    #    walking offsets toward totalResults (this is what regressed before).
+    fetched = asyncio.run(fetch_sold_listings(PRODUCT_ID, max_results=total))
+    assert len(fetched) > 25, (
+        f"fetch_sold_listings returned only {len(fetched)} of totalResults={total} "
+        f"— pagination is not walking offsets (auth cookie or pager broken)"
+    )
+    # Filtering drops a few custom listings, so allow slack against the total.
+    assert len(fetched) >= min(total, 50), (
+        f"fetch_sold_listings returned {len(fetched)}; expected near totalResults={total}"
+    )

@@ -9,6 +9,8 @@ Run: pytest -q
 
 from __future__ import annotations
 
+import asyncio
+
 from services.card_server.helpers.pricing.algorithm import (
     compute_liquid_value,
     compute_price,
@@ -174,3 +176,38 @@ def test_renderer_escapes_and_formats():
     assert "$12.50" in summary
     confirm = render_listing_confirmation(_detail(), 12.5)
     assert "Listing created" in confirm
+
+
+# ─── Sold-listings pagination (network-free) ─────────────────
+
+
+def test_sold_pagination_walks_to_total_results(monkeypatch):
+    """The pager must drive off totalResults, not the filtered per-page count.
+
+    Regression guard: previously a page that came back short *after* filtering
+    out custom listings (e.g. 24 of 25) ended pagination after page one. Here a
+    fake page source reports totalResults=60 while yielding 24/24/10 filtered
+    rows; the pager must keep going across offsets and return all ~58.
+    """
+    from services.card_server.helpers.tcgplayer import fetch_prices
+
+    total = 60
+
+    async def fake_page(tcgplayer_id, condition, finish, offset, auth_cookie=None):
+        if offset >= total:
+            return [], total
+        remaining = total - offset
+        n = min(25, remaining)
+        # Full pages lose one row to custom-listing filtering (24, not 25).
+        rows = [{"sold_price": 1.0}] * (n - 1 if n == 25 else n)
+        return rows, total
+
+    monkeypatch.setattr(fetch_prices, "_fetch_sold_listings_page_with_total", fake_page)
+    monkeypatch.setattr(fetch_prices, "_get_auth_cookie", lambda: "fake-cookie")
+
+    res = asyncio.run(fetch_prices.fetch_sold_listings("123", max_results=100))
+    assert len(res) == 58  # 24 + 24 + 10 across offsets 0/25/50 — not 24
+
+    # max_results still caps the walk.
+    capped = asyncio.run(fetch_prices.fetch_sold_listings("123", max_results=30))
+    assert len(capped) == 30

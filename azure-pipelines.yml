@@ -26,11 +26,10 @@ pool:
   vmImage: ubuntu-latest   # tests are pure-Python + in-memory SQLite; OS-agnostic
 
 variables:
-  # Secrets (TCGPLAYER_AUTH_COOKIE, TELEGRAM_*, EBAY_*) belong in a variable
-  # group so they're shared across pipelines and masked in logs. Create it under
-  # Pipelines > Library (ideally backed by Azure Key Vault), add the secrets,
-  # then uncomment the line below and the matching env: block in ExternalChecks.
-  # - group: tcgautolist-secrets
+  # Secrets (TCGPLAYER_AUTH_COOKIE, TELEGRAM_*, EBAY_*) live in a variable group
+  # (Pipelines > Library, ideally backed by Azure Key Vault), shared across
+  # pipelines and masked in logs. NOTE: this name must match your group exactly.
+  - group: tcgautolist-secrets
   - name: pythonVersion
     value: '3.11'
   - name: nodeVersion
@@ -71,18 +70,17 @@ stages:
               pythonVersion: $(pythonVersion)
               pytestArgs: '-m external'            # command-line -m overrides pytest.ini
               displayName: 'Run external API contract tests'
-              # Map secrets -> env so live tests can authenticate. Secret pipeline
-              # variables are NOT exposed to scripts automatically; they must be
-              # mapped explicitly. Uncomment once the secrets exist (see variables
-              # block above). TCGplayer is optional today (sold API falls back to
-              # ~5 rows without it); telegram/ebay are here for future externals.
-              # env:
-              #   TCGPLAYER_AUTH_COOKIE: $(TCGPLAYER_AUTH_COOKIE)
-              #   TELEGRAM_BOT_TOKEN: $(TELEGRAM_BOT_TOKEN)
-              #   TELEGRAM_CHAT_ID: $(TELEGRAM_CHAT_ID)
-              #   EBAY_CLIENT_ID: $(EBAY_CLIENT_ID)
-              #   EBAY_CLIENT_SECRET: $(EBAY_CLIENT_SECRET)
-              #   EBAY_ENVIRONMENT: $(EBAY_ENVIRONMENT)
+              # Map secrets -> env so live tests can authenticate. Secret variables
+              # are NOT exposed to scripts automatically; they must be mapped here.
+              # The auth-cookie test verifies paginated sales retrieval; without the
+              # cookie it skips. Uncomment telegram/ebay as those externals land.
+              env:
+                TCGPLAYER_AUTH_COOKIE: $(TCGPLAYER_AUTH_COOKIE)
+                # TELEGRAM_BOT_TOKEN: $(TELEGRAM_BOT_TOKEN)
+                # TELEGRAM_CHAT_ID: $(TELEGRAM_CHAT_ID)
+                # EBAY_CLIENT_ID: $(EBAY_CLIENT_ID)
+                # EBAY_CLIENT_SECRET: $(EBAY_CLIENT_SECRET)
+                # EBAY_ENVIRONMENT: $(EBAY_ENVIRONMENT)
 
   # ── Deploy (per-commit only, after Test passes) ──
   - stage: Deploy

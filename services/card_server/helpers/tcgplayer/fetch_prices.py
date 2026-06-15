@@ -215,17 +215,28 @@ async def _fetch_sold_listings_paginated(
     max_results: int,
     auth_cookie: str,
 ) -> list[dict[str, Any]]:
+    """Walk the sales pages (25 at a time) by offset from 0 up to totalResults.
+
+    Drives pagination off TCGplayer's `totalResults`, NOT the per-page row count.
+    A page may yield fewer than 25 mapped rows because custom/photo listings are
+    filtered out, so the filtered length can't be used to detect the last page —
+    doing so stops after page one. We advance offset by the request page size and
+    stop once offset reaches totalResults (or max_results is satisfied).
+    """
     all_results: list[dict[str, Any]] = []
     page_size = 25
     offset = 0
+    total_results: Optional[int] = None
 
     while len(all_results) < max_results:
-        page = await _fetch_sold_listings_page(tcgplayer_id, condition, finish, offset, auth_cookie)
-        if not page:
-            break
-        all_results.extend(page)
+        items, total = await _fetch_sold_listings_page_with_total(
+            tcgplayer_id, condition, finish, offset, auth_cookie
+        )
+        if total_results is None:
+            total_results = total
+        all_results.extend(items)
         offset += page_size
-        if len(page) < page_size:
+        if total_results <= 0 or offset >= total_results:
             break
 
     return all_results[:max_results]
@@ -238,6 +249,24 @@ async def _fetch_sold_listings_page(
     offset: int,
     auth_cookie: Optional[str] = None,
 ) -> list[dict[str, Any]]:
+    """One page of mapped sold listings (without pagination metadata)."""
+    items, _total = await _fetch_sold_listings_page_with_total(
+        tcgplayer_id, condition, finish, offset, auth_cookie
+    )
+    return items
+
+
+async def _fetch_sold_listings_page_with_total(
+    tcgplayer_id: str,
+    condition: Optional[str],
+    finish: Optional[str],
+    offset: int,
+    auth_cookie: Optional[str] = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """One page of sold listings plus TCGplayer's `totalResults` for the query.
+
+    Returns (mapped_rows, total_results). total_results is 0 on error/no data.
+    """
     url = f"https://mpapi.tcgplayer.com/v2/product/{tcgplayer_id}/latestsales?mpfev=4952"
 
     conditions: list[int] = []
@@ -271,7 +300,7 @@ async def _fetch_sold_listings_page(
 
         if response.status_code != 200:
             if response.status_code == 404:
-                return []
+                return [], 0
             raise RuntimeError(
                 f"TCGplayer sales API error: {response.status_code} {response.reason_phrase}"
             )
@@ -279,7 +308,9 @@ async def _fetch_sold_listings_page(
         json_data = response.json()
         data = json_data.get("data")
         if not isinstance(data, list):
-            return []
+            return [], 0
+
+        total_results = int(json_data.get("totalResults") or 0)
 
         out: list[dict[str, Any]] = []
         for sale in data:
@@ -298,13 +329,13 @@ async def _fetch_sold_listings_page(
                     "seller_name": None,
                 }
             )
-        return out
+        return out, total_results
     except RuntimeError as err:
         if "TCGplayer sales API error" in str(err):
             raise
-        return []
+        return [], 0
     except Exception:
-        return []
+        return [], 0
 
 
 def _parse_condition_from_sales_api(api_condition: str) -> str:
