@@ -13,8 +13,14 @@ steps:
       versionSpec: '${{ parameters.nodeVersion }}'
     displayName: 'Use Node ${{ parameters.nodeVersion }}'
 
+  # Use `npm install`, not `npm ci`. Vite 8 pulls rolldown's platform-specific
+  # optional native bindings (e.g. @rolldown/binding-wasm32-wasi -> @emnapi/*),
+  # which npm re-resolves per-OS and which ship fast-moving RC builds. That makes
+  # the lock drift out of sync on the Linux agent and `npm ci` hard-fails
+  # ("Missing ... from lock file"). `npm install` reconciles instead of aborting;
+  # the committed lock still pins everything else for a reproducible baseline.
   - script: |
-      npm ci
+      npm install --no-audit --no-fund
       npm run build
     displayName: 'Build frontend'
     workingDirectory: '${{ parameters.workingDirectory }}'
