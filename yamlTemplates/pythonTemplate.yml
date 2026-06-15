@@ -14,6 +14,9 @@ parameters:
   - name: displayName
     type: string
     default: 'Run pytest'
+  - name: env
+    type: object
+    default: {}          # map secret pipeline variables -> env for live tests
 
 steps:
   - task: UsePythonVersion@0
@@ -30,3 +33,4 @@ steps:
       python -m pytest -q ${{ parameters.pytestArgs }}
     displayName: '${{ parameters.displayName }}'
     workingDirectory: '$(Build.SourcesDirectory)'   # must run from repo root
+    env: ${{ parameters.env }}                       # secret vars aren't exposed to scripts unless mapped here
