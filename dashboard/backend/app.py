@@ -8,6 +8,14 @@ filesystem concern the dashboard owns.
 """
 
 import os
+import sys
+from pathlib import Path
+
+# Make the repo root importable so `services.*` resolves even when this file is
+# launched as a plain script (python dashboard/backend/app.py, as run.bat/run.sh
+# do) rather than as a module. The repo root is two levels up from this file.
+# Harmless when already run from the repo root via `python -m`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
