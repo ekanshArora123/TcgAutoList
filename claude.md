@@ -162,7 +162,12 @@ pytest -q                                       # run tests
 
 ## Git Workflow
 
-**Auto-commit and push after every significant code change.** Don't wait for the user to ask. After completing a meaningful unit of work (feature, refactor, bug fix), stage relevant files, write a descriptive commit message, and push to main. Don't batch unrelated changes into one commit.
+**Never commit directly to `main`.** Azure DevOps CI triggers on `main` (tests + Deploy) and on PRs into `main` (tests only), so direct commits to main fire the pipeline and can deploy. Work on a feature branch per feature/task instead.
+
+- Start each unit of work on a new branch off up-to-date `main`: `git switch -c <type>/<short-name>` (`feat/`, `fix/`, `chore/`, …). One branch per unique feature or side task.
+- **Auto-commit and push to the feature branch after every significant change** — don't wait to be asked. Write descriptive commit messages; don't batch unrelated changes into one commit.
+- When the work is complete, open a PR into `main` (the PR run executes the test suite) and **stop there — do NOT merge**. The user reviews and merges the PR once tests pass. Never merge to main (no `gh pr merge`, no fast-forward, no direct push). Resolve merge conflicts as they arise.
+- Branch model is GitHub Flow — no long-lived `develop` branch. Deploy runs only on pushes/merges to `main`; the live TCGplayer canary runs on schedule/manual.
 
 ## Common Tasks for AI Assistants
 
