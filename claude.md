@@ -137,7 +137,9 @@ Dashboard: React + Vite + TypeScript (frontend) | Flask (backend)
 
 ## Environment Variables
 
-See `.env.example`. Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional: `EBAY_*`, `TCGPLAYER_AUTH_COOKIE`, `DB_PATH`, `PHOTOS_DIR`.
+**Backend** (`.env` at repo root, see `.env.example`): Required `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional `EBAY_*`, `TCGPLAYER_AUTH_COOKIE`, `DB_PATH`, `PHOTOS_DIR`.
+
+**Frontend** (`dashboard/frontend/.env`, see `dashboard/frontend/.env.example`): `API_BASE` — backend origin the dashboard calls (no `/api` suffix, no trailing slash), e.g. `http://localhost:5000` locally or the deployed backend URL in prod. It's a Vite build-time var (baked into the bundle), exposed via the `API_` env prefix in `vite.config.ts`; set it in the host's build env (e.g. Vercel) for deploys. Defaults to `http://localhost:5000` if unset.
 
 ## Commands
 
