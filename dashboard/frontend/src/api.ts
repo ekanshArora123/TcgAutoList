@@ -1,4 +1,9 @@
-const BASE = "http://localhost:5000/api";
+// Backend origin, configurable per environment. Set API_BASE in
+// dashboard/frontend/.env locally, or in the host's env (e.g. Vercel) for the
+// deployed site — e.g. "http://localhost:5000" or "https://api.example.com".
+// No /api suffix and no trailing slash (trimmed below); the code appends /api.
+const API_BASE = (import.meta.env.API_BASE ?? "http://localhost:5000").replace(/\/+$/, "");
+const BASE = `${API_BASE}/api`;
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
