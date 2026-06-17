@@ -106,6 +106,16 @@ stages:
         eq(variables['Build.SourceBranch'], 'refs/heads/main')
       )
     jobs:
-      - job: Deploy
+      - job: deploy_vercel
+        pool: { vmImage: ubuntu-latest }
         steps:
-          - script: echo Deploying all services
+          - script: npm install --global vercel@latest
+          - script: vercel pull --yes --environment=production
+            env:
+              VERCEL_TOKEN: $(VERCEL_TOKEN)
+              VERCEL_ORG_ID: $(VERCEL_ORG_ID)
+              VERCEL_PROJECT_ID: $(VERCEL_PROJECT_ID)
+          - script: vercel build --prod
+            env: { VERCEL_TOKEN: $(VERCEL_TOKEN) }
+          - script: vercel deploy --prebuilt --prod
+            env: { VERCEL_TOKEN: $(VERCEL_TOKEN) }
