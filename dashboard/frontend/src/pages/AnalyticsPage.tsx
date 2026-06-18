@@ -18,6 +18,14 @@ const COLORS = [
   "#39d353", "#db6d28", "#7ee787", "#ffa657", "#d2a8ff",
 ];
 
+// Card conditions ordered best -> worst (mirrors PRIMARY_CONDITIONS + the
+// in-between grades on the backend). Used to sort the By Condition chart.
+const CONDITION_ORDER = ["MINT", "NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP", "DMG"];
+const conditionRank = (c: string) => {
+  const i = CONDITION_ORDER.indexOf(c);
+  return i === -1 ? CONDITION_ORDER.length : i; // unknown grades sort last
+};
+
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 const fmtK = (n: number | null | undefined) => {
   if (n == null) return "-";
@@ -236,7 +244,7 @@ export default function AnalyticsPage() {
         <div className="chart-card">
           <h3>By Condition (Count &amp; Value)</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={conditions}>
+            <ComposedChart data={[...conditions].sort((a, b) => conditionRank(a.condition) - conditionRank(b.condition))}>
               <XAxis dataKey="condition" tick={{ fill: "#8b949e", fontSize: 11 }} />
               <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
               <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
