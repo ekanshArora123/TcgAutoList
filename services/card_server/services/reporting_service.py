@@ -101,12 +101,29 @@ def _build_filters(f: dict[str, Any]) -> tuple[list[str], list[Any]]:
         conditions.append(cond)
         params.append(value)
 
+    def add_in(col: str, raw: Any) -> None:
+        """Multi-value (IN) filter. Accepts a list or a single scalar."""
+        values = [v for v in (raw if isinstance(raw, (list, tuple)) else [raw]) if v not in (None, "")]
+        if not values:
+            return
+        conditions.append(f"{col} IN ({','.join('?' * len(values))})")
+        params.extend(values)
+
     if f.get("q"):
         add("c.card_name LIKE ?", f"%{f['q']}%")
     if f.get("set_name"):
         add("c.set_name = ?", f["set_name"])
     if f.get("era"):
         add("c.era = ?", f["era"])
+    # Plural keys = multi-select (IN). era/set are mutually exclusive in the UI
+    # (a set already implies an era), but the backend treats every key
+    # independently — callers send only the ones they mean.
+    if f.get("sets"):
+        add_in("c.set_name", f["sets"])
+    if f.get("eras"):
+        add_in("c.era", f["eras"])
+    if f.get("conditions"):
+        add_in("s.condition", f["conditions"])
     if f.get("rarity"):
         add("c.rarity = ?", f["rarity"])
     if f.get("condition"):

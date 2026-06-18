@@ -143,10 +143,15 @@ export function fetchSummary(): Promise<Summary> {
 
 export function fetchPriceHistogram(
   breaks: number[],
-  filters: Record<string, string> = {},
+  filters: Record<string, string | string[]> = {},
 ): Promise<HistogramBin[]> {
-  const qs = new URLSearchParams({ breaks: breaks.join(","), ...filters }).toString();
-  return fetchJson(`${BASE}/analytics/price-histogram?${qs}`);
+  const qs = new URLSearchParams();
+  qs.set("breaks", breaks.join(","));
+  for (const [key, val] of Object.entries(filters)) {
+    if (Array.isArray(val)) val.forEach((v) => v && qs.append(key, v));
+    else if (val) qs.set(key, val);
+  }
+  return fetchJson(`${BASE}/analytics/price-histogram?${qs.toString()}`);
 }
 
 export function fetchConfidenceDistribution(): Promise<ConfidenceBucket[]> {

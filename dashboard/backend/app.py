@@ -99,9 +99,17 @@ def price_histogram():
               The last value is the upper cap; anything above goes into a ">" bucket.
       set_name / era / condition / ...: optional collection filters (same
               vocabulary as the browse endpoints) to scope the distribution.
+      eras / sets / conditions: repeatable multi-select variants (IN filter),
+              e.g. "?eras=Vintage&eras=Modern".
     """
     breaks_str = request.args.get("breaks", "0,1,2,5,10,20,30,50,100")
     filters = {k: v for k, v in request.args.to_dict().items() if k != "breaks"}
+    # Repeatable params collapse to their first value in to_dict(); pull the
+    # full list for the multi-select keys.
+    for plural in ("eras", "sets", "conditions"):
+        values = request.args.getlist(plural)
+        if values:
+            filters[plural] = values
     try:
         breaks = [float(b) for b in breaks_str.split(",") if b.strip()]
         return jsonify(reporting.price_histogram(breaks, filters))

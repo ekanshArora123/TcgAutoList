@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import {
   ComposedChart, BarChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -55,10 +55,14 @@ export default function AnalyticsPage() {
   const [topCards, setTopCards] = useState<TopCard[]>([]);
   const [sets, setSets] = useState<SetBreakdown[]>([]);
 
-  // Price-distribution filters (mirror the collection page; default = All).
+  // Price-distribution filters. Era and Set are mutually exclusive (a set
+  // already implies an era), so a toggle picks ONE dimension to filter on;
+  // that dimension supports multi-select. Condition is orthogonal. Empty
+  // selection = all (no filter).
   const [filterOpts, setFilterOpts] = useState<Filters | null>(null);
-  const [hEra, setHEra] = useState("");
-  const [hSet, setHSet] = useState("");
+  const [groupDim, setGroupDim] = useState<"era" | "set">("era");
+  const [selEras, setSelEras] = useState<string[]>([]);
+  const [selSets, setSelSets] = useState<string[]>([]);
   const [hCondition, setHCondition] = useState("");
   const PRESETS: Record<string, number[]> = {
     "Fine": [0, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100],
@@ -75,13 +79,16 @@ export default function AnalyticsPage() {
     return [...new Set(nums)].sort((a, b) => a - b);
   };
 
-  const histogramFilters = (): Record<string, string> => {
-    const f: Record<string, string> = {};
-    if (hEra) f.era = hEra;
-    if (hSet) f.set_name = hSet;
+  const histogramFilters = (): Record<string, string | string[]> => {
+    const f: Record<string, string | string[]> = {};
+    if (groupDim === "era" && selEras.length) f.eras = selEras;
+    if (groupDim === "set" && selSets.length) f.sets = selSets;
     if (hCondition) f.condition = hCondition;
     return f;
   };
+
+  const selectedValues = (e: ChangeEvent<HTMLSelectElement>): string[] =>
+    Array.from(e.target.selectedOptions, (o) => o.value).filter(Boolean);
 
   const loadHistogram = (breaks: number[]) => {
     if (breaks.length >= 2) fetchPriceHistogram(breaks, histogramFilters()).then(setHistogram);
@@ -103,7 +110,7 @@ export default function AnalyticsPage() {
   useEffect(() => {
     loadHistogram(parseBreaks(breaksInput));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hEra, hSet, hCondition]);
+  }, [groupDim, selEras, selSets, hCondition]);
 
   if (!summary) return <div className="loading">Loading analytics...</div>;
 
@@ -174,27 +181,51 @@ export default function AnalyticsPage() {
               >{name}</button>
             ))}
           </div>
-          <div className="chart-controls">
-            <span style={{ fontSize: 11, color: "#484f58" }}>Filters:</span>
-            <select className="filter-select" value={hEra} onChange={(e) => setHEra(e.target.value)}>
-              <option value="">All Eras</option>
-              {filterOpts?.eras.map((e) => <option key={e} value={e}>{e}</option>)}
-            </select>
-            <select className="filter-select" value={hSet} onChange={(e) => setHSet(e.target.value)}>
-              <option value="">All Sets</option>
-              {filterOpts?.sets.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select className="filter-select" value={hCondition} onChange={(e) => setHCondition(e.target.value)}>
-              <option value="">All Conditions</option>
-              {filterOpts?.conditions.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            {(hEra || hSet || hCondition) && (
+          <div className="chart-controls" style={{ alignItems: "flex-start" }}>
+            <span style={{ fontSize: 11, color: "#484f58", paddingTop: 6 }}>Filter by:</span>
+            {/* Era vs Set are exclusive — a set already implies its era. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ display: "flex", gap: 4 }}>
+                {(["era", "set"] as const).map((dim) => (
+                  <button
+                    key={dim}
+                    className="nav-btn"
+                    style={{ fontSize: 11, padding: "3px 10px", textTransform: "capitalize",
+                      background: groupDim === dim ? "#1f6feb" : undefined,
+                      color: groupDim === dim ? "#fff" : undefined }}
+                    onClick={() => setGroupDim(dim)}
+                  >{dim}</button>
+                ))}
+              </div>
+              {groupDim === "era" ? (
+                <select multiple className="filter-select" value={selEras} size={5}
+                  style={{ minWidth: 160 }} onChange={(e) => setSelEras(selectedValues(e))}>
+                  {filterOpts?.eras.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              ) : (
+                <select multiple className="filter-select" value={selSets} size={5}
+                  style={{ minWidth: 220 }} onChange={(e) => setSelSets(selectedValues(e))}>
+                  {filterOpts?.sets.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "#484f58", paddingTop: 6 }}>Condition:</span>
+              <select className="filter-select" value={hCondition} onChange={(e) => setHCondition(e.target.value)}>
+                <option value="">All Conditions</option>
+                {filterOpts?.conditions.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            {(selEras.length > 0 || selSets.length > 0 || hCondition) && (
               <button
                 className="nav-btn"
-                style={{ fontSize: 11, padding: "3px 8px" }}
-                onClick={() => { setHEra(""); setHSet(""); setHCondition(""); }}
+                style={{ fontSize: 11, padding: "3px 8px", marginTop: 26 }}
+                onClick={() => { setSelEras([]); setSelSets([]); setHCondition(""); }}
               >Clear</button>
             )}
+            <span style={{ fontSize: 10, color: "#484f58", marginTop: 28 }}>
+              Ctrl/⌘-click to multi-select · none = all
+            </span>
           </div>
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart data={(() => {

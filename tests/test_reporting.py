@@ -152,6 +152,28 @@ def test_price_histogram_applies_collection_filters(db):
     assert not any(h["range"].startswith(">") for h in none)
 
 
+def test_price_histogram_multi_select_filters(db):
+    svc = ReportingService(db)
+
+    # Plural keys are OR-within / IN filters: both sets together cover both cards.
+    both_sets = {h["range"]: h["count"] for h in
+                 svc.price_histogram([0, 5, 50], {"sets": ["Base Set", "Jungle"]})}
+    assert both_sets["$0-$5"] == 1   # Pikachu (Jungle)
+    assert both_sets[">$50"] == 1    # Charizard (Base Set)
+
+    # A single-element list behaves like the singular key.
+    one_set = {h["range"]: h["count"] for h in
+               svc.price_histogram([0, 5, 50], {"sets": ["Jungle"]})}
+    assert one_set["$0-$5"] == 1
+    assert ">$50" not in one_set     # Charizard excluded
+
+    # Multi-select conditions (both NM here) still span both cards.
+    conds = {h["range"]: h["count"] for h in
+             svc.price_histogram([0, 5, 50], {"conditions": ["NM", "LP"]})}
+    assert conds["$0-$5"] == 1
+    assert conds[">$50"] == 1
+
+
 def test_top_cards_orders_by_value(db):
     top = ReportingService(db).top_cards(10)
     assert [c["card_name"] for c in top] == ["Charizard", "Pikachu"]
