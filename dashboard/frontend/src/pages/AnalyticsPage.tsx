@@ -232,16 +232,28 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Condition breakdown */}
+        {/* Condition breakdown — count + value */}
         <div className="chart-card">
-          <h3>By Condition</h3>
+          <h3>By Condition (Count &amp; Value)</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={conditions} layout="vertical">
-              <XAxis type="number" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis dataKey="condition" type="category" tick={{ fill: "#8b949e", fontSize: 11 }} width={60} />
-              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
-              <Bar dataKey="quantity" fill="#3fb950" radius={[0, 2, 2, 0]} name="Count" />
-            </BarChart>
+            <ComposedChart data={conditions}>
+              <XAxis dataKey="condition" tick={{ fill: "#8b949e", fontSize: 11 }} />
+              <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
+              <Tooltip isAnimationActive={false} content={({ active, payload, label }: any) => {
+                if (!active || !payload?.length) return null;
+                const d = payload[0]?.payload;
+                return (
+                  <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+                    <div style={{ color: "#e1e4e8", fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: "#3fb950" }}>Count: {d?.quantity?.toLocaleString()}</div>
+                    <div style={{ color: "#d29922" }}>Value: {fmt(d?.total_value)}</div>
+                  </div>
+                );
+              }} />
+              <Bar yAxisId="left" dataKey="quantity" fill="#3fb950" radius={[2, 2, 0, 0]} name="Count" />
+              <Line yAxisId="right" type="monotone" dataKey="total_value" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="Total Value" />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
 
