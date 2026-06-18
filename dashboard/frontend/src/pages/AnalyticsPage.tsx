@@ -1,4 +1,5 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useState } from "react";
+import MultiSelect from "../components/MultiSelect";
 import {
   ComposedChart, BarChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -63,7 +64,7 @@ export default function AnalyticsPage() {
   const [groupDim, setGroupDim] = useState<"era" | "set">("era");
   const [selEras, setSelEras] = useState<string[]>([]);
   const [selSets, setSelSets] = useState<string[]>([]);
-  const [hCondition, setHCondition] = useState("");
+  const [selConditions, setSelConditions] = useState<string[]>([]);
   const PRESETS: Record<string, number[]> = {
     "Fine": [0, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100],
     "Standard": [0, 1, 2, 5, 10, 20, 30, 50, 100],
@@ -83,12 +84,9 @@ export default function AnalyticsPage() {
     const f: Record<string, string | string[]> = {};
     if (groupDim === "era" && selEras.length) f.eras = selEras;
     if (groupDim === "set" && selSets.length) f.sets = selSets;
-    if (hCondition) f.condition = hCondition;
+    if (selConditions.length) f.conditions = selConditions;
     return f;
   };
-
-  const selectedValues = (e: ChangeEvent<HTMLSelectElement>): string[] =>
-    Array.from(e.target.selectedOptions, (o) => o.value).filter(Boolean);
 
   const loadHistogram = (breaks: number[]) => {
     if (breaks.length >= 2) fetchPriceHistogram(breaks, histogramFilters()).then(setHistogram);
@@ -110,7 +108,7 @@ export default function AnalyticsPage() {
   useEffect(() => {
     loadHistogram(parseBreaks(breaksInput));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupDim, selEras, selSets, hCondition]);
+  }, [groupDim, selEras, selSets, selConditions]);
 
   if (!summary) return <div className="loading">Loading analytics...</div>;
 
@@ -156,6 +154,8 @@ export default function AnalyticsPage() {
         {/* Price histogram */}
         <div className="chart-card full-width">
           <h3>Price Distribution</h3>
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
           <div className="chart-controls">
             <label>Breakpoints: <input
               type="text"
@@ -180,52 +180,6 @@ export default function AnalyticsPage() {
                 }}
               >{name}</button>
             ))}
-          </div>
-          <div className="chart-controls" style={{ alignItems: "flex-start" }}>
-            <span style={{ fontSize: 11, color: "#484f58", paddingTop: 6 }}>Filter by:</span>
-            {/* Era vs Set are exclusive — a set already implies its era. */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ display: "flex", gap: 4 }}>
-                {(["era", "set"] as const).map((dim) => (
-                  <button
-                    key={dim}
-                    className="nav-btn"
-                    style={{ fontSize: 11, padding: "3px 10px", textTransform: "capitalize",
-                      background: groupDim === dim ? "#1f6feb" : undefined,
-                      color: groupDim === dim ? "#fff" : undefined }}
-                    onClick={() => setGroupDim(dim)}
-                  >{dim}</button>
-                ))}
-              </div>
-              {groupDim === "era" ? (
-                <select multiple className="filter-select" value={selEras} size={5}
-                  style={{ minWidth: 160 }} onChange={(e) => setSelEras(selectedValues(e))}>
-                  {filterOpts?.eras.map((e) => <option key={e} value={e}>{e}</option>)}
-                </select>
-              ) : (
-                <select multiple className="filter-select" value={selSets} size={5}
-                  style={{ minWidth: 220 }} onChange={(e) => setSelSets(selectedValues(e))}>
-                  {filterOpts?.sets.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              )}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 11, color: "#484f58", paddingTop: 6 }}>Condition:</span>
-              <select className="filter-select" value={hCondition} onChange={(e) => setHCondition(e.target.value)}>
-                <option value="">All Conditions</option>
-                {filterOpts?.conditions.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            {(selEras.length > 0 || selSets.length > 0 || hCondition) && (
-              <button
-                className="nav-btn"
-                style={{ fontSize: 11, padding: "3px 8px", marginTop: 26 }}
-                onClick={() => { setSelEras([]); setSelSets([]); setHCondition(""); }}
-              >Clear</button>
-            )}
-            <span style={{ fontSize: 10, color: "#484f58", marginTop: 28 }}>
-              Ctrl/⌘-click to multi-select · none = all
-            </span>
           </div>
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart data={(() => {
@@ -257,6 +211,52 @@ export default function AnalyticsPage() {
               <Line yAxisId="right" type="monotone" dataKey="pctValue" stroke="#3fb950" strokeWidth={2} dot={{ fill: "#3fb950", r: 3 }} name="% of Value" />
             </ComposedChart>
           </ResponsiveContainer>
+            </div>
+
+            {/* Filter panel — pinned to the right of the chart. */}
+            <div style={{ width: 230, flexShrink: 0, borderLeft: "1px solid #30363d", paddingLeft: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#e1e4e8" }}>Filters</div>
+
+              <div>
+                {/* Era and Set are exclusive — a set already implies its era. */}
+                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Filter by</div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(["era", "set"] as const).map((dim) => (
+                    <button
+                      key={dim}
+                      className="nav-btn"
+                      style={{ flex: 1, fontSize: 11, padding: "4px 0", textTransform: "capitalize",
+                        background: groupDim === dim ? "#1f6feb" : undefined,
+                        color: groupDim === dim ? "#fff" : undefined }}
+                      onClick={() => setGroupDim(dim)}
+                    >{dim}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>{groupDim === "era" ? "Eras" : "Sets"}</div>
+                {groupDim === "era" ? (
+                  <MultiSelect label="Eras" options={filterOpts?.eras ?? []} selected={selEras} onChange={setSelEras} />
+                ) : (
+                  <MultiSelect label="Sets" options={filterOpts?.sets ?? []} selected={selSets} onChange={setSelSets} />
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Condition</div>
+                <MultiSelect label="Conditions" options={filterOpts?.conditions ?? []} selected={selConditions} onChange={setSelConditions} />
+              </div>
+
+              {(selEras.length > 0 || selSets.length > 0 || selConditions.length > 0) && (
+                <button
+                  className="nav-btn"
+                  style={{ fontSize: 11, padding: "4px 8px", alignSelf: "flex-start" }}
+                  onClick={() => { setSelEras([]); setSelSets([]); setSelConditions([]); }}
+                >Clear all</button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Confidence distribution */}
