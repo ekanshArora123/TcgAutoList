@@ -97,11 +97,14 @@ def price_histogram():
     Query params:
       breaks: comma-separated breakpoints, e.g. "0,0.2,0.5,1,5,10,30,60,100".
               The last value is the upper cap; anything above goes into a ">" bucket.
+      set_name / era / condition / ...: optional collection filters (same
+              vocabulary as the browse endpoints) to scope the distribution.
     """
     breaks_str = request.args.get("breaks", "0,1,2,5,10,20,30,50,100")
+    filters = {k: v for k, v in request.args.to_dict().items() if k != "breaks"}
     try:
         breaks = [float(b) for b in breaks_str.split(",") if b.strip()]
-        return jsonify(reporting.price_histogram(breaks))
+        return jsonify(reporting.price_histogram(breaks, filters))
     except ValueError as e:
         return jsonify({"error": str(e) or "Invalid breaks parameter"}), 400
 

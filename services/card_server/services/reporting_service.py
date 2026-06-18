@@ -289,20 +289,28 @@ class ReportingService:
             "avg_confidence": avg_confidence,
         }
 
-    def price_histogram(self, breaks: list[float]) -> list[dict[str, Any]]:
+    def price_histogram(
+        self, breaks: list[float], filters: Optional[dict[str, Any]] = None
+    ) -> list[dict[str, Any]]:
         """Bucket current-inventory prices into [breaks[i], breaks[i+1]) bins.
 
         The last break is the upper cap; prices >= it go into a single ">"
         overflow bucket. Raises ValueError if fewer than 2 breaks.
+
+        `filters` accepts the same collection-filter vocabulary as the browse
+        views (set_name/era/condition/etc.); absent keys constrain nothing.
         """
         breaks = sorted(set(breaks))
         if len(breaks) < 2:
             raise ValueError("Need at least 2 breakpoints")
 
+        conditions, params = _build_filters(filters or {})
+        conditions.insert(0, "p.estimated_price IS NOT NULL")
+        where = "WHERE " + " AND ".join(conditions)
+
         rows = self.db.execute(
-            "SELECT p.estimated_price"
-            + INV_SKU_CARD_PRICE_FROM
-            + "WHERE p.estimated_price IS NOT NULL"
+            "SELECT p.estimated_price" + INV_SKU_CARD_PRICE_FROM + where,
+            params,
         ).fetchall()
 
         bin_counts = [0] * (len(breaks) - 1)

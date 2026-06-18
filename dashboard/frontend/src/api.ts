@@ -141,8 +141,12 @@ export function fetchSummary(): Promise<Summary> {
   return fetchJson(`${BASE}/analytics/summary`);
 }
 
-export function fetchPriceHistogram(breaks: number[]): Promise<HistogramBin[]> {
-  return fetchJson(`${BASE}/analytics/price-histogram?breaks=${breaks.join(",")}`);
+export function fetchPriceHistogram(
+  breaks: number[],
+  filters: Record<string, string> = {},
+): Promise<HistogramBin[]> {
+  const qs = new URLSearchParams({ breaks: breaks.join(","), ...filters }).toString();
+  return fetchJson(`${BASE}/analytics/price-histogram?${qs}`);
 }
 
 export function fetchConfidenceDistribution(): Promise<ConfidenceBucket[]> {

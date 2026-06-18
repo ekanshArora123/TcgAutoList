@@ -6,10 +6,10 @@ import {
 import {
   fetchSummary, fetchPriceHistogram, fetchConfidenceDistribution,
   fetchEraBreakdown, fetchConditionBreakdown, fetchRarityBreakdown,
-  fetchTopCards, fetchSetBreakdown,
+  fetchTopCards, fetchSetBreakdown, fetchFilters,
   type Summary, type HistogramBin, type ConfidenceBucket,
   type EraBreakdown, type ConditionBreakdown, type RarityBreakdown,
-  type TopCard, type SetBreakdown,
+  type TopCard, type SetBreakdown, type Filters,
 } from "../api";
 
 const COLORS = [
@@ -54,6 +54,12 @@ export default function AnalyticsPage() {
   const [rarities, setRarities] = useState<RarityBreakdown[]>([]);
   const [topCards, setTopCards] = useState<TopCard[]>([]);
   const [sets, setSets] = useState<SetBreakdown[]>([]);
+
+  // Price-distribution filters (mirror the collection page; default = All).
+  const [filterOpts, setFilterOpts] = useState<Filters | null>(null);
+  const [hEra, setHEra] = useState("");
+  const [hSet, setHSet] = useState("");
+  const [hCondition, setHCondition] = useState("");
   const PRESETS: Record<string, number[]> = {
     "Fine": [0, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100],
     "Standard": [0, 1, 2, 5, 10, 20, 30, 50, 100],
@@ -69,13 +75,21 @@ export default function AnalyticsPage() {
     return [...new Set(nums)].sort((a, b) => a - b);
   };
 
+  const histogramFilters = (): Record<string, string> => {
+    const f: Record<string, string> = {};
+    if (hEra) f.era = hEra;
+    if (hSet) f.set_name = hSet;
+    if (hCondition) f.condition = hCondition;
+    return f;
+  };
+
   const loadHistogram = (breaks: number[]) => {
-    if (breaks.length >= 2) fetchPriceHistogram(breaks).then(setHistogram);
+    if (breaks.length >= 2) fetchPriceHistogram(breaks, histogramFilters()).then(setHistogram);
   };
 
   useEffect(() => {
     fetchSummary().then(setSummary);
-    loadHistogram(parseBreaks(breaksInput));
+    fetchFilters().then(setFilterOpts);
     fetchConfidenceDistribution().then(setConfidence);
     fetchEraBreakdown().then(setEras);
     fetchConditionBreakdown().then(setConditions);
@@ -83,6 +97,13 @@ export default function AnalyticsPage() {
     fetchTopCards(25).then(setTopCards);
     fetchSetBreakdown().then(setSets);
   }, []);
+
+  // Reload the histogram on mount and whenever a filter changes (reads fresh
+  // selection state, avoiding stale closures from the dropdown handlers).
+  useEffect(() => {
+    loadHistogram(parseBreaks(breaksInput));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hEra, hSet, hCondition]);
 
   if (!summary) return <div className="loading">Loading analytics...</div>;
 
@@ -152,6 +173,28 @@ export default function AnalyticsPage() {
                 }}
               >{name}</button>
             ))}
+          </div>
+          <div className="chart-controls">
+            <span style={{ fontSize: 11, color: "#484f58" }}>Filters:</span>
+            <select className="filter-select" value={hEra} onChange={(e) => setHEra(e.target.value)}>
+              <option value="">All Eras</option>
+              {filterOpts?.eras.map((e) => <option key={e} value={e}>{e}</option>)}
+            </select>
+            <select className="filter-select" value={hSet} onChange={(e) => setHSet(e.target.value)}>
+              <option value="">All Sets</option>
+              {filterOpts?.sets.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select className="filter-select" value={hCondition} onChange={(e) => setHCondition(e.target.value)}>
+              <option value="">All Conditions</option>
+              {filterOpts?.conditions.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {(hEra || hSet || hCondition) && (
+              <button
+                className="nav-btn"
+                style={{ fontSize: 11, padding: "3px 8px" }}
+                onClick={() => { setHEra(""); setHSet(""); setHCondition(""); }}
+              >Clear</button>
+            )}
           </div>
           <ResponsiveContainer width="100%" height={320}>
             <ComposedChart data={(() => {
