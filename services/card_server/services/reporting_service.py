@@ -226,6 +226,69 @@ class ReportingService:
 
         return _page_result(items, total, page, per_page)
 
+    def card_detail(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        specialty_one: str = "None",
+        specialty_two: str = "None",
+        image_card_ids: Optional[list[str]] = None,
+    ) -> Optional[dict[str, Any]]:
+        """One card's detail page: metadata + a per-condition qty rollup.
+
+        Identity is the SKU minus condition — (card_id, finish, specialty_one,
+        specialty_two) — so a Reverse-Holo, a 1st Edition, and a graded slab each
+        resolve to their own page, while every condition of the same variant is
+        folded together here. Tagged inventory is excluded (tags get their own
+        treatment later), so this view reflects the plain variant "in general"
+        rather than one specific physical card.
+
+        Returns None when the card_id is unknown. Conditions with no untagged
+        inventory simply don't appear; the list may be empty.
+        """
+        card = self.cards.get_by_id(card_id)
+        if not card:
+            return None
+
+        rows = self.db.execute(
+            """
+            SELECT s.condition,
+                   SUM(i.qty) as qty,
+                   MAX(p.estimated_price) as estimated_price,
+                   MAX(p.confidence_percent) as confidence_percent
+            """
+            + INV_SKU_CARD_PRICE_FROM
+            + """
+            WHERE s.card_id = ? AND s.finish = ?
+              AND s.specialty_one = ? AND s.specialty_two = ?
+              AND (i.tags IS NULL OR TRIM(i.tags) = '')
+            GROUP BY s.condition
+            """,
+            [card_id, finish, specialty_one, specialty_two],
+        ).fetchall()
+
+        conditions = [dict(r) for r in rows]
+        total_qty = sum(r["qty"] or 0 for r in conditions)
+        image_set = set(_digit_ids(image_card_ids))
+
+        return {
+            "card": {
+                "card_id": card["id"],
+                "card_name": card["card_name"],
+                "set_name": card["set_name"],
+                "rarity": card["rarity"],
+                "card_number": card["card_number"],
+                "era": card["era"],
+                "card_type": card["card_type"],
+                "finish": finish,
+                "specialty_one": specialty_one,
+                "specialty_two": specialty_two,
+            },
+            "has_image": str(card_id) in image_set,
+            "conditions": conditions,
+            "total_qty": total_qty,
+        }
+
     def filter_options(self) -> dict[str, list[str]]:
         """Distinct values for the filter dropdowns."""
         return {

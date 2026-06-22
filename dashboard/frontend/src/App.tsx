@@ -1,43 +1,34 @@
-import { useState } from "react";
+import { NavLink, Route, Routes } from "react-router-dom";
 import CollectionGridPage from "./pages/CollectionGridPage";
 import CollectionPage from "./pages/CollectionPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
+import CardDetailPage from "./pages/CardDetailPage";
 import "./App.css";
 
-type Page = "collection" | "info" | "analytics";
-
 function App() {
-  const [page, setPage] = useState<Page>("collection");
-
   return (
     <div className="app">
       <nav className="navbar">
         <h1 className="nav-title">TCG Collection Dashboard</h1>
         <div className="nav-links">
-          <button
-            className={`nav-btn ${page === "collection" ? "active" : ""}`}
-            onClick={() => setPage("collection")}
-          >
+          <NavLink to="/" end className={({ isActive }) => `nav-btn ${isActive ? "active" : ""}`}>
             Collection
-          </button>
-          <button
-            className={`nav-btn ${page === "info" ? "active" : ""}`}
-            onClick={() => setPage("info")}
-          >
+          </NavLink>
+          <NavLink to="/info" className={({ isActive }) => `nav-btn ${isActive ? "active" : ""}`}>
             Info
-          </button>
-          <button
-            className={`nav-btn ${page === "analytics" ? "active" : ""}`}
-            onClick={() => setPage("analytics")}
-          >
+          </NavLink>
+          <NavLink to="/analytics" className={({ isActive }) => `nav-btn ${isActive ? "active" : ""}`}>
             Analytics
-          </button>
+          </NavLink>
         </div>
       </nav>
       <main className="main-content">
-        {page === "collection" && <CollectionGridPage />}
-        {page === "info" && <CollectionPage />}
-        {page === "analytics" && <AnalyticsPage />}
+        <Routes>
+          <Route path="/" element={<CollectionGridPage />} />
+          <Route path="/info" element={<CollectionPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/card/:cardId" element={<CardDetailPage />} />
+        </Routes>
       </main>
     </div>
   );
