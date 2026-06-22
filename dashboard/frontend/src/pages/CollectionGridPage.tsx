@@ -1,8 +1,20 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import {
   fetchCollection, fetchFilters, cardImageUrl,
   type CollectionItem, type CollectionResponse, type Filters,
 } from "../api";
+
+// Path to a card's detail page. Identity is the SKU minus condition; tags are
+// excluded from the key (tagged cards don't route — see CardTile).
+function cardDetailPath(card: CollectionItem): string {
+  const qs = new URLSearchParams({
+    finish: card.finish,
+    specialty_one: card.specialty_one,
+    specialty_two: card.specialty_two,
+  }).toString();
+  return `/card/${card.card_id}?${qs}`;
+}
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 
@@ -217,24 +229,36 @@ export default function CollectionGridPage() {
 function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean }) {
   const [imgError, setImgError] = useState(false);
   const isFirstEdition = card.specialty_one === "1st Edition" || card.specialty_one === "First Edition";
+  // Tagged cards don't get their own page yet — only untagged tiles link out.
+  const hasTags = !!(card.tags && card.tags.trim());
+
+  const imageInner = (
+    <>
+      {card.has_image && !imgError ? (
+        <img
+          src={cardImageUrl(card.card_id)}
+          alt={card.card_name}
+          loading="lazy"
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <div className="card-tile-no-image">
+          <span>{card.card_name}</span>
+        </div>
+      )}
+      {isFirstEdition && <div className="first-edition-badge">1st Ed</div>}
+    </>
+  );
 
   return (
     <div className={`card-tile ${advanced ? "card-tile-advanced" : ""}`}>
-      <div className="card-tile-image">
-        {card.has_image && !imgError ? (
-          <img
-            src={cardImageUrl(card.card_id)}
-            alt={card.card_name}
-            loading="lazy"
-            onError={() => setImgError(true)}
-          />
-        ) : (
-          <div className="card-tile-no-image">
-            <span>{card.card_name}</span>
-          </div>
-        )}
-        {isFirstEdition && <div className="first-edition-badge">1st Ed</div>}
-      </div>
+      {hasTags ? (
+        <div className="card-tile-image">{imageInner}</div>
+      ) : (
+        <Link to={cardDetailPath(card)} className="card-tile-image card-tile-image-link">
+          {imageInner}
+        </Link>
+      )}
 
       <div className="card-tile-info">
         <div className="card-tile-name" title={card.card_name}>

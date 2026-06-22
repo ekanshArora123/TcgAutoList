@@ -69,6 +69,25 @@ def card_image(card_id):
     return send_from_directory(_IMAGES_DIR, filename)
 
 
+@app.route("/api/card/<card_id>")
+def card_detail(card_id):
+    """One card's detail page: metadata + per-condition qty rollup.
+
+    Identity is the SKU minus condition; the variant axes come in as query
+    params (default to the plain variant). 404 if the card_id is unknown.
+    """
+    detail = reporting.card_detail(
+        card_id,
+        finish=request.args.get("finish", "Regular"),
+        specialty_one=request.args.get("specialty_one", "None"),
+        specialty_two=request.args.get("specialty_two", "None"),
+        image_card_ids=list(_image_card_ids()),
+    )
+    if detail is None:
+        return "", 404
+    return jsonify(detail)
+
+
 @app.route("/api/collection")
 def collection_grid():
     """Card collection with images — all filters plus price/confidence ranges."""

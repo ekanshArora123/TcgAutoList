@@ -209,3 +209,45 @@ export function fetchCollection(params: Record<string, string>): Promise<Collect
 export function cardImageUrl(cardId: string): string {
   return `${BASE}/images/${cardId}`;
 }
+
+// ── Card detail page ──
+
+// The variant axes that, together with card_id, identify a card's page
+// (everything except condition). Tagged cards are intentionally excluded
+// upstream, so tags are not part of the key.
+export interface CardVariant {
+  finish: string;
+  specialty_one: string;
+  specialty_two: string;
+}
+
+export interface CardConditionRow {
+  condition: string;
+  qty: number;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+}
+
+export interface CardDetail {
+  card: {
+    card_id: string;
+    card_name: string;
+    set_name: string | null;
+    rarity: string | null;
+    card_number: string | null;
+    era: string | null;
+    card_type: string | null;
+  } & CardVariant;
+  has_image: boolean;
+  conditions: CardConditionRow[];
+  total_qty: number;
+}
+
+export function fetchCardDetail(cardId: string, variant: CardVariant): Promise<CardDetail> {
+  const qs = new URLSearchParams({
+    finish: variant.finish,
+    specialty_one: variant.specialty_one,
+    specialty_two: variant.specialty_two,
+  }).toString();
+  return fetchJson(`${BASE}/card/${cardId}?${qs}`);
+}

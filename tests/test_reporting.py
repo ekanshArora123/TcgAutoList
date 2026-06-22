@@ -157,3 +157,53 @@ def test_breakdowns(db):
 def test_breakdown_rejects_unknown_dimension(db):
     with pytest.raises(KeyError):
         ReportingService(db).breakdown("color")
+
+
+# ─── Card detail page ────────────────────────────────────────
+
+
+def test_card_detail_folds_conditions_for_a_variant(db):
+    # Add a second condition (LP, qty 2) of the same Charizard Holo variant.
+    skus = SkusHelper(db)
+    inv = InventoryHelper(db)
+    prices = PricesHelper(db)
+    lp = skus.get_or_create({"card_id": "111", "condition": "LP", "finish": "Holo"})
+    inv.create({"sku_id": lp["sku_id"], "qty": 2, "status": "unlisted"})
+    prices.upsert({"sku_id": lp["sku_id"], "calculation_date": _DATE,
+                   "estimated_price": 70.0, "confidence_percent": 85})
+
+    detail = ReportingService(db).card_detail("111", finish="Holo")
+    assert detail is not None
+    assert detail["card"]["card_name"] == "Charizard"
+    by_cond = {c["condition"]: c for c in detail["conditions"]}
+    assert by_cond["NM"]["qty"] == 1
+    assert by_cond["LP"]["qty"] == 2
+    assert by_cond["LP"]["estimated_price"] == 70.0
+    assert detail["total_qty"] == 3  # condition is folded together
+
+
+def test_card_detail_excludes_tagged_inventory(db):
+    inv = InventoryHelper(db)
+    skus = SkusHelper(db)
+    sku = skus.get_or_create({"card_id": "111", "condition": "NM", "finish": "Holo"})
+    inv.create({"sku_id": sku["sku_id"], "qty": 5, "tags": "hidden crease", "status": "unlisted"})
+
+    detail = ReportingService(db).card_detail("111", finish="Holo")
+    by_cond = {c["condition"]: c for c in detail["conditions"]}
+    assert by_cond["NM"]["qty"] == 1  # the tagged qty-5 copy is excluded
+
+
+def test_card_detail_isolates_by_variant(db):
+    # Charizard's only inventory is Holo; the Regular-finish page is empty.
+    detail = ReportingService(db).card_detail("111", finish="Regular")
+    assert detail is not None
+    assert detail["conditions"] == []
+    assert detail["total_qty"] == 0
+
+
+def test_card_detail_has_image_flag_and_unknown_card(db):
+    svc = ReportingService(db)
+    detail = svc.card_detail("111", finish="Holo", image_card_ids=["111"])
+    assert detail["has_image"] is True
+    assert svc.card_detail("222", image_card_ids=["111"])["has_image"] is False
+    assert svc.card_detail("999") is None
