@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import statistics
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -301,10 +302,11 @@ class ReportingService:
         """Daily sales rollup for the per-card graph, one series per condition.
 
         Reads the raw `sales` table (never the pricing tables). Each point is a
-        day's average sale price (purchase + shipping) and volume for one
-        condition. Sales are keyed by card_id + condition + finish, so a 1st
-        Edition (its own product id) or Reverse-Holo resolves correctly via the
-        card_id/finish the page passes in.
+        day's MEDIAN sale price (purchase + shipping) plus min/max and volume for
+        one condition; the median is over sale rows (not quantity-weighted) and
+        is outlier-resistant. Sales are keyed by card_id + condition + finish, so
+        a 1st Edition (its own product id) or Reverse-Holo resolves correctly via
+        the card_id/finish the page passes in.
 
         Photo/custom listings (has_image = 1) are excluded by default since they
         price very differently; pass include_images=True to fold them in.
@@ -317,29 +319,83 @@ class ReportingService:
             f"""
             SELECT condition,
                    substr(order_date, 1, 10) AS date,
-                   AVG(purchase_price + shipping_price) AS avg_price,
-                   MIN(purchase_price + shipping_price) AS min_price,
-                   MAX(purchase_price + shipping_price) AS max_price,
-                   SUM(quantity) AS volume
+                   (purchase_price + shipping_price) AS price,
+                   quantity
             FROM sales
             WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
-            GROUP BY condition, date
             ORDER BY date
             """,
             (card_id, finish, source, cutoff),
         ).fetchall()
 
+        # Group per (condition, day) and take the median price; SQLite has no
+        # MEDIAN, so aggregate in Python.
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        for r in rows:
+            g = groups.setdefault((r["condition"], r["date"]), {"prices": [], "volume": 0})
+            g["prices"].append(r["price"])
+            g["volume"] += r["quantity"] or 1
+
         points = [
             {
-                "date": r["date"],
-                "condition": r["condition"],
-                "avg_price": round(r["avg_price"], 2) if r["avg_price"] is not None else None,
-                "min_price": round(r["min_price"], 2) if r["min_price"] is not None else None,
-                "max_price": round(r["max_price"], 2) if r["max_price"] is not None else None,
-                "volume": r["volume"] or 0,
+                "date": date,
+                "condition": cond,
+                "median_price": round(statistics.median(g["prices"]), 2),
+                "min_price": round(min(g["prices"]), 2),
+                "max_price": round(max(g["prices"]), 2),
+                "volume": g["volume"],
             }
-            for r in rows
+            for (cond, date), g in groups.items()
         ]
+        points.sort(key=lambda p: (p["date"], p["condition"]))
+        conditions = sorted({p["condition"] for p in points})
+
+        return {
+            "card_id": card_id,
+            "finish": finish,
+            "source": source,
+            "days": days,
+            "include_images": include_images,
+            "conditions": conditions,
+            "points": points,
+        }
+
+    def card_sales_points(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        days: int = 365,
+        source: str = "tcgplayer",
+        include_images: bool = False,
+    ) -> dict[str, Any]:
+        """Individual sales as graph points (one per unit) for the scatter view.
+
+        Each row is expanded by quantity (a qty-3 sale yields 3 points at its
+        price), keyed to the calendar day so points align with the median line's
+        category axis. Same filters as card_sales_history. Read-only.
+        """
+        days = max(int(days), 1)
+        cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+        image_clause = "" if include_images else " AND has_image = 0"
+
+        rows = self.db.execute(
+            f"""
+            SELECT condition,
+                   substr(order_date, 1, 10) AS date,
+                   (purchase_price + shipping_price) AS price,
+                   quantity
+            FROM sales
+            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
+            ORDER BY date
+            """,
+            (card_id, finish, source, cutoff),
+        ).fetchall()
+
+        points = []
+        for r in rows:
+            price = round(r["price"], 2)
+            for _ in range(max(int(r["quantity"] or 1), 1)):
+                points.append({"date": r["date"], "condition": r["condition"], "price": price})
         conditions = sorted({p["condition"] for p in points})
 
         return {

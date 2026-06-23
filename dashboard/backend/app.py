@@ -105,6 +105,23 @@ def card_sales(card_id):
     )
 
 
+@app.route("/api/card/<card_id>/sales-points")
+def card_sales_points(card_id):
+    """Individual sales as graph points (one per unit) for the scatter view."""
+    try:
+        days = int(request.args.get("days", 365))
+    except ValueError:
+        days = 365
+    return jsonify(
+        reporting.card_sales_points(
+            card_id,
+            finish=request.args.get("finish", "Regular"),
+            days=days,
+            include_images=request.args.get("include_images") == "true",
+        )
+    )
+
+
 @app.route("/api/card/<card_id>/price-history")
 def card_price_history(card_id):
     """TCGplayer market-price history (weekly), one series per condition."""

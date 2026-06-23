@@ -131,9 +131,22 @@ def test_card_sales_history_daily_rollup(db):
     assert hist["conditions"] == ["LP", "NM"]
     pts = {(p["date"], p["condition"]): p for p in hist["points"]}
     nm = pts[("2025-06-01", "NM")]
-    assert nm["avg_price"] == 12.0   # avg of (10+1) and (12+1) = price incl. shipping
-    assert nm["volume"] == 3         # 1 + 2 quantities
-    assert pts[("2025-06-02", "LP")]["avg_price"] == 9.0
+    assert nm["median_price"] == 12.0  # median of (10+1) and (12+1), incl. shipping
+    assert nm["volume"] == 3           # 1 + 2 quantities
+    assert pts[("2025-06-02", "LP")]["median_price"] == 9.0
+
+
+def test_card_sales_history_uses_median_not_mean(db):
+    # Three NM sales (11, 12, 100) -> median 12, not the mean of ~41.
+    SalesStore(db).replace_card("111", [
+        _hsale("2025-06-01T10:00:00", "NM", 10.0, ship=1.0),   # 11
+        _hsale("2025-06-01T11:00:00", "NM", 11.0, ship=1.0),   # 12
+        _hsale("2025-06-01T12:00:00", "NM", 99.0, ship=1.0),   # 100 (outlier)
+    ])
+    nm = ReportingService(db).card_sales_history("111", finish="Holo", days=100000)["points"][0]
+    assert nm["median_price"] == 12.0
+    assert nm["min_price"] == 11.0
+    assert nm["max_price"] == 100.0
 
 
 def test_card_sales_history_filters_finish(db):
@@ -143,7 +156,20 @@ def test_card_sales_history_filters_finish(db):
     ])
     holo = ReportingService(db).card_sales_history("111", finish="Holo", days=100000)
     assert holo["conditions"] == ["NM"]
-    assert all(p["avg_price"] == 11.0 for p in holo["points"])  # only the Holo sale
+    assert all(p["median_price"] == 11.0 for p in holo["points"])  # only the Holo sale
+
+
+def test_card_sales_points_expands_by_quantity(db):
+    SalesStore(db).replace_card("111", [
+        _hsale("2025-06-01T10:00:00", "NM", 10.0, ship=1.0, qty=3),  # -> 3 points at 11.0
+        _hsale("2025-06-02T10:00:00", "LP", 7.0, ship=1.0, qty=1),   # -> 1 point at 8.0
+    ])
+    res = ReportingService(db).card_sales_points("111", finish="Holo", days=100000)
+    assert sorted(res["conditions"]) == ["LP", "NM"]
+    nm = [p for p in res["points"] if p["condition"] == "NM"]
+    assert len(nm) == 3 and all(p["price"] == 11.0 and p["date"] == "2025-06-01" for p in nm)
+    lp = [p for p in res["points"] if p["condition"] == "LP"]
+    assert len(lp) == 1 and lp[0]["price"] == 8.0
 
 
 def test_card_sales_history_excludes_photo_listings_by_default(db):
@@ -156,14 +182,14 @@ def test_card_sales_history_excludes_photo_listings_by_default(db):
     default = svc.card_sales_history("111", finish="Holo", days=100000)
     assert default["include_images"] is False
     nm = {(p["date"], p["condition"]): p for p in default["points"]}[("2025-06-01", "NM")]
-    assert nm["volume"] == 1          # photo sale excluded
-    assert nm["avg_price"] == 11.0    # only the standard sale (10 + 1)
+    assert nm["volume"] == 1            # photo sale excluded
+    assert nm["median_price"] == 11.0  # only the standard sale (10 + 1)
 
     withimg = svc.card_sales_history("111", finish="Holo", days=100000, include_images=True)
     assert withimg["include_images"] is True
     nm2 = {(p["date"], p["condition"]): p for p in withimg["points"]}[("2025-06-01", "NM")]
-    assert nm2["volume"] == 2         # both counted
-    assert nm2["avg_price"] == 31.0   # avg of (10+1) and (50+1)
+    assert nm2["volume"] == 2           # both counted
+    assert nm2["median_price"] == 31.0  # median of (10+1) and (50+1)
 
 
 def test_card_sales_history_respects_window(db):

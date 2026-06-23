@@ -256,7 +256,7 @@ export function fetchCardDetail(cardId: string, variant: CardVariant): Promise<C
 export interface SalesPoint {
   date: string;
   condition: string;
-  avg_price: number | null;
+  median_price: number | null;
   min_price: number | null;
   max_price: number | null;
   volume: number;
@@ -283,6 +283,34 @@ export function fetchCardSalesHistory(
   if (includeImages) params.include_images = "true";
   const qs = new URLSearchParams(params).toString();
   return fetchJson(`${BASE}/card/${cardId}/sales?${qs}`);
+}
+
+// Individual sales as graph points (one per unit), for the scatter view.
+export interface SalesRawPoint {
+  date: string;
+  condition: string;
+  price: number;
+}
+
+export interface CardSalesPoints {
+  card_id: string;
+  finish: string;
+  source: string;
+  days: number;
+  conditions: string[];
+  points: SalesRawPoint[];
+}
+
+export function fetchCardSalesPoints(
+  cardId: string,
+  finish: string,
+  days: number,
+  includeImages = false,
+): Promise<CardSalesPoints> {
+  const params: Record<string, string> = { finish, days: String(days) };
+  if (includeImages) params.include_images = "true";
+  const qs = new URLSearchParams(params).toString();
+  return fetchJson(`${BASE}/card/${cardId}/sales-points?${qs}`);
 }
 
 // TCGplayer "market price" over time (weekly), one series per condition.
