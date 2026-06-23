@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ComposedChart, Bar, Line, Scatter, XAxis, YAxis, Tooltip, Legend,
+  ComposedChart, Bar, Line, Scatter, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import {
@@ -210,7 +210,6 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
               <YAxis yAxisId="price" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
               <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} allowDecimals={false} />
               <Tooltip content={<SalesTooltip />} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={6} />
               {showMarket && visible.map((c) => (
                 <Line
@@ -253,9 +252,17 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
               ))}
             </ComposedChart>
           </ResponsiveContainer>
+          <div className="chart-legend">
+            {visible.map((c) => (
+              <span key={c} className="legend-item">
+                <span className="legend-swatch" style={{ background: colorFor(c) }} />
+                {c}
+              </span>
+            ))}
+          </div>
           <div className="card-detail-graph-note">
-            Solid = median sale price · dashed = TCGplayer market price · bars = sales volume
-            {showPoints ? " · dots = every individual sale" : ""}
+            solid = median sale · dashed = market price · bars = volume
+            {showPoints ? " · dots = individual sales" : ""}
           </div>
         </>
       )}
