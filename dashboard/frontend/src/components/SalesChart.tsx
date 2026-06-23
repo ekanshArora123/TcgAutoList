@@ -30,13 +30,17 @@ const fmtDate = (t: number) =>
 
 function SalesTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
+  // Drop the x-axis value (dataKey "t") that recharts injects per series, and
+  // any series with no value at this point.
+  const items = payload.filter((p: any) => p.dataKey !== "t" && p.name !== "t" && p.value != null);
+  if (!items.length) return null;
   const heading = typeof label === "number" ? new Date(label).toLocaleDateString() : label;
   return (
     <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
       <div style={{ color: "#e1e4e8", marginBottom: 4 }}>{heading}</div>
-      {payload.map((p: any, i: number) => (
+      {items.map((p: any, i: number) => (
         <div key={`${p.dataKey}-${i}`} style={{ color: p.color }}>
-          {p.name}: {p.value == null ? "-" : p.dataKey === "volume" ? p.value : `$${Number(p.value).toFixed(2)}`}
+          {p.name}: {p.dataKey === "volume" ? p.value : `$${Number(p.value).toFixed(2)}`}
         </div>
       ))}
     </div>
