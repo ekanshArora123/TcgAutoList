@@ -267,15 +267,20 @@ export interface CardSalesHistory {
   finish: string;
   source: string;
   days: number;
+  include_images: boolean;
   conditions: string[];
   points: SalesPoint[];
 }
 
+// Photo/custom-listing sales are excluded by default; pass includeImages to fold them in.
 export function fetchCardSalesHistory(
   cardId: string,
   finish: string,
   days: number,
+  includeImages = false,
 ): Promise<CardSalesHistory> {
-  const qs = new URLSearchParams({ finish, days: String(days) }).toString();
+  const params: Record<string, string> = { finish, days: String(days) };
+  if (includeImages) params.include_images = "true";
+  const qs = new URLSearchParams(params).toString();
   return fetchJson(`${BASE}/card/${cardId}/sales?${qs}`);
 }

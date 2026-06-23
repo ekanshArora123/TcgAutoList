@@ -54,17 +54,20 @@ def test_map_sales_maps_fields_and_normalizes_codes():
     assert r["shipping_price"] == 1.0
     assert r["quantity"] == 1
     assert r["source"] == "tcgplayer"
+    assert r["has_image"] == 0             # standard listing
 
 
-def test_map_sales_skips_custom_listings_and_dateless_rows():
+def test_map_sales_flags_photo_listings_and_skips_dateless_rows():
     data = [
-        _raw("2025-06-01T10:00:00", custom="98765"),  # custom/photo listing
-        {"purchasePrice": 5.0, "customListingId": "0"},  # no orderDate
-        _raw("2025-06-02T10:00:00"),  # keeper
+        _raw("2025-06-01T10:00:00", custom="98765"),  # photo/custom listing -> flagged, not dropped
+        {"purchasePrice": 5.0, "customListingId": "0"},  # no orderDate -> skipped
+        _raw("2025-06-02T10:00:00"),  # standard keeper
     ]
     rows, _ = map_sales(data, "111", "", cutoff="2024-01-01")
-    assert len(rows) == 1
-    assert rows[0]["order_date"] == "2025-06-02T10:00:00"
+    assert len(rows) == 2
+    by_date = {r["order_date"]: r for r in rows}
+    assert by_date["2025-06-01T10:00:00"]["has_image"] == 1
+    assert by_date["2025-06-02T10:00:00"]["has_image"] == 0
 
 
 def test_map_sales_flags_cutoff_and_drops_old_rows():
@@ -109,10 +112,11 @@ def test_replace_card_skips_empty_pull(db):
 # ─── card_sales_history rollup ───────────────────────────────
 
 
-def _hsale(order_date, condition, price, ship=1.0, qty=1, finish="Holo") -> dict:
+def _hsale(order_date, condition, price, ship=1.0, qty=1, finish="Holo", has_image=0) -> dict:
     return {
         "card_id": "111", "condition": condition, "finish": finish, "source": "tcgplayer",
-        "order_date": order_date, "purchase_price": price, "shipping_price": ship, "quantity": qty,
+        "order_date": order_date, "purchase_price": price, "shipping_price": ship,
+        "quantity": qty, "has_image": has_image,
     }
 
 
@@ -140,6 +144,26 @@ def test_card_sales_history_filters_finish(db):
     holo = ReportingService(db).card_sales_history("111", finish="Holo", days=100000)
     assert holo["conditions"] == ["NM"]
     assert all(p["avg_price"] == 11.0 for p in holo["points"])  # only the Holo sale
+
+
+def test_card_sales_history_excludes_photo_listings_by_default(db):
+    SalesStore(db).replace_card("111", [
+        _hsale("2025-06-01T10:00:00", "NM", 10.0),                # standard
+        _hsale("2025-06-01T11:00:00", "NM", 50.0, has_image=1),   # photo listing
+    ])
+    svc = ReportingService(db)
+
+    default = svc.card_sales_history("111", finish="Holo", days=100000)
+    assert default["include_images"] is False
+    nm = {(p["date"], p["condition"]): p for p in default["points"]}[("2025-06-01", "NM")]
+    assert nm["volume"] == 1          # photo sale excluded
+    assert nm["avg_price"] == 11.0    # only the standard sale (10 + 1)
+
+    withimg = svc.card_sales_history("111", finish="Holo", days=100000, include_images=True)
+    assert withimg["include_images"] is True
+    nm2 = {(p["date"], p["condition"]): p for p in withimg["points"]}[("2025-06-01", "NM")]
+    assert nm2["volume"] == 2         # both counted
+    assert nm2["avg_price"] == 31.0   # avg of (10+1) and (50+1)
 
 
 def test_card_sales_history_respects_window(db):

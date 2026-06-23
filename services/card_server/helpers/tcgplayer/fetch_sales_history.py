@@ -38,14 +38,16 @@ _MAX_PAGES = 400  # safety cap (~10k sales) so a runaway total can't loop foreve
 def _map_sale(sale: dict[str, Any], card_id: str, fallback_condition: str) -> Optional[dict[str, Any]]:
     """Map one raw latestsales row to a sales-table dict, or None to skip.
 
-    Skips custom/photo listings (customListingId != "0") and rows with no date.
+    Unlike the pricing fetch (which drops them), photo/custom listings are kept
+    and flagged via has_image so the graph can ignore them by default but still
+    surface them on demand. A non-zero customListingId marks a photo listing
+    (seller-uploaded image of the actual card). Rows with no date are skipped.
     """
-    custom_id = sale.get("customListingId")
-    if not (custom_id == "0" or custom_id == 0 or not custom_id):
-        return None
     order_date = sale.get("orderDate") or ""
     if not order_date:
         return None
+    custom_id = sale.get("customListingId")
+    is_photo = not (custom_id == "0" or custom_id == 0 or not custom_id)
     return {
         "card_id": card_id,
         "condition": _parse_condition_from_sales_api(sale.get("condition") or fallback_condition or ""),
@@ -55,6 +57,7 @@ def _map_sale(sale: dict[str, Any], card_id: str, fallback_condition: str) -> Op
         "purchase_price": sale.get("purchasePrice") or 0,
         "shipping_price": sale.get("shippingPrice") or 0,
         "quantity": sale.get("quantity") or 1,
+        "has_image": 1 if is_photo else 0,
     }
 
 
@@ -102,7 +105,7 @@ async def _fetch_page(
 
     payload = {
         "variants": variants,
-        "listingType": "standard",  # exclude custom/photo listings
+        "listingType": "All",  # include photo/custom listings; flagged via has_image
         "conditions": conditions,
         "languages": [1],  # English
         "limit": _PAGE_SIZE,

@@ -14,16 +14,16 @@ from typing import Any
 _INSERT_SQL = """
     INSERT INTO sales (
       card_id, condition, finish, source,
-      order_date, purchase_price, shipping_price, quantity
+      order_date, purchase_price, shipping_price, quantity, has_image
     ) VALUES (
       :card_id, :condition, :finish, :source,
-      :order_date, :purchase_price, :shipping_price, :quantity
+      :order_date, :purchase_price, :shipping_price, :quantity, :has_image
     )
 """
 
 _FIELDS = (
     "card_id", "condition", "finish", "source",
-    "order_date", "purchase_price", "shipping_price", "quantity",
+    "order_date", "purchase_price", "shipping_price", "quantity", "has_image",
 )
 
 
@@ -32,6 +32,7 @@ def _params(sale: dict[str, Any], source: str) -> dict[str, Any]:
     row["source"] = sale.get("source") or source
     row["quantity"] = sale.get("quantity") or 1
     row["shipping_price"] = sale.get("shipping_price") or 0
+    row["has_image"] = 1 if sale.get("has_image") else 0
     return row
 
 

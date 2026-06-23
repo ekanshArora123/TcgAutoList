@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS sales (
     purchase_price REAL NOT NULL,                 -- card price (excl. shipping)
     shipping_price REAL DEFAULT 0,                -- shipping charged on the sale
     quantity       INTEGER DEFAULT 1,
+    has_image      INTEGER NOT NULL DEFAULT 0,    -- 1 = photo/custom listing (seller-uploaded image)
     fetched_at     TEXT DEFAULT (datetime('now'))
 );
 

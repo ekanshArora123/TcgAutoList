@@ -296,6 +296,7 @@ class ReportingService:
         finish: str = "Regular",
         days: int = 365,
         source: str = "tcgplayer",
+        include_images: bool = False,
     ) -> dict[str, Any]:
         """Daily sales rollup for the per-card graph, one series per condition.
 
@@ -304,12 +305,16 @@ class ReportingService:
         condition. Sales are keyed by card_id + condition + finish, so a 1st
         Edition (its own product id) or Reverse-Holo resolves correctly via the
         card_id/finish the page passes in.
+
+        Photo/custom listings (has_image = 1) are excluded by default since they
+        price very differently; pass include_images=True to fold them in.
         """
         days = max(int(days), 1)
         cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+        image_clause = "" if include_images else " AND has_image = 0"
 
         rows = self.db.execute(
-            """
+            f"""
             SELECT condition,
                    substr(order_date, 1, 10) AS date,
                    AVG(purchase_price + shipping_price) AS avg_price,
@@ -317,7 +322,7 @@ class ReportingService:
                    MAX(purchase_price + shipping_price) AS max_price,
                    SUM(quantity) AS volume
             FROM sales
-            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?
+            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
             GROUP BY condition, date
             ORDER BY date
             """,
@@ -342,6 +347,7 @@ class ReportingService:
             "finish": finish,
             "source": source,
             "days": days,
+            "include_images": include_images,
             "conditions": conditions,
             "points": points,
         }

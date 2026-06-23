@@ -100,6 +100,7 @@ def card_sales(card_id):
             card_id,
             finish=request.args.get("finish", "Regular"),
             days=days,
+            include_images=request.args.get("include_images") == "true",
         )
     )
 
