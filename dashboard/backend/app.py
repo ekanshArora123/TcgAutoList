@@ -105,6 +105,22 @@ def card_sales(card_id):
     )
 
 
+@app.route("/api/card/<card_id>/price-history")
+def card_price_history(card_id):
+    """TCGplayer market-price history (weekly), one series per condition."""
+    try:
+        days = int(request.args.get("days", 365))
+    except ValueError:
+        days = 365
+    return jsonify(
+        reporting.card_price_history(
+            card_id,
+            finish=request.args.get("finish", "Regular"),
+            days=days,
+        )
+    )
+
+
 @app.route("/api/collection")
 def collection_grid():
     """Card collection with images — all filters plus price/confidence ranges."""

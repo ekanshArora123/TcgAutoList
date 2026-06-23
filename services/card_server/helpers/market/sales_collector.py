@@ -19,14 +19,22 @@ from typing import Any
 
 from ..crud.cards import CardsHelper
 from ..tcgplayer.fetch_card_info import fetch_card_info
+from ..tcgplayer.fetch_price_history import fetch_price_history
 from ..tcgplayer.fetch_sales_history import DEFAULT_MAX_DAYS, fetch_sales_history
+from .price_history_store import MarketPriceStore
 from .sales_store import SalesStore
 
 
 class SalesCollector:
+    """Gathers per-card graph data: raw sales history + market-price history.
+
+    Both feed the per-card sales graph only — never the pricing algorithm.
+    """
+
     def __init__(self, db: sqlite3.Connection):
         self.db = db
         self.store = SalesStore(db)
+        self.price_store = MarketPriceStore(db)
         self.cards = CardsHelper(db)
 
     async def collect_owned(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -53,6 +61,7 @@ class SalesCollector:
         report: dict[str, Any] = {
             "cards_processed": 0,
             "sales_written": 0,
+            "price_points_written": 0,
             "errors": [],
             "duration_ms": 0,
         }
@@ -70,12 +79,17 @@ class SalesCollector:
                 sales = await fetch_sales_history(card_id, max_days=max_days)
                 written = self.store.replace_card(card_id, sales)
                 report["sales_written"] += written
+
+                price_rows = await fetch_price_history(card_id)
+                price_written = self.price_store.replace_card(card_id, price_rows)
+                report["price_points_written"] += price_written
+
                 report["cards_processed"] += 1
 
                 if verbose:
                     card = self.cards.get_by_id(card_id)
                     name = card["card_name"] if card else card_id
-                    print(f"[{i + 1}/{len(card_ids)}] {name}: {written} sales")
+                    print(f"[{i + 1}/{len(card_ids)}] {name}: {written} sales, {price_written} price points")
                 i += 1
             except Exception as err:  # noqa: BLE001
                 message = str(err)
@@ -100,8 +114,9 @@ class SalesCollector:
         if verbose:
             print(
                 f"\nSales collection complete: {report['cards_processed']} cards, "
-                f"{report['sales_written']} sales, {len(report['errors'])} errors, "
-                f"{retry_count} rate-limit pauses, {report['duration_ms'] / 1000:.1f}s"
+                f"{report['sales_written']} sales, {report['price_points_written']} price points, "
+                f"{len(report['errors'])} errors, {retry_count} rate-limit pauses, "
+                f"{report['duration_ms'] / 1000:.1f}s"
             )
 
         return report

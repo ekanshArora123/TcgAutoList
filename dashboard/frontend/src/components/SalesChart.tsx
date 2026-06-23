@@ -3,7 +3,10 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend,
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
-import { fetchCardSalesHistory, type CardSalesHistory } from "../api";
+import {
+  fetchCardSalesHistory, fetchCardPriceHistory,
+  type CardSalesHistory, type CardPriceHistory,
+} from "../api";
 import { conditionRank } from "../conditionOrder";
 
 const RANGES = [
@@ -14,7 +17,8 @@ const RANGES = [
   { label: "1Y", days: 365 },
 ];
 
-// One color per condition line (assigned in best->worst order).
+// One color per condition (assigned in best->worst order). The condition's sale
+// line and its market-price line share the color (solid vs dashed).
 const LINE_COLORS = [
   "#3fb950", "#1f6feb", "#d29922", "#a371f7", "#f85149",
   "#79c0ff", "#ff7b72", "#56d364", "#e3b341",
@@ -36,39 +40,48 @@ function SalesTooltip({ active, payload, label }: any) {
 
 export default function SalesChart({ cardId, finish }: { cardId: string; finish: string }) {
   const [days, setDays] = useState(90);
-  const [data, setData] = useState<CardSalesHistory | null>(null);
+  const [sales, setSales] = useState<CardSalesHistory | null>(null);
+  const [prices, setPrices] = useState<CardPriceHistory | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetchCardSalesHistory(cardId, finish, days)
-      .then(setData)
-      .catch(() => setData(null))
+    Promise.all([
+      fetchCardSalesHistory(cardId, finish, days).catch(() => null),
+      fetchCardPriceHistory(cardId, finish, days).catch(() => null),
+    ])
+      .then(([s, p]) => { setSales(s); setPrices(p); })
       .finally(() => setLoading(false));
   }, [cardId, finish, days]);
 
-  const conditions = useMemo(
-    () => (data ? [...data.conditions].sort((a, b) => conditionRank(a) - conditionRank(b)) : []),
-    [data],
-  );
+  // Union of conditions across both series, best -> worst.
+  const conditions = useMemo(() => {
+    const set = new Set<string>();
+    sales?.conditions.forEach((c) => set.add(c));
+    prices?.conditions.forEach((c) => set.add(c));
+    return [...set].sort((a, b) => conditionRank(a) - conditionRank(b));
+  }, [sales, prices]);
 
-  // Pivot the per-(condition,date) points into one row per date: a price field
-  // per condition plus the total volume across conditions for the bars.
+  // Merge both series into one row per date: s:<cond> = avg sale price (solid),
+  // m:<cond> = market price (dashed), volume = total daily sales volume (bars).
   const rows = useMemo(() => {
-    if (!data) return [];
     const byDate: Record<string, any> = {};
-    for (const p of data.points) {
-      const row = byDate[p.date] || (byDate[p.date] = { date: p.date, volume: 0 });
-      row[p.condition] = p.avg_price;
-      row.volume += p.volume;
+    const at = (d: string) => byDate[d] || (byDate[d] = { date: d, volume: 0 });
+    if (sales) for (const p of sales.points) {
+      const r = at(p.date);
+      r[`s:${p.condition}`] = p.avg_price;
+      r.volume += p.volume;
+    }
+    if (prices) for (const p of prices.points) {
+      at(p.date)[`m:${p.condition}`] = p.market_price;
     }
     return Object.values(byDate).sort((a: any, b: any) => (a.date < b.date ? -1 : 1));
-  }, [data]);
+  }, [sales, prices]);
 
   return (
     <section className="card-detail-graph">
       <div className="card-detail-graph-head">
-        <h3>Sales History</h3>
+        <h3>Sales &amp; Market Price</h3>
         <div className="range-buttons">
           {RANGES.map((r) => (
             <button
@@ -85,32 +98,51 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
       {loading ? (
         <div className="card-detail-graph-placeholder">Loading...</div>
       ) : rows.length === 0 ? (
-        <div className="card-detail-graph-placeholder">No sales recorded in this range.</div>
+        <div className="card-detail-graph-placeholder">No sales or price history in this range.</div>
       ) : (
-        <ResponsiveContainer width="100%" height={420}>
-          <ComposedChart data={rows} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
-            <CartesianGrid stroke="#21262d" vertical={false} />
-            <XAxis dataKey="date" tick={{ fill: "#8b949e", fontSize: 11 }} minTickGap={28} />
-            <YAxis yAxisId="price" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-            <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} allowDecimals={false} />
-            <Tooltip content={<SalesTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={10} />
-            {conditions.map((c, i) => (
-              <Line
-                key={c}
-                yAxisId="price"
-                type="monotone"
-                dataKey={c}
-                name={c}
-                stroke={LINE_COLORS[i % LINE_COLORS.length]}
-                dot={false}
-                connectNulls
-                strokeWidth={2}
-              />
-            ))}
-          </ComposedChart>
-        </ResponsiveContainer>
+        <>
+          <ResponsiveContainer width="100%" height={420}>
+            <ComposedChart data={rows} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke="#21262d" vertical={false} />
+              <XAxis dataKey="date" tick={{ fill: "#8b949e", fontSize: 11 }} minTickGap={28} />
+              <YAxis yAxisId="price" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+              <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} allowDecimals={false} />
+              <Tooltip content={<SalesTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={10} />
+              {conditions.map((c, i) => (
+                <Line
+                  key={`m:${c}`}
+                  yAxisId="price"
+                  type="monotone"
+                  dataKey={`m:${c}`}
+                  name={`${c} market`}
+                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                  strokeDasharray="5 3"
+                  dot={false}
+                  connectNulls
+                  strokeWidth={1.5}
+                />
+              ))}
+              {conditions.map((c, i) => (
+                <Line
+                  key={`s:${c}`}
+                  yAxisId="price"
+                  type="monotone"
+                  dataKey={`s:${c}`}
+                  name={`${c} sales`}
+                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                  dot={false}
+                  connectNulls
+                  strokeWidth={2}
+                />
+              ))}
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="card-detail-graph-note">
+            Solid = avg sale price · dashed = TCGplayer market price · bars = sales volume
+          </div>
+        </>
       )}
     </section>
   );

@@ -732,6 +732,13 @@ body {
   color: #fff;
 }
 
+.card-detail-graph-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #8b949e;
+  text-align: center;
+}
+
 .card-detail-graph-placeholder {
   flex: 1;
   display: flex;

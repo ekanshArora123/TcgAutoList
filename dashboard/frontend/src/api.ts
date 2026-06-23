@@ -284,3 +284,28 @@ export function fetchCardSalesHistory(
   const qs = new URLSearchParams(params).toString();
   return fetchJson(`${BASE}/card/${cardId}/sales?${qs}`);
 }
+
+// TCGplayer "market price" over time (weekly), one series per condition.
+export interface MarketPricePoint {
+  date: string;
+  condition: string;
+  market_price: number | null;
+}
+
+export interface CardPriceHistory {
+  card_id: string;
+  finish: string;
+  source: string;
+  days: number;
+  conditions: string[];
+  points: MarketPricePoint[];
+}
+
+export function fetchCardPriceHistory(
+  cardId: string,
+  finish: string,
+  days: number,
+): Promise<CardPriceHistory> {
+  const qs = new URLSearchParams({ finish, days: String(days) }).toString();
+  return fetchJson(`${BASE}/card/${cardId}/price-history?${qs}`);
+}

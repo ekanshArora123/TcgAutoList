@@ -1,9 +1,9 @@
 @echo off
 REM ============================================================
-REM  TcgAutoList - gather comprehensive raw sales history
-REM  Runs services.card_server.collect_sales. Populates the `sales`
-REM  table that powers the per-card sales graph. Separate from the
-REM  pricing collector (run collect.py for that) - never touches pricing.
+REM  TcgAutoList - gather per-card graph data (sales + market price)
+REM  Runs services.card_server.collect_sales. Populates the `sales` and
+REM  `market_price_history` tables that power the per-card graph. Separate
+REM  from the pricing collector (run collect.py) - never touches pricing.
 REM
 REM  First run sets up the venv + installs deps (same as run.bat).
 REM  Loads repo .env so TCGPLAYER_AUTH_COOKIE / DB_PATH are picked up.

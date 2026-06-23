@@ -352,6 +352,47 @@ class ReportingService:
             "points": points,
         }
 
+    def card_price_history(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        days: int = 365,
+        source: str = "tcgplayer",
+    ) -> dict[str, Any]:
+        """TCGplayer market-price history for the per-card graph, per condition.
+
+        Reads `market_price_history` (weekly buckets), never the pricing tables.
+        Mirrors card_sales_history's shape so the chart can overlay the two.
+        """
+        days = max(int(days), 1)
+        cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+
+        rows = self.db.execute(
+            """
+            SELECT condition, bucket_date AS date, market_price
+            FROM market_price_history
+            WHERE card_id = ? AND finish = ? AND source = ? AND bucket_date >= ?
+              AND market_price IS NOT NULL
+            ORDER BY bucket_date
+            """,
+            (card_id, finish, source, cutoff),
+        ).fetchall()
+
+        points = [
+            {"date": r["date"], "condition": r["condition"], "market_price": r["market_price"]}
+            for r in rows
+        ]
+        conditions = sorted({p["condition"] for p in points})
+
+        return {
+            "card_id": card_id,
+            "finish": finish,
+            "source": source,
+            "days": days,
+            "conditions": conditions,
+            "points": points,
+        }
+
     def filter_options(self) -> dict[str, list[str]]:
         """Distinct values for the filter dropdowns."""
         return {
