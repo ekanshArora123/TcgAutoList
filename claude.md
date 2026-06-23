@@ -94,18 +94,22 @@ services/card_server/         (imported as `services.card_server`)
 │   │   ├── fetch_card_info.py<- Card metadata fetching
 │   │   └── formatters.py     <- Condition/finish format conversion
 │   └── market/
-│       ├── collector.py      <- Market data collection orchestration
+│       ├── collector.py      <- Market data collection orchestration (pricing snapshots)
 │       ├── fetchers.py       <- External API calls
 │       ├── aggregators.py    <- Raw data → aggregate stats
-│       └── snapshots.py      <- DB read/write for market_snapshots
-├── collect.py                <- CLI runner for market data collection
+│       ├── snapshots.py      <- DB read/write for market_snapshots
+│       ├── sales_collector.py<- Graph-data gathering: raw sales + market-price history (NOT pricing)
+│       ├── sales_store.py    <- DB read/write for the raw `sales` table
+│       └── price_history_store.py <- DB read/write for `market_price_history`
+├── collect.py                <- CLI runner for market data collection (pricing)
+├── collect_sales.py          <- CLI runner for graph data: sales + market-price history
 ├── dedup_inventory.py        <- One-off utility script
 └── migrate.py                <- MySQL -> SQLite migration (historical)
 ```
 
 ## Database Schema
 
-4 tables in SQLite. `cards` (TCGplayer product metadata) -> `skus` (condition+finish variants, composite UNIQUE) -> `inventory` (physical cards owned) -> `prices` (historical estimates per SKU per date).
+Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish variants, composite UNIQUE) -> `inventory` (physical cards owned) -> `prices` (historical estimates per SKU per date). Plus three market-data tables keyed by card+condition+finish: `market_snapshots` (periodic aggregate stats, feeds pricing), `sales` (raw individual sold listings, ~1yr history), and `market_price_history` (TCGplayer weekly "market price" from the Infinite API). The latter two feed the per-card sales graph only — never the pricing algorithm; both are gathered by `collect_sales`.
 
 **Key decisions:**
 - `inventory.pricing_sku_id` allows pricing a borderline card against a different condition (e.g., LP-NM priced as NM)
@@ -155,7 +159,8 @@ run.bat            # Windows
 # Or run pieces manually (always from the repo root so imports resolve):
 python -m dashboard.backend.orchestrator.main   # the full app (entry point; needs .env)
 python -m services.card_server.index            # card-server MCP server (stdio)
-python -m services.card_server.collect          # market data collection runner
+python -m services.card_server.collect          # market data collection runner (pricing snapshots)
+python -m services.card_server.collect_sales     # comprehensive raw sales-history collection (graph data; separate from pricing)
 python dashboard/backend/app.py                 # Flask API on :5000
 cd dashboard/frontend && npm run dev            # Vite dev server on :5173
 

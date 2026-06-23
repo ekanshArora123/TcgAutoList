@@ -251,3 +251,90 @@ export function fetchCardDetail(cardId: string, variant: CardVariant): Promise<C
   }).toString();
   return fetchJson(`${BASE}/card/${cardId}?${qs}`);
 }
+
+// Per-card sales graph: one daily point per (condition, date).
+export interface SalesPoint {
+  date: string;
+  condition: string;
+  median_price: number | null;
+  min_price: number | null;
+  max_price: number | null;
+  volume: number;
+}
+
+export interface CardSalesHistory {
+  card_id: string;
+  finish: string;
+  source: string;
+  days: number;
+  include_images: boolean;
+  conditions: string[];
+  points: SalesPoint[];
+}
+
+// Photo/custom-listing sales are excluded by default; pass includeImages to fold them in.
+export function fetchCardSalesHistory(
+  cardId: string,
+  finish: string,
+  days: number,
+  includeImages = false,
+): Promise<CardSalesHistory> {
+  const params: Record<string, string> = { finish, days: String(days) };
+  if (includeImages) params.include_images = "true";
+  const qs = new URLSearchParams(params).toString();
+  return fetchJson(`${BASE}/card/${cardId}/sales?${qs}`);
+}
+
+// Individual sales as graph points (one per unit), for the scatter view.
+// order_date is the sale's full timestamp, used to place points along the time axis.
+export interface SalesRawPoint {
+  order_date: string;
+  condition: string;
+  price: number;
+}
+
+export interface CardSalesPoints {
+  card_id: string;
+  finish: string;
+  source: string;
+  days: number;
+  conditions: string[];
+  points: SalesRawPoint[];
+}
+
+export function fetchCardSalesPoints(
+  cardId: string,
+  finish: string,
+  days: number,
+  includeImages = false,
+): Promise<CardSalesPoints> {
+  const params: Record<string, string> = { finish, days: String(days) };
+  if (includeImages) params.include_images = "true";
+  const qs = new URLSearchParams(params).toString();
+  return fetchJson(`${BASE}/card/${cardId}/sales-points?${qs}`);
+}
+
+// TCGplayer "market price" over time (weekly), one series per condition.
+export interface MarketPricePoint {
+  date: string;
+  condition: string;
+  market_price: number | null;
+}
+
+export interface CardPriceHistory {
+  card_id: string;
+  finish: string;
+  source: string;
+  days: number;
+  conditions: string[];
+  points: MarketPricePoint[];
+}
+
+export function fetchCardPriceHistory(
+  cardId: string,
+  finish: string,
+  days: number,
+): Promise<CardPriceHistory> {
+  const qs = new URLSearchParams({ finish, days: String(days) }).toString();
+  return fetchJson(`${BASE}/card/${cardId}/price-history?${qs}`);
+}

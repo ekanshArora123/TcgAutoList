@@ -124,3 +124,51 @@ CREATE TABLE IF NOT EXISTS prices (
 
     PRIMARY KEY (sku_id, calculation_date)
 );
+
+-----------------------------------------------------
+-- sales: raw individual sold listings (one row per sale)
+-- Comprehensive sales history fetched from TCGplayer (~1 year). Kept entirely
+-- separate from the pricing path (prices / market_snapshots) — it feeds the
+-- per-card sales graph only and never the pricing algorithm. Refreshed by
+-- replacing all rows for a (card_id, source) on each comprehensive fetch.
+-----------------------------------------------------
+CREATE TABLE IF NOT EXISTS sales (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id        TEXT NOT NULL REFERENCES cards(id),
+    condition      TEXT NOT NULL,
+    finish         TEXT NOT NULL DEFAULT 'Regular',
+    source         TEXT NOT NULL DEFAULT 'tcgplayer',
+    order_date     TEXT NOT NULL,                 -- ISO datetime of the sale
+    purchase_price REAL NOT NULL,                 -- card price (excl. shipping)
+    shipping_price REAL DEFAULT 0,                -- shipping charged on the sale
+    quantity       INTEGER DEFAULT 1,
+    has_image      INTEGER NOT NULL DEFAULT 0,    -- 1 = photo/custom listing (seller-uploaded image)
+    fetched_at     TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_variant ON sales(card_id, condition, finish, source);
+CREATE INDEX IF NOT EXISTS idx_sales_card_date ON sales(card_id, order_date);
+
+-----------------------------------------------------
+-- market_price_history: TCGplayer "market price" over time (weekly buckets)
+-- Sourced from the Infinite price-history API (range=annual), one row per
+-- card+condition+finish per week. Graph data only — like `sales`, fully
+-- separate from the pricing algorithm. Refreshed by replacing a card's rows.
+-----------------------------------------------------
+CREATE TABLE IF NOT EXISTS market_price_history (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id           TEXT NOT NULL REFERENCES cards(id),
+    condition         TEXT NOT NULL,
+    finish            TEXT NOT NULL DEFAULT 'Regular',
+    source            TEXT NOT NULL DEFAULT 'tcgplayer',
+    bucket_date       TEXT NOT NULL,             -- ISO week-start date YYYY-MM-DD
+    market_price      REAL,
+    low_sale_price    REAL,
+    high_sale_price   REAL,
+    quantity_sold     INTEGER,
+    transaction_count INTEGER,
+    fetched_at        TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_mph_variant ON market_price_history(card_id, condition, finish, source);
+CREATE INDEX IF NOT EXISTS idx_mph_card_date ON market_price_history(card_id, bucket_date);

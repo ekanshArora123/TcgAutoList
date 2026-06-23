@@ -36,6 +36,7 @@ def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
     migrations = [
         "ALTER TABLE inventory ADD COLUMN front_photo_path TEXT",
         "ALTER TABLE inventory ADD COLUMN back_photo_path TEXT",
+        "ALTER TABLE sales ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0",
     ]
     for sql in migrations:
         try:

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import statistics
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from ..helpers.crud.cards import CardsHelper
@@ -287,6 +289,167 @@ class ReportingService:
             "has_image": str(card_id) in image_set,
             "conditions": conditions,
             "total_qty": total_qty,
+        }
+
+    def card_sales_history(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        days: int = 365,
+        source: str = "tcgplayer",
+        include_images: bool = False,
+    ) -> dict[str, Any]:
+        """Daily sales rollup for the per-card graph, one series per condition.
+
+        Reads the raw `sales` table (never the pricing tables). Each point is a
+        day's MEDIAN sale price (purchase + shipping) plus min/max and volume for
+        one condition; the median is over sale rows (not quantity-weighted) and
+        is outlier-resistant. Sales are keyed by card_id + condition + finish, so
+        a 1st Edition (its own product id) or Reverse-Holo resolves correctly via
+        the card_id/finish the page passes in.
+
+        Photo/custom listings (has_image = 1) are excluded by default since they
+        price very differently; pass include_images=True to fold them in.
+        """
+        days = max(int(days), 1)
+        cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+        image_clause = "" if include_images else " AND has_image = 0"
+
+        rows = self.db.execute(
+            f"""
+            SELECT condition,
+                   substr(order_date, 1, 10) AS date,
+                   (purchase_price + shipping_price) AS price,
+                   quantity
+            FROM sales
+            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
+            ORDER BY date
+            """,
+            (card_id, finish, source, cutoff),
+        ).fetchall()
+
+        # Group per (condition, day) and take the median price; SQLite has no
+        # MEDIAN, so aggregate in Python.
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        for r in rows:
+            g = groups.setdefault((r["condition"], r["date"]), {"prices": [], "volume": 0})
+            g["prices"].append(r["price"])
+            g["volume"] += r["quantity"] or 1
+
+        points = [
+            {
+                "date": date,
+                "condition": cond,
+                "median_price": round(statistics.median(g["prices"]), 2),
+                "min_price": round(min(g["prices"]), 2),
+                "max_price": round(max(g["prices"]), 2),
+                "volume": g["volume"],
+            }
+            for (cond, date), g in groups.items()
+        ]
+        points.sort(key=lambda p: (p["date"], p["condition"]))
+        conditions = sorted({p["condition"] for p in points})
+
+        return {
+            "card_id": card_id,
+            "finish": finish,
+            "source": source,
+            "days": days,
+            "include_images": include_images,
+            "conditions": conditions,
+            "points": points,
+        }
+
+    def card_sales_points(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        days: int = 365,
+        source: str = "tcgplayer",
+        include_images: bool = False,
+    ) -> dict[str, Any]:
+        """Individual sales as graph points (one per unit) for the scatter view.
+
+        Each row is expanded by quantity (a qty-3 sale yields 3 points at its
+        price) and carries the sale's full timestamp (order_date) so the chart
+        can spread points by their real time within a day. Same filters as
+        card_sales_history. Read-only.
+        """
+        days = max(int(days), 1)
+        cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+        image_clause = "" if include_images else " AND has_image = 0"
+
+        rows = self.db.execute(
+            f"""
+            SELECT condition,
+                   order_date,
+                   (purchase_price + shipping_price) AS price,
+                   quantity
+            FROM sales
+            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
+            ORDER BY order_date
+            """,
+            (card_id, finish, source, cutoff),
+        ).fetchall()
+
+        points = []
+        for r in rows:
+            price = round(r["price"], 2)
+            for _ in range(max(int(r["quantity"] or 1), 1)):
+                points.append(
+                    {"order_date": r["order_date"], "condition": r["condition"], "price": price}
+                )
+        conditions = sorted({p["condition"] for p in points})
+
+        return {
+            "card_id": card_id,
+            "finish": finish,
+            "source": source,
+            "days": days,
+            "include_images": include_images,
+            "conditions": conditions,
+            "points": points,
+        }
+
+    def card_price_history(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        days: int = 365,
+        source: str = "tcgplayer",
+    ) -> dict[str, Any]:
+        """TCGplayer market-price history for the per-card graph, per condition.
+
+        Reads `market_price_history` (weekly buckets), never the pricing tables.
+        Mirrors card_sales_history's shape so the chart can overlay the two.
+        """
+        days = max(int(days), 1)
+        cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+
+        rows = self.db.execute(
+            """
+            SELECT condition, bucket_date AS date, market_price
+            FROM market_price_history
+            WHERE card_id = ? AND finish = ? AND source = ? AND bucket_date >= ?
+              AND market_price IS NOT NULL
+            ORDER BY bucket_date
+            """,
+            (card_id, finish, source, cutoff),
+        ).fetchall()
+
+        points = [
+            {"date": r["date"], "condition": r["condition"], "market_price": r["market_price"]}
+            for r in rows
+        ]
+        conditions = sorted({p["condition"] for p in points})
+
+        return {
+            "card_id": card_id,
+            "finish": finish,
+            "source": source,
+            "days": days,
+            "conditions": conditions,
+            "points": points,
         }
 
     def filter_options(self) -> dict[str, list[str]]:

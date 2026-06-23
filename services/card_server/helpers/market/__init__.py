@@ -1,6 +1,9 @@
 """Market data module — longitudinal market data collection and analysis."""
 
 from .collector import MarketCollector, CollectionReport, CollectorOptions
+from .price_history_store import MarketPriceStore
+from .sales_collector import SalesCollector
+from .sales_store import SalesStore
 from .snapshots import SnapshotStore, MarketSnapshotRow, SnapshotQuery
 from .aggregators import (
     aggregate_listings,
@@ -22,6 +25,9 @@ __all__ = [
     "MarketCollector",
     "CollectionReport",
     "CollectorOptions",
+    "SalesCollector",
+    "SalesStore",
+    "MarketPriceStore",
     "SnapshotStore",
     "MarketSnapshotRow",
     "SnapshotQuery",

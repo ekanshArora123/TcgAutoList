@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { fetchCardDetail, cardImageUrl, type CardDetail } from "../api";
 import { conditionRank } from "../conditionOrder";
+import SalesChart from "../components/SalesChart";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 
@@ -47,75 +48,84 @@ export default function CardDetailPage() {
     <div className="card-detail">
       <Link to="/" className="card-detail-back">&larr; Back to collection</Link>
 
-      <div className="card-detail-top">
-        <div className="card-detail-image">
-          {detail.has_image && !imgError ? (
-            <img src={cardImageUrl(card.card_id)} alt={card.card_name} onError={() => setImgError(true)} />
-          ) : (
-            <div className="card-tile-no-image"><span>{card.card_name}</span></div>
-          )}
-        </div>
-
-        <div className="card-detail-meta">
-          <h2 className="card-detail-name">
-            {card.card_name}
-            {card.card_number ? <span className="card-number"> ({card.card_number})</span> : ""}
-          </h2>
-          <div className="card-detail-set">{card.set_name || "Unknown Set"}</div>
-
-          <div className="card-detail-chips">
-            {variantTags.map((t) => <span key={t} className="tag tag-special">{t}</span>)}
-          </div>
-
-          <div className="card-detail-attrs">
-            <div className="adv-row"><span>Era</span><span>{card.era || "-"}</span></div>
-            <div className="adv-row"><span>Rarity</span><span>{card.rarity || "-"}</span></div>
-            <div className="adv-row"><span>Type</span><span>{card.card_type || "-"}</span></div>
-            <div className="adv-row"><span>Finish</span><span>{finish}</span></div>
-            <div className="adv-row"><span>TCGplayer ID</span><span>{card.card_id}</span></div>
-            <div className="adv-row"><span>Total owned</span><span>{detail.total_qty}</span></div>
-          </div>
+      <div className="card-detail-header">
+        <h2 className="card-detail-name">
+          {card.card_name}
+          {card.card_number ? <span className="card-number"> ({card.card_number})</span> : ""}
+        </h2>
+        <div className="card-detail-set">{card.set_name || "Unknown Set"}</div>
+        <div className="card-detail-chips">
+          {variantTags.map((t) => <span key={t} className="tag tag-special">{t}</span>)}
         </div>
       </div>
 
-      {/* Owned-by-condition rollup (read-only; folds every condition of this
-          variant together, excluding tagged cards). */}
-      <section className="card-detail-section">
-        <h3>Owned by Condition</h3>
-        {sortedConditions.length > 0 ? (
-          <table className="card-table">
-            <thead>
-              <tr>
-                <th>Condition</th>
-                <th>Qty</th>
-                <th>Est. Price</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedConditions.map((row) => (
-                <tr key={row.condition}>
-                  <td>{row.condition}</td>
-                  <td>{row.qty}</td>
-                  <td className={`price-cell ${row.estimated_price == null ? "no-price" : ""}`}>
-                    {fmt(row.estimated_price)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="loading">No untagged copies of this variant in the collection.</div>
-        )}
-      </section>
+      <div className="card-detail-grid">
+        {/* Left: image + basic info */}
+        <aside className="card-detail-left">
+          <div className="card-detail-image">
+            {detail.has_image && !imgError ? (
+              <img src={cardImageUrl(card.card_id)} alt={card.card_name} onError={() => setImgError(true)} />
+            ) : (
+              <div className="card-tile-no-image"><span>{card.card_name}</span></div>
+            )}
+          </div>
 
-      {/* Pricing analytics — placeholder; real market analytics to come. */}
-      <section className="card-detail-section">
-        <h3>Pricing Analytics</h3>
-        <div className="card-detail-placeholder">
-          Pricing analytics coming soon — market trends, sales history, and
-          condition spreads for this card will appear here.
-        </div>
-      </section>
+          <div className="card-detail-panel">
+            <h3>Card Info</h3>
+            <div className="card-detail-attrs">
+              <div className="adv-row"><span>Set</span><span>{card.set_name || "-"}</span></div>
+              <div className="adv-row"><span>Era</span><span>{card.era || "-"}</span></div>
+              <div className="adv-row"><span>Rarity</span><span>{card.rarity || "-"}</span></div>
+              <div className="adv-row"><span>Type</span><span>{card.card_type || "-"}</span></div>
+              <div className="adv-row"><span>Finish</span><span>{finish}</span></div>
+              <div className="adv-row"><span>TCGplayer ID</span><span>{card.card_id}</span></div>
+              <div className="adv-row"><span>Total owned</span><span>{detail.total_qty}</span></div>
+            </div>
+          </div>
+
+          {/* Owned-by-condition rollup (read-only; folds every condition of this
+              variant together, excluding tagged cards). */}
+          <div className="card-detail-panel">
+            <h3>Owned by Condition</h3>
+            {sortedConditions.length > 0 ? (
+              <table className="card-table">
+                <thead>
+                  <tr>
+                    <th>Condition</th>
+                    <th>Qty</th>
+                    <th>Est. Price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedConditions.map((row) => (
+                    <tr key={row.condition}>
+                      <td>{row.condition}</td>
+                      <td>{row.qty}</td>
+                      <td className={`price-cell ${row.estimated_price == null ? "no-price" : ""}`}>
+                        {fmt(row.estimated_price)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="card-detail-empty">No untagged copies of this variant in the collection.</div>
+            )}
+          </div>
+        </aside>
+
+        {/* Middle: sales history graph (one line per condition). */}
+        <SalesChart cardId={card.card_id} finish={finish} />
+
+        {/* Right: pricing analytics — placeholder. */}
+        <aside className="card-detail-analytics">
+          <h3>Pricing Analytics</h3>
+          <div className="card-detail-placeholder">
+            Market trends, sales history, and condition spreads for this card
+            will appear here.
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }
