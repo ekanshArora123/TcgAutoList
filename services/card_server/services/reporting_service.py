@@ -103,12 +103,29 @@ def _build_filters(f: dict[str, Any]) -> tuple[list[str], list[Any]]:
         conditions.append(cond)
         params.append(value)
 
+    def add_in(col: str, raw: Any) -> None:
+        """Multi-value (IN) filter. Accepts a list or a single scalar."""
+        values = [v for v in (raw if isinstance(raw, (list, tuple)) else [raw]) if v not in (None, "")]
+        if not values:
+            return
+        conditions.append(f"{col} IN ({','.join('?' * len(values))})")
+        params.extend(values)
+
     if f.get("q"):
         add("c.card_name LIKE ?", f"%{f['q']}%")
     if f.get("set_name"):
         add("c.set_name = ?", f["set_name"])
     if f.get("era"):
         add("c.era = ?", f["era"])
+    # Plural keys = multi-select (IN). era/set are mutually exclusive in the UI
+    # (a set already implies an era), but the backend treats every key
+    # independently — callers send only the ones they mean.
+    if f.get("sets"):
+        add_in("c.set_name", f["sets"])
+    if f.get("eras"):
+        add_in("c.era", f["eras"])
+    if f.get("conditions"):
+        add_in("s.condition", f["conditions"])
     if f.get("rarity"):
         add("c.rarity = ?", f["rarity"])
     if f.get("condition"):
@@ -515,20 +532,28 @@ class ReportingService:
             "avg_confidence": avg_confidence,
         }
 
-    def price_histogram(self, breaks: list[float]) -> list[dict[str, Any]]:
+    def price_histogram(
+        self, breaks: list[float], filters: Optional[dict[str, Any]] = None
+    ) -> list[dict[str, Any]]:
         """Bucket current-inventory prices into [breaks[i], breaks[i+1]) bins.
 
         The last break is the upper cap; prices >= it go into a single ">"
         overflow bucket. Raises ValueError if fewer than 2 breaks.
+
+        `filters` accepts the same collection-filter vocabulary as the browse
+        views (set_name/era/condition/etc.); absent keys constrain nothing.
         """
         breaks = sorted(set(breaks))
         if len(breaks) < 2:
             raise ValueError("Need at least 2 breakpoints")
 
+        conditions, params = _build_filters(filters or {})
+        conditions.insert(0, "p.estimated_price IS NOT NULL")
+        where = "WHERE " + " AND ".join(conditions)
+
         rows = self.db.execute(
-            "SELECT p.estimated_price"
-            + INV_SKU_CARD_PRICE_FROM
-            + "WHERE p.estimated_price IS NOT NULL"
+            "SELECT p.estimated_price" + INV_SKU_CARD_PRICE_FROM + where,
+            params,
         ).fetchall()
 
         bin_counts = [0] * (len(breaks) - 1)

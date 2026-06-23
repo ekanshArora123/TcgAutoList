@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import MultiSelect from "../components/MultiSelect";
 import {
   ComposedChart, BarChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -6,10 +7,10 @@ import {
 import {
   fetchSummary, fetchPriceHistogram, fetchConfidenceDistribution,
   fetchEraBreakdown, fetchConditionBreakdown, fetchRarityBreakdown,
-  fetchTopCards, fetchSetBreakdown,
+  fetchTopCards, fetchSetBreakdown, fetchFilters,
   type Summary, type HistogramBin, type ConfidenceBucket,
   type EraBreakdown, type ConditionBreakdown, type RarityBreakdown,
-  type TopCard, type SetBreakdown,
+  type TopCard, type SetBreakdown, type Filters,
 } from "../api";
 
 const COLORS = [
@@ -17,6 +18,14 @@ const COLORS = [
   "#79c0ff", "#56d364", "#e3b341", "#ff7b72", "#bc8cff",
   "#39d353", "#db6d28", "#7ee787", "#ffa657", "#d2a8ff",
 ];
+
+// Card conditions ordered best -> worst (mirrors PRIMARY_CONDITIONS + the
+// in-between grades on the backend). Used to sort the By Condition chart.
+const CONDITION_ORDER = ["MINT", "NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP", "DMG"];
+const conditionRank = (c: string) => {
+  const i = CONDITION_ORDER.indexOf(c);
+  return i === -1 ? CONDITION_ORDER.length : i; // unknown grades sort last
+};
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 const fmtK = (n: number | null | undefined) => {
@@ -46,6 +55,16 @@ export default function AnalyticsPage() {
   const [rarities, setRarities] = useState<RarityBreakdown[]>([]);
   const [topCards, setTopCards] = useState<TopCard[]>([]);
   const [sets, setSets] = useState<SetBreakdown[]>([]);
+
+  // Price-distribution filters. Era and Set are mutually exclusive (a set
+  // already implies an era), so a toggle picks ONE dimension to filter on;
+  // that dimension supports multi-select. Condition is orthogonal. Empty
+  // selection = all (no filter).
+  const [filterOpts, setFilterOpts] = useState<Filters | null>(null);
+  const [groupDim, setGroupDim] = useState<"era" | "set">("era");
+  const [selEras, setSelEras] = useState<string[]>([]);
+  const [selSets, setSelSets] = useState<string[]>([]);
+  const [selConditions, setSelConditions] = useState<string[]>([]);
   const PRESETS: Record<string, number[]> = {
     "Fine": [0, 0.2, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100],
     "Standard": [0, 1, 2, 5, 10, 20, 30, 50, 100],
@@ -61,13 +80,21 @@ export default function AnalyticsPage() {
     return [...new Set(nums)].sort((a, b) => a - b);
   };
 
+  const histogramFilters = (): Record<string, string | string[]> => {
+    const f: Record<string, string | string[]> = {};
+    if (groupDim === "era" && selEras.length) f.eras = selEras;
+    if (groupDim === "set" && selSets.length) f.sets = selSets;
+    if (selConditions.length) f.conditions = selConditions;
+    return f;
+  };
+
   const loadHistogram = (breaks: number[]) => {
-    if (breaks.length >= 2) fetchPriceHistogram(breaks).then(setHistogram);
+    if (breaks.length >= 2) fetchPriceHistogram(breaks, histogramFilters()).then(setHistogram);
   };
 
   useEffect(() => {
     fetchSummary().then(setSummary);
-    loadHistogram(parseBreaks(breaksInput));
+    fetchFilters().then(setFilterOpts);
     fetchConfidenceDistribution().then(setConfidence);
     fetchEraBreakdown().then(setEras);
     fetchConditionBreakdown().then(setConditions);
@@ -75,6 +102,13 @@ export default function AnalyticsPage() {
     fetchTopCards(25).then(setTopCards);
     fetchSetBreakdown().then(setSets);
   }, []);
+
+  // Reload the histogram on mount and whenever a filter changes (reads fresh
+  // selection state, avoiding stale closures from the dropdown handlers).
+  useEffect(() => {
+    loadHistogram(parseBreaks(breaksInput));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupDim, selEras, selSets, selConditions]);
 
   if (!summary) return <div className="loading">Loading analytics...</div>;
 
@@ -120,6 +154,8 @@ export default function AnalyticsPage() {
         {/* Price histogram */}
         <div className="chart-card full-width">
           <h3>Price Distribution</h3>
+          <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
           <div className="chart-controls">
             <label>Breakpoints: <input
               type="text"
@@ -175,6 +211,52 @@ export default function AnalyticsPage() {
               <Line yAxisId="right" type="monotone" dataKey="pctValue" stroke="#3fb950" strokeWidth={2} dot={{ fill: "#3fb950", r: 3 }} name="% of Value" />
             </ComposedChart>
           </ResponsiveContainer>
+            </div>
+
+            {/* Filter panel — pinned to the right of the chart. */}
+            <div style={{ width: 230, flexShrink: 0, borderLeft: "1px solid #30363d", paddingLeft: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#e1e4e8" }}>Filters</div>
+
+              <div>
+                {/* Era and Set are exclusive — a set already implies its era. */}
+                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Filter by</div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(["era", "set"] as const).map((dim) => (
+                    <button
+                      key={dim}
+                      className="nav-btn"
+                      style={{ flex: 1, fontSize: 11, padding: "4px 0", textTransform: "capitalize",
+                        background: groupDim === dim ? "#1f6feb" : undefined,
+                        color: groupDim === dim ? "#fff" : undefined }}
+                      onClick={() => setGroupDim(dim)}
+                    >{dim}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>{groupDim === "era" ? "Eras" : "Sets"}</div>
+                {groupDim === "era" ? (
+                  <MultiSelect label="Eras" options={filterOpts?.eras ?? []} selected={selEras} onChange={setSelEras} />
+                ) : (
+                  <MultiSelect label="Sets" options={filterOpts?.sets ?? []} selected={selSets} onChange={setSelSets} />
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Condition</div>
+                <MultiSelect label="Conditions" options={filterOpts?.conditions ?? []} selected={selConditions} onChange={setSelConditions} />
+              </div>
+
+              {(selEras.length > 0 || selSets.length > 0 || selConditions.length > 0) && (
+                <button
+                  className="nav-btn"
+                  style={{ fontSize: 11, padding: "4px 8px", alignSelf: "flex-start" }}
+                  onClick={() => { setSelEras([]); setSelSets([]); setSelConditions([]); }}
+                >Clear all</button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Confidence distribution */}
@@ -232,16 +314,28 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Condition breakdown */}
+        {/* Condition breakdown — count + value */}
         <div className="chart-card">
-          <h3>By Condition</h3>
+          <h3>By Condition (Count &amp; Value)</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={conditions} layout="vertical">
-              <XAxis type="number" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis dataKey="condition" type="category" tick={{ fill: "#8b949e", fontSize: 11 }} width={60} />
-              <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
-              <Bar dataKey="quantity" fill="#3fb950" radius={[0, 2, 2, 0]} name="Count" />
-            </BarChart>
+            <ComposedChart data={[...conditions].sort((a, b) => conditionRank(a.condition) - conditionRank(b.condition))}>
+              <XAxis dataKey="condition" tick={{ fill: "#8b949e", fontSize: 11 }} />
+              <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
+              <Tooltip isAnimationActive={false} content={({ active, payload, label }: any) => {
+                if (!active || !payload?.length) return null;
+                const d = payload[0]?.payload;
+                return (
+                  <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+                    <div style={{ color: "#e1e4e8", fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: "#3fb950" }}>Count: {d?.quantity?.toLocaleString()}</div>
+                    <div style={{ color: "#d29922" }}>Value: {fmt(d?.total_value)}</div>
+                  </div>
+                );
+              }} />
+              <Bar yAxisId="left" dataKey="quantity" fill="#3fb950" radius={[2, 2, 0, 0]} name="Count" />
+              <Line yAxisId="right" type="monotone" dataKey="total_value" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="Total Value" />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
 

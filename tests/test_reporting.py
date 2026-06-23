@@ -132,6 +132,48 @@ def test_price_histogram_rejects_too_few_breaks(db):
         ReportingService(db).price_histogram([5])
 
 
+def test_price_histogram_applies_collection_filters(db):
+    svc = ReportingService(db)
+
+    # Filtering to Base Set keeps only Charizard ($100 -> overflow bucket);
+    # empty interval buckets still appear with count 0, Pikachu is excluded.
+    base = {h["range"]: h["count"] for h in svc.price_histogram([0, 5, 50], {"set_name": "Base Set"})}
+    assert base[">$50"] == 1
+    assert base["$0-$5"] == 0  # Pikachu (Jungle) filtered out
+
+    # Era + condition filters compose; Vintage NM still spans both cards.
+    both = {h["range"]: h["count"] for h in svc.price_histogram([0, 5, 50], {"era": "Vintage", "condition": "NM"})}
+    assert both["$0-$5"] == 1   # Pikachu at 2.0
+    assert both[">$50"] == 1    # Charizard at 100.0
+
+    # A filter that matches nothing leaves every bucket empty (no overflow bucket).
+    none = svc.price_histogram([0, 5, 50], {"set_name": "Nonexistent"})
+    assert all(h["count"] == 0 for h in none)
+    assert not any(h["range"].startswith(">") for h in none)
+
+
+def test_price_histogram_multi_select_filters(db):
+    svc = ReportingService(db)
+
+    # Plural keys are OR-within / IN filters: both sets together cover both cards.
+    both_sets = {h["range"]: h["count"] for h in
+                 svc.price_histogram([0, 5, 50], {"sets": ["Base Set", "Jungle"]})}
+    assert both_sets["$0-$5"] == 1   # Pikachu (Jungle)
+    assert both_sets[">$50"] == 1    # Charizard (Base Set)
+
+    # A single-element list behaves like the singular key.
+    one_set = {h["range"]: h["count"] for h in
+               svc.price_histogram([0, 5, 50], {"sets": ["Jungle"]})}
+    assert one_set["$0-$5"] == 1
+    assert ">$50" not in one_set     # Charizard excluded
+
+    # Multi-select conditions (both NM here) still span both cards.
+    conds = {h["range"]: h["count"] for h in
+             svc.price_histogram([0, 5, 50], {"conditions": ["NM", "LP"]})}
+    assert conds["$0-$5"] == 1
+    assert conds[">$50"] == 1
+
+
 def test_top_cards_orders_by_value(db):
     top = ReportingService(db).top_cards(10)
     assert [c["card_name"] for c in top] == ["Charizard", "Pikachu"]
