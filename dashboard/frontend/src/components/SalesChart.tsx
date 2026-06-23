@@ -24,11 +24,16 @@ const LINE_COLORS = [
   "#79c0ff", "#ff7b72", "#56d364", "#e3b341",
 ];
 
+const ms = (iso: string) => Date.parse(iso);
+const fmtDate = (t: number) =>
+  Number.isFinite(t) ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+
 function SalesTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
+  const heading = typeof label === "number" ? new Date(label).toLocaleDateString() : label;
   return (
     <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-      <div style={{ color: "#e1e4e8", marginBottom: 4 }}>{label}</div>
+      <div style={{ color: "#e1e4e8", marginBottom: 4 }}>{heading}</div>
       {payload.map((p: any, i: number) => (
         <div key={`${p.dataKey}-${i}`} style={{ color: p.color }}>
           {p.name}: {p.value == null ? "-" : p.dataKey === "volume" ? p.value : `$${Number(p.value).toFixed(2)}`}
@@ -87,11 +92,11 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
       return next;
     });
 
-  // Merge the line series into one row per date: s:<cond> = median sale price
+  // Line series: one row per day (t = day epoch). s:<cond> = median sale price
   // (solid), m:<cond> = market price (dashed), volume = total daily volume (bars).
   const rows = useMemo(() => {
     const byDate: Record<string, any> = {};
-    const at = (d: string) => byDate[d] || (byDate[d] = { date: d, volume: 0 });
+    const at = (d: string) => byDate[d] || (byDate[d] = { date: d, t: ms(d), volume: 0 });
     if (sales) for (const p of sales.points) {
       const r = at(p.date);
       r[`s:${p.condition}`] = p.median_price;
@@ -100,17 +105,29 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
     if (prices) for (const p of prices.points) {
       at(p.date)[`m:${p.condition}`] = p.market_price;
     }
-    return Object.values(byDate).sort((a: any, b: any) => (a.date < b.date ? -1 : 1));
+    return Object.values(byDate).sort((a: any, b: any) => a.t - b.t);
   }, [sales, prices]);
 
-  // Scatter data per condition (each item carries the day category + price).
+  // Scatter data per condition, placed at each sale's real timestamp so points
+  // spread within a day; every individual unit is its own dot.
   const pointsByCondition = useMemo(() => {
-    const map: Record<string, { date: string; price: number }[]> = {};
+    const map: Record<string, { t: number; price: number }[]> = {};
     if (rawPoints) for (const p of rawPoints.points) {
-      (map[p.condition] || (map[p.condition] = [])).push({ date: p.date, price: p.price });
+      (map[p.condition] || (map[p.condition] = [])).push({ t: ms(p.order_date), price: p.price });
     }
     return map;
   }, [rawPoints]);
+
+  // Shared time-axis domain across every layer.
+  const domain = useMemo<[number, number] | undefined>(() => {
+    let lo = Infinity, hi = -Infinity;
+    for (const r of rows) { if (r.t < lo) lo = r.t; if (r.t > hi) hi = r.t; }
+    for (const c of Object.keys(pointsByCondition))
+      for (const p of pointsByCondition[c]) { if (p.t < lo) lo = p.t; if (p.t > hi) hi = p.t; }
+    return Number.isFinite(lo) && Number.isFinite(hi) ? [lo, hi] : undefined;
+  }, [rows, pointsByCondition]);
+
+  const isEmpty = rows.length === 0 && Object.keys(pointsByCondition).length === 0;
 
   return (
     <section className="card-detail-graph">
@@ -170,19 +187,27 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
 
       {loading ? (
         <div className="card-detail-graph-placeholder">Loading...</div>
-      ) : rows.length === 0 ? (
+      ) : isEmpty ? (
         <div className="card-detail-graph-placeholder">No sales or price history in this range.</div>
       ) : (
         <>
           <ResponsiveContainer width="100%" height={420}>
             <ComposedChart data={rows} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid stroke="#21262d" vertical={false} />
-              <XAxis dataKey="date" type="category" allowDuplicatedCategory={false} tick={{ fill: "#8b949e", fontSize: 11 }} minTickGap={28} />
+              <XAxis
+                dataKey="t"
+                type="number"
+                scale="time"
+                domain={domain ?? ["dataMin", "dataMax"]}
+                tickFormatter={fmtDate}
+                tick={{ fill: "#8b949e", fontSize: 11 }}
+                minTickGap={40}
+              />
               <YAxis yAxisId="price" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
               <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} allowDecimals={false} />
               <Tooltip content={<SalesTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={10} />
+              <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={6} />
               {showMarket && visible.map((c) => (
                 <Line
                   key={`m:${c}`}
@@ -218,7 +243,7 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
                   dataKey="price"
                   name={`${c} sales pts`}
                   fill={colorFor(c)}
-                  fillOpacity={0.35}
+                  fillOpacity={0.45}
                   isAnimationActive={false}
                 />
               ))}
@@ -226,7 +251,7 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
           </ResponsiveContainer>
           <div className="card-detail-graph-note">
             Solid = median sale price · dashed = TCGplayer market price · bars = sales volume
-            {showPoints ? " · dots = individual sales (one per unit; overlaps show as denser)" : ""}
+            {showPoints ? " · dots = every individual sale" : ""}
           </div>
         </>
       )}

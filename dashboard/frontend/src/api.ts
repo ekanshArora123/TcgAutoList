@@ -286,8 +286,9 @@ export function fetchCardSalesHistory(
 }
 
 // Individual sales as graph points (one per unit), for the scatter view.
+// order_date is the sale's full timestamp, used to place points along the time axis.
 export interface SalesRawPoint {
-  date: string;
+  order_date: string;
   condition: string;
   price: number;
 }

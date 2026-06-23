@@ -167,9 +167,9 @@ def test_card_sales_points_expands_by_quantity(db):
     res = ReportingService(db).card_sales_points("111", finish="Holo", days=100000)
     assert sorted(res["conditions"]) == ["LP", "NM"]
     nm = [p for p in res["points"] if p["condition"] == "NM"]
-    assert len(nm) == 3 and all(p["price"] == 11.0 and p["date"] == "2025-06-01" for p in nm)
+    assert len(nm) == 3 and all(p["price"] == 11.0 and p["order_date"] == "2025-06-01T10:00:00" for p in nm)
     lp = [p for p in res["points"] if p["condition"] == "LP"]
-    assert len(lp) == 1 and lp[0]["price"] == 8.0
+    assert len(lp) == 1 and lp[0]["price"] == 8.0 and lp[0]["order_date"] == "2025-06-02T10:00:00"
 
 
 def test_card_sales_history_excludes_photo_listings_by_default(db):

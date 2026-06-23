@@ -371,8 +371,9 @@ class ReportingService:
         """Individual sales as graph points (one per unit) for the scatter view.
 
         Each row is expanded by quantity (a qty-3 sale yields 3 points at its
-        price), keyed to the calendar day so points align with the median line's
-        category axis. Same filters as card_sales_history. Read-only.
+        price) and carries the sale's full timestamp (order_date) so the chart
+        can spread points by their real time within a day. Same filters as
+        card_sales_history. Read-only.
         """
         days = max(int(days), 1)
         cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
@@ -381,12 +382,12 @@ class ReportingService:
         rows = self.db.execute(
             f"""
             SELECT condition,
-                   substr(order_date, 1, 10) AS date,
+                   order_date,
                    (purchase_price + shipping_price) AS price,
                    quantity
             FROM sales
             WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
-            ORDER BY date
+            ORDER BY order_date
             """,
             (card_id, finish, source, cutoff),
         ).fetchall()
@@ -395,7 +396,9 @@ class ReportingService:
         for r in rows:
             price = round(r["price"], 2)
             for _ in range(max(int(r["quantity"] or 1), 1)):
-                points.append({"date": r["date"], "condition": r["condition"], "price": price})
+                points.append(
+                    {"order_date": r["order_date"], "condition": r["condition"], "price": price}
+                )
         conditions = sorted({p["condition"] for p in points})
 
         return {
