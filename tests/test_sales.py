@@ -17,6 +17,7 @@ import pytest
 from services.card_server.helpers.crud.cards import CardsHelper
 from services.card_server.helpers.market.sales_store import SalesStore
 from services.card_server.helpers.tcgplayer.fetch_sales_history import map_sales
+from services.card_server.services.reporting_service import ReportingService
 
 _SCHEMA = Path("services/card_server/schema.sql").read_text(encoding="utf-8")
 
@@ -103,3 +104,47 @@ def test_replace_card_skips_empty_pull(db):
     # An empty pull must not wipe previously-collected history.
     assert store.replace_card("111", []) == 0
     assert store.count_for_card("111") == 1
+
+
+# ─── card_sales_history rollup ───────────────────────────────
+
+
+def _hsale(order_date, condition, price, ship=1.0, qty=1, finish="Holo") -> dict:
+    return {
+        "card_id": "111", "condition": condition, "finish": finish, "source": "tcgplayer",
+        "order_date": order_date, "purchase_price": price, "shipping_price": ship, "quantity": qty,
+    }
+
+
+def test_card_sales_history_daily_rollup(db):
+    SalesStore(db).replace_card("111", [
+        _hsale("2025-06-01T10:00:00", "NM", 10.0, qty=1),
+        _hsale("2025-06-01T12:00:00", "NM", 12.0, qty=2),  # same day, same condition
+        _hsale("2025-06-02T09:00:00", "LP", 8.0, qty=1),
+    ])
+    hist = ReportingService(db).card_sales_history("111", finish="Holo", days=100000)
+
+    assert hist["conditions"] == ["LP", "NM"]
+    pts = {(p["date"], p["condition"]): p for p in hist["points"]}
+    nm = pts[("2025-06-01", "NM")]
+    assert nm["avg_price"] == 12.0   # avg of (10+1) and (12+1) = price incl. shipping
+    assert nm["volume"] == 3         # 1 + 2 quantities
+    assert pts[("2025-06-02", "LP")]["avg_price"] == 9.0
+
+
+def test_card_sales_history_filters_finish(db):
+    SalesStore(db).replace_card("111", [
+        _hsale("2025-06-01T10:00:00", "NM", 10.0, finish="Holo"),
+        _hsale("2025-06-01T10:00:00", "NM", 5.0, finish="Regular"),
+    ])
+    holo = ReportingService(db).card_sales_history("111", finish="Holo", days=100000)
+    assert holo["conditions"] == ["NM"]
+    assert all(p["avg_price"] == 11.0 for p in holo["points"])  # only the Holo sale
+
+
+def test_card_sales_history_respects_window(db):
+    # A sale far in the past is excluded by a short window.
+    SalesStore(db).replace_card("111", [_hsale("2000-01-01T10:00:00", "NM", 10.0)])
+    hist = ReportingService(db).card_sales_history("111", finish="Holo", days=30)
+    assert hist["points"] == []
+    assert hist["conditions"] == []

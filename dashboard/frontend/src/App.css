@@ -696,6 +696,42 @@ body {
   min-height: 480px;
 }
 
+.card-detail-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-detail-graph-head h3 {
+  margin: 0;
+}
+
+.range-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.range-btn {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.range-btn:hover {
+  border-color: #58a6ff;
+}
+
+.range-btn.active {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}
+
 .card-detail-graph-placeholder {
   flex: 1;
   display: flex;

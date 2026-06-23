@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from ..helpers.crud.cards import CardsHelper
@@ -287,6 +288,62 @@ class ReportingService:
             "has_image": str(card_id) in image_set,
             "conditions": conditions,
             "total_qty": total_qty,
+        }
+
+    def card_sales_history(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        days: int = 365,
+        source: str = "tcgplayer",
+    ) -> dict[str, Any]:
+        """Daily sales rollup for the per-card graph, one series per condition.
+
+        Reads the raw `sales` table (never the pricing tables). Each point is a
+        day's average sale price (purchase + shipping) and volume for one
+        condition. Sales are keyed by card_id + condition + finish, so a 1st
+        Edition (its own product id) or Reverse-Holo resolves correctly via the
+        card_id/finish the page passes in.
+        """
+        days = max(int(days), 1)
+        cutoff = (datetime.now() - timedelta(days=days)).date().isoformat()
+
+        rows = self.db.execute(
+            """
+            SELECT condition,
+                   substr(order_date, 1, 10) AS date,
+                   AVG(purchase_price + shipping_price) AS avg_price,
+                   MIN(purchase_price + shipping_price) AS min_price,
+                   MAX(purchase_price + shipping_price) AS max_price,
+                   SUM(quantity) AS volume
+            FROM sales
+            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?
+            GROUP BY condition, date
+            ORDER BY date
+            """,
+            (card_id, finish, source, cutoff),
+        ).fetchall()
+
+        points = [
+            {
+                "date": r["date"],
+                "condition": r["condition"],
+                "avg_price": round(r["avg_price"], 2) if r["avg_price"] is not None else None,
+                "min_price": round(r["min_price"], 2) if r["min_price"] is not None else None,
+                "max_price": round(r["max_price"], 2) if r["max_price"] is not None else None,
+                "volume": r["volume"] or 0,
+            }
+            for r in rows
+        ]
+        conditions = sorted({p["condition"] for p in points})
+
+        return {
+            "card_id": card_id,
+            "finish": finish,
+            "source": source,
+            "days": days,
+            "conditions": conditions,
+            "points": points,
         }
 
     def filter_options(self) -> dict[str, list[str]]:

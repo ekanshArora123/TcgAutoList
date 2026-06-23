@@ -251,3 +251,31 @@ export function fetchCardDetail(cardId: string, variant: CardVariant): Promise<C
   }).toString();
   return fetchJson(`${BASE}/card/${cardId}?${qs}`);
 }
+
+// Per-card sales graph: one daily point per (condition, date).
+export interface SalesPoint {
+  date: string;
+  condition: string;
+  avg_price: number | null;
+  min_price: number | null;
+  max_price: number | null;
+  volume: number;
+}
+
+export interface CardSalesHistory {
+  card_id: string;
+  finish: string;
+  source: string;
+  days: number;
+  conditions: string[];
+  points: SalesPoint[];
+}
+
+export function fetchCardSalesHistory(
+  cardId: string,
+  finish: string,
+  days: number,
+): Promise<CardSalesHistory> {
+  const qs = new URLSearchParams({ finish, days: String(days) }).toString();
+  return fetchJson(`${BASE}/card/${cardId}/sales?${qs}`);
+}

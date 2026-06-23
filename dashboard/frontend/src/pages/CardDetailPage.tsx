@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { fetchCardDetail, cardImageUrl, type CardDetail } from "../api";
 import { conditionRank } from "../conditionOrder";
+import SalesChart from "../components/SalesChart";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 
@@ -113,13 +114,8 @@ export default function CardDetailPage() {
           </div>
         </aside>
 
-        {/* Middle: pricing graph — placeholder; real chart to come. */}
-        <section className="card-detail-graph">
-          <h3>Price History</h3>
-          <div className="card-detail-graph-placeholder">
-            Price history graph coming soon
-          </div>
-        </section>
+        {/* Middle: sales history graph (one line per condition). */}
+        <SalesChart cardId={card.card_id} finish={finish} />
 
         {/* Right: pricing analytics — placeholder. */}
         <aside className="card-detail-analytics">
