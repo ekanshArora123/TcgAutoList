@@ -44,6 +44,11 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
   const [prices, setPrices] = useState<CardPriceHistory | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Toggles: which conditions to show, and whether to draw sale / market lines.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [showSales, setShowSales] = useState(true);
+  const [showMarket, setShowMarket] = useState(true);
+
   useEffect(() => {
     setLoading(true);
     Promise.all([
@@ -54,13 +59,24 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
       .finally(() => setLoading(false));
   }, [cardId, finish, days]);
 
-  // Union of conditions across both series, best -> worst.
+  // Union of conditions across both series, best -> worst. Colors key off this
+  // full list so a condition keeps its color regardless of what's filtered.
   const conditions = useMemo(() => {
     const set = new Set<string>();
     sales?.conditions.forEach((c) => set.add(c));
     prices?.conditions.forEach((c) => set.add(c));
     return [...set].sort((a, b) => conditionRank(a) - conditionRank(b));
   }, [sales, prices]);
+
+  const colorFor = (c: string) => LINE_COLORS[Math.max(0, conditions.indexOf(c)) % LINE_COLORS.length];
+  const visible = conditions.filter((c) => !hidden.has(c));
+
+  const toggleCondition = (c: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      next.has(c) ? next.delete(c) : next.add(c);
+      return next;
+    });
 
   // Merge both series into one row per date: s:<cond> = avg sale price (solid),
   // m:<cond> = market price (dashed), volume = total daily sales volume (bars).
@@ -95,6 +111,42 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
         </div>
       </div>
 
+      {conditions.length > 0 && (
+        <div className="chart-controls">
+          <div className="control-group">
+            <span className="control-label">Conditions:</span>
+            <button
+              className={`range-btn ${hidden.size === 0 ? "active" : ""}`}
+              onClick={() => setHidden(new Set())}
+            >
+              All
+            </button>
+            {conditions.map((c) => {
+              const on = !hidden.has(c);
+              return (
+                <button
+                  key={c}
+                  className={`range-btn ${on ? "active" : ""}`}
+                  style={on ? { borderColor: colorFor(c) } : undefined}
+                  onClick={() => toggleCondition(c)}
+                >
+                  {c}
+                </button>
+              );
+            })}
+          </div>
+          <div className="control-group">
+            <span className="control-label">Series:</span>
+            <button className={`range-btn ${showSales ? "active" : ""}`} onClick={() => setShowSales((v) => !v)}>
+              Sales
+            </button>
+            <button className={`range-btn ${showMarket ? "active" : ""}`} onClick={() => setShowMarket((v) => !v)}>
+              Market
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="card-detail-graph-placeholder">Loading...</div>
       ) : rows.length === 0 ? (
@@ -110,28 +162,28 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
               <Tooltip content={<SalesTooltip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={10} />
-              {conditions.map((c, i) => (
+              {showMarket && visible.map((c) => (
                 <Line
                   key={`m:${c}`}
                   yAxisId="price"
                   type="monotone"
                   dataKey={`m:${c}`}
                   name={`${c} market`}
-                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                  stroke={colorFor(c)}
                   strokeDasharray="5 3"
                   dot={false}
                   connectNulls
                   strokeWidth={1.5}
                 />
               ))}
-              {conditions.map((c, i) => (
+              {showSales && visible.map((c) => (
                 <Line
                   key={`s:${c}`}
                   yAxisId="price"
                   type="monotone"
                   dataKey={`s:${c}`}
                   name={`${c} sales`}
-                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                  stroke={colorFor(c)}
                   dot={false}
                   connectNulls
                   strokeWidth={2}

@@ -739,6 +739,26 @@ body {
   text-align: center;
 }
 
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.control-label {
+  font-size: 11px;
+  color: #8b949e;
+  margin-right: 2px;
+}
+
 .card-detail-graph-placeholder {
   flex: 1;
   display: flex;
