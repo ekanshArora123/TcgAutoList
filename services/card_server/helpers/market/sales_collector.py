@@ -53,7 +53,9 @@ class SalesCollector:
         options = options or {}
         delay_ms = options.get("delayMs", 500)
         verbose = options.get("verbose", True)
-        rate_limit_pause_ms = options.get("rateLimitPauseMs", 120_000)
+        # Exponential backoff on rate limits: pause = base * 2**backoff, capped.
+        base_pause_ms = options.get("rateLimitBaseMs", 30_000)
+        max_pause_ms = options.get("rateLimitMaxMs", 600_000)
         max_retries = options.get("maxRetries", 50)
         max_days = options.get("maxDays", DEFAULT_MAX_DAYS)
         start = time.time()
@@ -66,7 +68,8 @@ class SalesCollector:
             "duration_ms": 0,
         }
 
-        retry_count = 0
+        retry_count = 0  # global give-up budget across the whole run
+        backoff = 0      # consecutive rate-limit hits; resets after a clean card
         i = 0
         while i < len(card_ids):
             card_id = card_ids[i]
@@ -90,23 +93,27 @@ class SalesCollector:
                     card = self.cards.get_by_id(card_id)
                     name = card["card_name"] if card else card_id
                     print(f"[{i + 1}/{len(card_ids)}] {name}: {written} sales, {price_written} price points")
+                backoff = 0  # success clears the backoff escalation
                 i += 1
             except Exception as err:  # noqa: BLE001
                 message = str(err)
                 if self._is_rate_limit_error(message) and retry_count < max_retries:
                     retry_count += 1
+                    pause_ms = min(base_pause_ms * (2 ** backoff), max_pause_ms)
+                    backoff += 1
                     if verbose:
                         print(
                             f"\nRate limited at card {i + 1}/{len(card_ids)}. "
-                            f"Pausing {rate_limit_pause_ms / 1000}s "
-                            f"(attempt {retry_count}/{max_retries})..."
+                            f"Pausing {pause_ms / 1000:.0f}s "
+                            f"(attempt {retry_count}/{max_retries}, backoff x{backoff})..."
                         )
-                    await asyncio.sleep(rate_limit_pause_ms / 1000)
+                    await asyncio.sleep(pause_ms / 1000)
                     # Don't increment i — retry the same card.
                 else:
                     report["errors"].append({"card_id": card_id, "error": message})
                     if verbose:
                         print(f"[{i + 1}/{len(card_ids)}] ERROR {card_id}: {message}")
+                    backoff = 0
                     i += 1
 
         report["duration_ms"] = int((time.time() - start) * 1000)

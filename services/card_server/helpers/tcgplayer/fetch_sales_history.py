@@ -16,6 +16,7 @@ limited to that first page.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -138,12 +139,16 @@ async def fetch_sales_history(
     condition: Optional[str] = None,
     finish: Optional[str] = None,
     max_days: int = DEFAULT_MAX_DAYS,
+    page_delay_ms: int = 300,
 ) -> list[dict[str, Any]]:
     """Fetch all sold listings for a card within the last `max_days`.
 
     With no condition/finish the walk returns every condition+finish mixed (each
     mapped row carries its own), so one call covers the whole card. Walks pages
     newest-first until it crosses the date cutoff or exhausts totalResults.
+
+    `page_delay_ms` spaces out consecutive page requests so a high-sales card
+    doesn't fire a burst of POSTs that trips TCGplayer's rate limiting.
     """
     auth_cookie = _get_auth_cookie()
     cutoff = (datetime.now() - timedelta(days=max_days)).isoformat()
@@ -172,5 +177,9 @@ async def fetch_sales_history(
             break  # no pagination without auth — first page is all we get
         if total <= 0 or offset >= total:
             break
+
+        # Space out the next page request to avoid bursting the API.
+        if page_delay_ms > 0:
+            await asyncio.sleep(page_delay_ms / 1000)
 
     return out
