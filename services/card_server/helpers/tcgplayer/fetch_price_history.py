@@ -20,6 +20,7 @@ from typing import Any, Optional
 import httpx
 
 from .fetch_prices import _parse_condition_from_sales_api, _parse_finish_from_sales_api
+from .transport import RateLimiter, make_client, request_json
 
 INFINITE_HEADERS: dict[str, str] = {
     "accept": "application/json, text/plain, */*",
@@ -75,19 +76,32 @@ def map_price_history(results: list[dict[str, Any]], card_id: str) -> list[dict[
     return rows
 
 
-async def fetch_price_history(card_id: str, range_: str = "annual") -> list[dict[str, Any]]:
-    """Fetch the market-price history for a card across all conditions/finishes."""
+async def fetch_price_history(
+    card_id: str,
+    range_: str = "annual",
+    *,
+    client: Optional[httpx.AsyncClient] = None,
+    limiter: Optional[RateLimiter] = None,
+) -> list[dict[str, Any]]:
+    """Fetch the market-price history for a card across all conditions/finishes.
+
+    Pass a shared ``client``/``limiter`` (from ``transport``) to reuse the run's
+    keep-alive connection and paced request stream; otherwise an ephemeral
+    client is created. Propagates ``transport.RateLimited`` on a 403/429.
+    """
     url = f"https://infinite-api.tcgplayer.com/price/history/{card_id}/detailed?range={range_}"
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=INFINITE_HEADERS)
-
-    if response.status_code != 200:
-        if response.status_code == 404:
-            return []
-        raise RuntimeError(
-            f"TCGplayer price history API error: {response.status_code} {response.reason_phrase}"
+    own_client = client is None
+    if own_client:
+        client = make_client()
+    try:
+        data = await request_json(
+            client, "GET", url, limiter=limiter, headers=INFINITE_HEADERS
         )
+    finally:
+        if own_client:
+            await client.aclose()
 
-    data = response.json()
+    if data is None:  # 404
+        return []
     return map_price_history(data.get("result"), card_id)

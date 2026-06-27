@@ -16,7 +16,6 @@ limited to that first page.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -30,6 +29,7 @@ from .fetch_prices import (
     _parse_condition_from_sales_api,
     _parse_finish_from_sales_api,
 )
+from .transport import RateLimiter, make_client, request_json
 
 _PAGE_SIZE = 25
 DEFAULT_MAX_DAYS = 365
@@ -88,8 +88,14 @@ async def _fetch_page(
     finish: Optional[str],
     offset: int,
     auth_cookie: Optional[str],
+    *,
+    client: httpx.AsyncClient,
+    limiter: Optional[RateLimiter],
 ) -> tuple[list[dict[str, Any]], int]:
-    """One raw page of latestsales data plus TCGplayer's totalResults."""
+    """One raw page of latestsales data plus TCGplayer's totalResults.
+
+    Raises ``transport.RateLimited`` on a 403/429 so the caller can back off.
+    """
     url = f"https://mpapi.tcgplayer.com/v2/product/{card_id}/latestsales?mpfev=4952"
 
     conditions: list[int] = []
@@ -117,17 +123,11 @@ async def _fetch_page(
     if auth_cookie:
         headers["cookie"] = f"TCGAuthTicket_Production={auth_cookie}"
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=payload)
-
-    if response.status_code != 200:
-        if response.status_code == 404:
-            return [], 0
-        raise RuntimeError(
-            f"TCGplayer sales API error: {response.status_code} {response.reason_phrase}"
-        )
-
-    json_data = response.json()
+    json_data = await request_json(
+        client, "POST", url, limiter=limiter, headers=headers, json=payload
+    )
+    if json_data is None:  # 404
+        return [], 0
     data = json_data.get("data")
     if not isinstance(data, list):
         return [], 0
@@ -139,7 +139,9 @@ async def fetch_sales_history(
     condition: Optional[str] = None,
     finish: Optional[str] = None,
     max_days: int = DEFAULT_MAX_DAYS,
-    page_delay_ms: int = 300,
+    *,
+    client: Optional[httpx.AsyncClient] = None,
+    limiter: Optional[RateLimiter] = None,
 ) -> list[dict[str, Any]]:
     """Fetch all sold listings for a card within the last `max_days`.
 
@@ -147,39 +149,49 @@ async def fetch_sales_history(
     mapped row carries its own), so one call covers the whole card. Walks pages
     newest-first until it crosses the date cutoff or exhausts totalResults.
 
-    `page_delay_ms` spaces out consecutive page requests so a high-sales card
-    doesn't fire a burst of POSTs that trips TCGplayer's rate limiting.
+    Pass a shared ``client``/``limiter`` (from ``transport``) to reuse one
+    keep-alive connection and one paced request stream across a whole run; the
+    limiter spaces out every page, so no per-page sleep is needed here. When
+    omitted (standalone/one-off use) an ephemeral client is created and closed.
+    Propagates ``transport.RateLimited`` on a 403/429.
     """
     auth_cookie = _get_auth_cookie()
     cutoff = (datetime.now() - timedelta(days=max_days)).isoformat()
+
+    own_client = client is None
+    if own_client:
+        client = make_client()
 
     out: list[dict[str, Any]] = []
     offset = 0
     total: Optional[int] = None
     pages = 0
 
-    while pages < _MAX_PAGES:
-        data, page_total = await _fetch_page(card_id, condition, finish, offset, auth_cookie)
-        if total is None:
-            total = page_total
-        if not data:
-            break
+    try:
+        while pages < _MAX_PAGES:
+            data, page_total = await _fetch_page(
+                card_id, condition, finish, offset, auth_cookie,
+                client=client, limiter=limiter,
+            )
+            if total is None:
+                total = page_total
+            if not data:
+                break
 
-        rows, reached_cutoff = map_sales(data, card_id, condition or "", cutoff)
-        out.extend(rows)
+            rows, reached_cutoff = map_sales(data, card_id, condition or "", cutoff)
+            out.extend(rows)
 
-        pages += 1
-        offset += _PAGE_SIZE
+            pages += 1
+            offset += _PAGE_SIZE
 
-        if reached_cutoff:
-            break
-        if not auth_cookie:
-            break  # no pagination without auth — first page is all we get
-        if total <= 0 or offset >= total:
-            break
-
-        # Space out the next page request to avoid bursting the API.
-        if page_delay_ms > 0:
-            await asyncio.sleep(page_delay_ms / 1000)
+            if reached_cutoff:
+                break
+            if not auth_cookie:
+                break  # no pagination without auth — first page is all we get
+            if total <= 0 or offset >= total:
+                break
+    finally:
+        if own_client:
+            await client.aclose()
 
     return out
