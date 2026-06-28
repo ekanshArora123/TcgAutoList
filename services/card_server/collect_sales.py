@@ -4,12 +4,15 @@ Standalone script that gathers comprehensive raw sales history (~1 year) for
 owned cards and stores it in the `sales` table. Separate from `collect.py`
 (which gathers pricing snapshots) — this never touches the pricing path.
 
-A full backfill is thousands of cards × ~14 requests each, so the recommended
-way to run it is `--loop`: paced, resumable batches that drain the backlog
-without tripping TCGplayer's rate limiting, then keep the data fresh.
+The raw-sales endpoint (mpapi latestsales) is a global per-IP rate bucket
+(~0.15 req/s sustainable; a real browser hits the same wall). So a full
+transaction-level backfill is a multi-day drip, run once via `--crawl`. The
+no-auth bucket endpoint (infinite-api price history) is a separate, generous
+bucket — `--loop` uses it to keep data fresh cheaply afterwards.
 
 Usage:
-  python -m services.card_server.collect_sales --loop          # RECOMMENDED: paced batches until drained
+  python -m services.card_server.collect_sales --crawl         # ONE-TIME full raw backfill: bucket sweep + multi-day adaptive drip
+  python -m services.card_server.collect_sales --loop          # paced batches until drained (ongoing refresh)
   python -m services.card_server.collect_sales --batch         # one batch (150 cards, oldest first)
   python -m services.card_server.collect_sales --batch 50      # one batch of 50
   python -m services.card_server.collect_sales                 # all owned cards in one run
@@ -18,10 +21,16 @@ Usage:
   python -m services.card_server.collect_sales --days 180      # history window (default 365)
   python -m services.card_server.collect_sales --rate 1.0      # avg requests/sec (default 1.5)
 
-Pacing / resume flags (apply to --loop and --batch):
-  --batch [N]     cards per batch (default 150)
+--crawl is the one-time transaction-level backfill: it first sweeps the fast
+no-auth bucket endpoint for every card (~minutes; lands market value), then
+drips the rate-limited raw-sales endpoint adaptively, highest-value cards first,
+for as long as it takes (~days). It writes per-card and is fully resumable — stop
+it (Ctrl-C) and re-run any time to continue.
+
+Pacing / resume flags:
+  --batch [N]     cards per batch in --loop (default 150)
   --max-age DAYS  skip cards refreshed within DAYS (default 7)
-  --rate R        average requests/second across all endpoints (default 1.5)
+  --rate R        average requests/second (default 1.5; --crawl auto-tunes from 0.15)
   --loop-pause S  seconds between batches in --loop (default 90)
   --cooldown S    seconds to wait after a rate-limit stop in --loop (default 900)
 
@@ -43,6 +52,7 @@ from .helpers.market import SalesCollector
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="TCGplayer comprehensive sales history collection")
+    parser.add_argument("--crawl", action="store_true", help="one-time full raw backfill: bucket sweep + multi-day adaptive drip")
     parser.add_argument("--loop", action="store_true", help="run paced batches until backlog drained")
     parser.add_argument("--batch", nargs="?", const=150, type=int, default=None, help="one batch of N cards")
     parser.add_argument("--stale", nargs="?", const=7, type=int, default=None)
@@ -79,6 +89,41 @@ async def _run_loop(collector: SalesCollector, options: dict, batch_size: int,
             await asyncio.sleep(loop_pause)
 
 
+async def _run_crawl(collector: SalesCollector, args) -> int:
+    """One-time full raw backfill: fast bucket sweep, then multi-day raw drip."""
+    # Phase 1 — fast bucket sweep (separate generous endpoint). Resumable:
+    # only fetches cards still missing their price-history/value data.
+    missing = collector._get_cards_missing_price_history()
+    if missing:
+        print(f"Phase 1/2 — bucket sweep: {len(missing)} cards missing price history "
+              f"(fast, no auth)...\n")
+        await collector.collect_price_history(missing)
+    else:
+        print("Phase 1/2 — bucket sweep: already complete, skipping.\n")
+
+    # Phase 2 — adaptive raw-sales drip, highest-value first, persistent + resumable.
+    pending = collector.count_pending(args.max_age)
+    if pending == 0:
+        print("Phase 2/2 — raw drip: nothing pending. Backfill complete.")
+        return 0
+    print(f"Phase 2/2 — raw-sales drip: {pending} cards pending, highest-value first.\n"
+          f"  Rate-limited endpoint (~0.15 req/s sustainable) — this runs for hours/days.\n"
+          f"  Resumable: stop with Ctrl-C and re-run any time to continue.\n")
+    crawl_opts = {"maxDays": args.days}
+    if args.rate != 1.5:  # user override of the adaptive starting rate
+        crawl_opts["ratePerSec"] = args.rate
+    report = await collector.collect_crawl(args.max_age, crawl_opts)
+
+    remaining = collector.count_pending(args.max_age)
+    print(f"\nRaw drip paused: {report['cards_processed']} cards this run, "
+          f"{report['blocks']} rate-limit backoffs, {remaining} still pending.")
+    if report["stopped_early"]:
+        print("  Stopped at the catastrophic block wall — check TCGPLAYER_AUTH_COOKIE "
+              "is still valid, then re-run.")
+        return 1
+    return 0 if remaining == 0 else 0
+
+
 async def _main() -> int:
     args = _parse_args()
     db = init_database(os.environ.get("DB_PATH"))
@@ -90,6 +135,13 @@ async def _main() -> int:
     }
 
     try:
+        if args.crawl:
+            try:
+                return await _run_crawl(collector, args)
+            except KeyboardInterrupt:
+                print("\nInterrupted — progress saved per card. Re-run --crawl to resume.")
+                return 0
+
         if args.loop:
             print(
                 f"Sales collection loop starting "

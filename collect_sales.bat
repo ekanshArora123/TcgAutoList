@@ -9,7 +9,8 @@ REM  First run sets up the venv + installs deps (same as run.bat).
 REM  Loads repo .env so TCGPLAYER_AUTH_COOKIE / DB_PATH are picked up.
 REM
 REM  Usage (all args are forwarded to the Python runner):
-REM    collect_sales.bat --loop          RECOMMENDED: paced batches until drained
+REM    collect_sales.bat --crawl         ONE-TIME full raw backfill (bucket sweep + multi-day drip)
+REM    collect_sales.bat --loop          paced batches until drained (ongoing refresh)
 REM    collect_sales.bat --batch         one batch (150 cards, oldest-fetched first)
 REM    collect_sales.bat --batch 50      one batch of 50
 REM    collect_sales.bat                 collect all owned cards in one run
@@ -20,9 +21,10 @@ REM    collect_sales.bat --rate 1.0      avg requests/sec (default 1.5)
 REM
 REM  NOTE: full pagination needs TCGPLAYER_AUTH_COOKIE (browser
 REM        TCGAuthTicket_Production cookie). Without it ~5 sales/card.
-REM        Tip: use --loop for a full backfill; it paces requests, backs off on
-REM        rate limits, and resumes where it left off. Cards already refreshed
-REM        within --max-age days (default 7) are skipped, so re-running is cheap.
+REM        Tip: --crawl is the one-time transaction-level backfill. The raw-sales
+REM        endpoint is a global per-IP bucket (~0.15 req/s), so it self-paces and
+REM        drips for hours/days, highest-value cards first. Fully resumable: stop
+REM        with Ctrl-C and re-run any time. Afterwards use --loop to stay fresh.
 REM ============================================================
 setlocal
 cd /d "%~dp0"
@@ -72,8 +74,9 @@ set "RC=%ERRORLEVEL%"
 endlocal & exit /b %RC%
 
 :usage
-echo Usage: collect_sales.bat [--loop ^| --batch [N] ^| --stale [days] ^| --cards id1,id2] [--days N] [--rate R]
-echo   --loop         RECOMMENDED: paced, resumable batches until backlog drained
+echo Usage: collect_sales.bat [--crawl ^| --loop ^| --batch [N] ^| --stale [days] ^| --cards id1,id2] [--days N] [--rate R]
+echo   --crawl        ONE-TIME full raw backfill: bucket sweep + multi-day adaptive drip (resumable)
+echo   --loop         paced, resumable batches until backlog drained
 echo   --batch [N]    one batch of N cards, oldest-fetched first (default 150)
 echo   no args        collect all owned cards in one run
 echo   --stale [N]    owned cards not fetched in N+ days (default 7)

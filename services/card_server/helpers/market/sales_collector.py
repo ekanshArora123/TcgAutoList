@@ -74,6 +74,42 @@ class SalesCollector:
             self._get_batch_card_ids(limit, max_age_days), options or {}
         )
 
+    async def collect_price_history(
+        self, card_ids: list[str] | None = None, options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Fast bucket sweep: fetch ONLY infinite-api price history (no raw sales).
+
+        The infinite endpoint is a separate, generous rate bucket, so this sweeps
+        the whole collection in minutes. It also lands the per-card market value
+        that the raw drip then orders by (high-value first).
+        """
+        ids = card_ids if card_ids is not None else self._get_owned_card_ids()
+        opts = {"ratePerSec": 4.0, "withSales": False, "withPriceHistory": True}
+        opts.update(options or {})
+        return await self.collect_cards(ids, opts)
+
+    async def collect_crawl(
+        self, max_age_days: int = 7, options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Persistent raw-sales drip over ALL pending cards, highest-value first.
+
+        For the one-time multi-day backfill: adaptive pacing + persist (never
+        give up on throttling), raw sales only (price history comes from the
+        bucket sweep), ordered by market value so useful data lands first.
+        Resumable — re-running skips cards already fetched within max_age_days.
+        """
+        opts = {
+            "ratePerSec": 0.15,      # measured sustainable starting point
+            "adaptive": True,
+            "persist": True,
+            "withPriceHistory": False,
+            "jitter": 0.5,
+        }
+        opts.update(options or {})
+        return await self.collect_cards(
+            self._get_crawl_card_ids(max_age_days), opts
+        )
+
     async def collect_cards(
         self, card_ids: list[str], options: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -82,10 +118,20 @@ class SalesCollector:
         max_days = options.get("maxDays", DEFAULT_MAX_DAYS)
         rate_per_sec = options.get("ratePerSec", 1.5)
         jitter = options.get("jitter", 0.4)
-        # Block handling: back off a few times, then stop the run cleanly.
+        adaptive = options.get("adaptive", False)
+        # persist: drip mode — never give up on blocks (back off + adapt + keep
+        # going), for an unattended multi-day crawl. Off = batch mode that stops
+        # cleanly after a few blocks so a caller can resume later.
+        persist = options.get("persist", False)
+        with_sales = options.get("withSales", True)
+        with_price_history = options.get("withPriceHistory", True)
+        # Block handling.
         base_pause_ms = options.get("blockBasePauseMs", 30_000)
         max_pause_ms = options.get("blockMaxPauseMs", 300_000)
         max_consecutive_blocks = options.get("maxConsecutiveBlocks", 3)
+        # Safety valve even in persist mode: a wall this tall means something is
+        # broken (expired cookie, hard IP ban), not transient throttling.
+        catastrophic_blocks = options.get("catastrophicBlocks", 250)
         start = time.time()
 
         report: dict[str, Any] = {
@@ -98,59 +144,68 @@ class SalesCollector:
             "duration_ms": 0,
         }
 
-        limiter = RateLimiter(rate_per_sec=rate_per_sec, jitter=jitter)
+        limiter = RateLimiter(
+            rate_per_sec=rate_per_sec, jitter=jitter, adaptive=adaptive
+        )
         client = make_client()
 
-        consecutive_blocks = 0  # resets after any clean card; trips the stop
+        consecutive_blocks = 0  # resets after any clean card
         i = 0
         try:
             while i < len(card_ids):
                 card_id = card_ids[i]
                 try:
                     await self._ensure_card_exists(card_id)
-                    sales = await fetch_sales_history(
-                        card_id, max_days=max_days, client=client, limiter=limiter
-                    )
-                    written = self.store.replace_card(card_id, sales)
-                    report["sales_written"] += written
-
-                    price_rows = await fetch_price_history(
-                        card_id, client=client, limiter=limiter
-                    )
-                    price_written = self.price_store.replace_card(card_id, price_rows)
-                    report["price_points_written"] += price_written
+                    if with_sales:
+                        sales = await fetch_sales_history(
+                            card_id, max_days=max_days, client=client, limiter=limiter
+                        )
+                        report["sales_written"] += self.store.replace_card(card_id, sales)
+                    if with_price_history:
+                        price_rows = await fetch_price_history(
+                            card_id, client=client, limiter=limiter
+                        )
+                        report["price_points_written"] += self.price_store.replace_card(
+                            card_id, price_rows
+                        )
 
                     report["cards_processed"] += 1
                     if verbose:
                         card = self.cards.get_by_id(card_id)
                         name = card["card_name"] if card else card_id
+                        rate = limiter.current_rate
+                        rate_s = f" @ {rate}/s" if adaptive and rate else ""
                         print(
                             f"[{i + 1}/{len(card_ids)}] {name}: "
-                            f"{written} sales, {price_written} price points"
+                            f"{report['cards_processed']} done{rate_s}"
                         )
+                    limiter.on_success()
                     consecutive_blocks = 0  # a clean card clears the escalation
                     i += 1
                 except RateLimited as err:
                     report["blocks"] += 1
                     consecutive_blocks += 1
-                    if consecutive_blocks > max_consecutive_blocks:
+                    limiter.on_block()
+                    # Stop conditions: batch mode after a few blocks; persist mode
+                    # only at the catastrophic wall.
+                    limit = catastrophic_blocks if persist else max_consecutive_blocks
+                    if consecutive_blocks > limit:
                         report["stopped_early"] = True
                         if verbose:
                             print(
                                 f"\nStopping: {consecutive_blocks - 1} consecutive rate-limit "
                                 f"blocks at card {i + 1}/{len(card_ids)}. "
-                                f"{report['cards_processed']} cards collected this run; "
-                                f"re-run to resume from where it left off."
+                                f"{report['cards_processed']} cards this run; resumable on re-run."
                             )
                         break
                     pause_s = self._block_pause_s(
                         err, consecutive_blocks, base_pause_ms, max_pause_ms
                     )
                     if verbose:
+                        scope = f"{consecutive_blocks}" if persist else f"{consecutive_blocks}/{max_consecutive_blocks}"
                         print(
-                            f"\nRate limited (HTTP {err.status}) at card {i + 1}/{len(card_ids)}. "
-                            f"Pausing {pause_s:.0f}s "
-                            f"(block {consecutive_blocks}/{max_consecutive_blocks})..."
+                            f"  rate limited (HTTP {err.status}) at card {i + 1}/{len(card_ids)}; "
+                            f"backing off {pause_s:.0f}s (block {scope}, now @ {limiter.current_rate}/s)..."
                         )
                     await limiter.penalize(pause_s)
                     await asyncio.sleep(pause_s)
@@ -244,6 +299,50 @@ class SalesCollector:
             LIMIT ?
             """,
             (cutoff, limit),
+        ).fetchall()
+        return [r["card_id"] for r in rows]
+
+    def _get_crawl_card_ids(self, max_age_days: int) -> list[str]:
+        """All pending owned cards ordered by market value DESC (highest first).
+
+        Value = peak market price seen in market_price_history (populated by the
+        bucket sweep). Cards with no value data yet sort last (SQLite orders
+        NULLs last under DESC). 'Pending' = never raw-fetched or stale, same rule
+        as the batch selector.
+        """
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        rows = self.db.execute(
+            """
+            SELECT s.card_id,
+                   MAX(sl.fetched_at) AS last_fetched,
+                   (SELECT MAX(market_price) FROM market_price_history m
+                    WHERE m.card_id = s.card_id) AS value
+            FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            LEFT JOIN sales sl ON sl.card_id = s.card_id
+            WHERE i.status NOT IN ('sold')
+            GROUP BY s.card_id
+            HAVING last_fetched IS NULL OR last_fetched < ?
+            ORDER BY value DESC, s.card_id
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [r["card_id"] for r in rows]
+
+    def _get_cards_missing_price_history(self) -> list[str]:
+        """Owned cards with no market_price_history rows yet (phase-1 sweep set).
+
+        Makes the bucket sweep resumable: a restart only fetches cards still
+        missing their value data.
+        """
+        rows = self.db.execute(
+            """
+            SELECT DISTINCT s.card_id
+            FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            WHERE i.status NOT IN ('sold')
+            AND s.card_id NOT IN (SELECT DISTINCT card_id FROM market_price_history)
+            """
         ).fetchall()
         return [r["card_id"] for r in rows]
 

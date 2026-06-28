@@ -40,17 +40,44 @@ class RateLimited(RuntimeError):
 class RateLimiter:
     """Serialised request pacing with jitter, shared across a collection run.
 
-    Enforces a minimum gap between successive requests (``1 / rate_per_sec``),
-    randomly stretched by up to ``jitter`` so the cadence isn't a giveaway
-    lockstep. The lock is held across the wait, so requests go out one at a time
-    — exactly the polite single stream we want for a backfill.
+    Enforces a gap between successive requests (``1 / rate_per_sec``), randomly
+    stretched by up to ``jitter`` so the cadence isn't a giveaway lockstep. The
+    lock is held across the wait, so requests go out one at a time — exactly the
+    polite single stream we want for a backfill.
+
+    Adaptive (AIMD) mode (``adaptive=True``) self-tunes the gap to the live
+    sustainable rate, which is the right behaviour for a multi-day drip against
+    a refill-limited bucket whose rate drifts with server load: ``on_block``
+    multiplicatively slows down, ``on_success`` additively creeps back up. The
+    gap is clamped to ``[min_interval, max_interval]``. Built for a single
+    sequential consumer, so the tuning fields aren't separately locked.
     """
 
-    def __init__(self, rate_per_sec: float = 1.5, jitter: float = 0.4):
-        self._min_interval = 1.0 / rate_per_sec if rate_per_sec > 0 else 0.0
+    def __init__(
+        self,
+        rate_per_sec: float = 1.5,
+        jitter: float = 0.4,
+        *,
+        adaptive: bool = False,
+        min_interval: float = 3.0,
+        max_interval: float = 60.0,
+        speedup_step: float = 0.5,
+        speedup_after: int = 5,
+    ):
         self._jitter = max(0.0, jitter)
         self._lock = asyncio.Lock()
         self._next_at = 0.0
+        self.adaptive = adaptive
+        start = 1.0 / rate_per_sec if rate_per_sec > 0 else 0.0
+        if adaptive:
+            self._min_interval = min_interval
+            self._max_interval = max_interval
+            self._speedup_step = speedup_step
+            self._speedup_after = speedup_after
+            self._interval = min(max(start, min_interval), max_interval)
+            self._success_streak = 0
+        else:
+            self._interval = start
 
     async def acquire(self) -> None:
         async with self._lock:
@@ -59,7 +86,7 @@ class RateLimiter:
             if wait > 0:
                 await asyncio.sleep(wait)
                 now = asyncio.get_event_loop().time()
-            interval = self._min_interval * (1.0 + random.uniform(0.0, self._jitter))
+            interval = self._interval * (1.0 + random.uniform(0.0, self._jitter))
             self._next_at = now + interval
 
     async def penalize(self, seconds: float) -> None:
@@ -67,6 +94,27 @@ class RateLimiter:
         async with self._lock:
             now = asyncio.get_event_loop().time()
             self._next_at = max(self._next_at, now + max(0.0, seconds))
+
+    def on_block(self) -> None:
+        """Rate-limited: multiplicatively widen the gap (back off)."""
+        if not self.adaptive:
+            return
+        self._success_streak = 0
+        self._interval = min(self._max_interval, self._interval * 2.0)
+
+    def on_success(self) -> None:
+        """Clean request: after a streak, additively narrow the gap (speed up)."""
+        if not self.adaptive:
+            return
+        self._success_streak += 1
+        if self._success_streak >= self._speedup_after:
+            self._success_streak = 0
+            self._interval = max(self._min_interval, self._interval - self._speedup_step)
+
+    @property
+    def current_rate(self) -> float | None:
+        """Current target requests/sec (for progress reporting)."""
+        return round(1.0 / self._interval, 3) if self._interval > 0 else None
 
 
 def make_client() -> httpx.AsyncClient:

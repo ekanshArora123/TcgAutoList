@@ -100,6 +100,45 @@ def test_rate_limiter_spaces_requests():
     assert asyncio.run(go()) >= 0.0009  # roughly the 1ms min interval
 
 
+def test_non_adaptive_limiter_ignores_feedback():
+    lim = RateLimiter(rate_per_sec=2.0, jitter=0.0)  # fixed 0.5s gap
+    before = lim.current_rate
+    lim.on_block(); lim.on_success()  # no-ops in fixed mode
+    assert lim.current_rate == before == 2.0
+
+
+def test_adaptive_limiter_backs_off_on_block_and_caps():
+    lim = RateLimiter(rate_per_sec=0.2, jitter=0.0, adaptive=True,
+                      min_interval=2.0, max_interval=16.0)
+    assert lim.current_rate == 0.2          # 1/5s, within clamp
+    lim.on_block()
+    assert lim.current_rate == 0.1          # interval 5 -> 10
+    lim.on_block()
+    assert lim.current_rate == round(1/16, 3)  # 10 -> capped at 16
+    lim.on_block()
+    assert lim.current_rate == round(1/16, 3)  # stays capped
+
+
+def test_adaptive_limiter_speeds_up_after_success_streak():
+    lim = RateLimiter(rate_per_sec=0.1, jitter=0.0, adaptive=True,
+                      min_interval=2.0, max_interval=20.0,
+                      speedup_step=1.0, speedup_after=2)
+    assert lim.current_rate == 0.1          # interval 10
+    lim.on_success()
+    assert lim.current_rate == 0.1          # streak not yet reached
+    lim.on_success()                        # 2nd success -> narrow by 1s -> 9s
+    assert lim.current_rate == round(1/9, 3)
+
+
+def test_adaptive_limiter_speedup_floors_at_min_interval():
+    lim = RateLimiter(rate_per_sec=0.5, jitter=0.0, adaptive=True,
+                      min_interval=1.0, max_interval=20.0,
+                      speedup_step=5.0, speedup_after=1)
+    for _ in range(10):
+        lim.on_success()                    # would overshoot, but clamps at 1s
+    assert lim.current_rate == 1.0          # 1/min_interval
+
+
 # ─── block backoff policy ────────────────────────────────────
 
 
@@ -192,3 +231,43 @@ def test_sold_cards_excluded_from_backlog(db):
     _own(db, "A", "Alpha")
     db.execute("UPDATE inventory SET status='sold'")
     assert SalesCollector(db).count_pending(max_age_days=7) == 0
+
+
+# ─── value-ordered crawl selection ───────────────────────────
+
+
+def _price(conn: sqlite3.Connection, card_id: str, market_price: float) -> None:
+    conn.execute(
+        """INSERT INTO market_price_history (card_id, condition, finish, source,
+               bucket_date, market_price)
+           VALUES (?, 'NM', 'Holo', 'tcgplayer', '2026-06-01', ?)""",
+        (card_id, market_price),
+    )
+
+
+def test_crawl_orders_by_market_value_desc_nulls_last(db):
+    _own(db, "A", "Alpha")
+    _own(db, "B", "Bravo")
+    _own(db, "C", "Charlie")
+    _price(db, "A", 5.0)
+    _price(db, "B", 250.0)   # most valuable -> first
+    # C has no price history -> sorts last
+    ids = SalesCollector(db)._get_crawl_card_ids(max_age_days=7)
+    assert ids == ["B", "A", "C"]
+
+
+def test_crawl_uses_peak_price_across_buckets(db):
+    _own(db, "A", "Alpha")
+    _own(db, "B", "Bravo")
+    _price(db, "A", 10.0)
+    _price(db, "A", 99.0)    # peak for A
+    _price(db, "B", 50.0)
+    ids = SalesCollector(db)._get_crawl_card_ids(max_age_days=7)
+    assert ids == ["A", "B"]  # A's peak (99) beats B (50)
+
+
+def test_missing_price_history_lists_only_uncovered_owned_cards(db):
+    _own(db, "A", "Alpha")
+    _own(db, "B", "Bravo")
+    _price(db, "A", 10.0)
+    assert SalesCollector(db)._get_cards_missing_price_history() == ["B"]
