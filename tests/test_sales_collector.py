@@ -142,30 +142,43 @@ def test_adaptive_limiter_speedup_floors_at_min_interval():
 # ─── block backoff policy ────────────────────────────────────
 
 
-def test_block_pause_retry_after_raises_floor_when_larger():
-    # Retry-After (45s) exceeds the block-1 floor (30s) -> honour the 45s.
-    err = RateLimited(429, retry_after=45.0)
-    assert SalesCollector._block_pause_s(err, 1, 30_000, 300_000) == 45.0
+def test_block_pause_follows_escalating_ladder():
+    sched = [300, 1200, 3600]  # 5 min, 20 min, 1 hr
+    assert SalesCollector._block_pause_s(1, sched) == 300
+    assert SalesCollector._block_pause_s(2, sched) == 1200
+    assert SalesCollector._block_pause_s(3, sched) == 3600
 
 
-def test_block_pause_ignores_too_short_retry_after():
-    # A short Retry-After (4s) is below our floor -> wait the escalating floor,
-    # not the advisory hint (which would just 429 again immediately).
-    err = RateLimited(429, retry_after=4.0)
-    assert SalesCollector._block_pause_s(err, 1, 30_000, 300_000) == 30.0   # block-1 floor
-    assert SalesCollector._block_pause_s(err, 2, 30_000, 300_000) == 60.0   # block-2 floor
+def test_block_pause_holds_at_last_rung():
+    sched = [300, 1200, 3600]
+    assert SalesCollector._block_pause_s(4, sched) == 3600
+    assert SalesCollector._block_pause_s(50, sched) == 3600
 
 
-def test_block_pause_caps_retry_after_at_max():
-    err = RateLimited(429, retry_after=99_999.0)
-    assert SalesCollector._block_pause_s(err, 1, 30_000, 300_000) == 300.0
+def test_block_pause_clamps_low_counts_to_first_rung():
+    sched = [300, 1200, 3600]
+    assert SalesCollector._block_pause_s(0, sched) == 300
 
 
-def test_block_pause_exponential_without_retry_after():
-    err = RateLimited(403, retry_after=None)
-    assert SalesCollector._block_pause_s(err, 1, 30_000, 300_000) == 30.0   # 30 * 2**0
-    assert SalesCollector._block_pause_s(err, 2, 30_000, 300_000) == 60.0   # 30 * 2**1
-    assert SalesCollector._block_pause_s(err, 9, 30_000, 300_000) == 300.0  # capped
+def test_crawl_uses_tight_band_and_long_ladder(monkeypatch):
+    # Guards the tuned crawl parameters: capped speed + minutes-long pauses.
+    captured = {}
+
+    async def fake_collect_cards(self, card_ids, options=None):
+        captured.update(options or {})
+        return {"cards_processed": 0, "stopped_early": False, "blocks": 0,
+                "errors": [], "sales_written": 0, "price_points_written": 0}
+
+    monkeypatch.setattr(SalesCollector, "collect_cards", fake_collect_cards)
+    monkeypatch.setattr(SalesCollector, "_get_crawl_card_ids", lambda self, d: ["A"])
+    conn = sqlite3.connect(":memory:")
+    asyncio.run(SalesCollector(conn).collect_crawl(7))
+
+    assert captured["adaptive"] and captured["persist"]
+    assert captured["minInterval"] == 6.0          # <= 0.167 req/s ceiling
+    assert captured["maxInterval"] <= 6.7          # >= ~0.15 req/s floor
+    assert captured["blockPauseScheduleS"][0] >= 300   # first pause >= 5 min
+    assert captured["blockPauseScheduleS"] == [300, 1200, 3600]
 
 
 # ─── batch selection + backlog count ─────────────────────────

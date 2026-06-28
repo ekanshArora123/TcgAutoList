@@ -99,11 +99,21 @@ class SalesCollector:
         Resumable — re-running skips cards already fetched within max_age_days.
         """
         opts = {
-            "ratePerSec": 0.15,      # measured sustainable starting point
+            "ratePerSec": 0.16,      # measured sustainable rate
             "adaptive": True,
             "persist": True,
             "withPriceHistory": False,
-            "jitter": 0.5,
+            "jitter": 0.1,           # tiny — the band is intentionally narrow
+            # Hold the rate in a tight 0.15–0.167 band: never sprint to the
+            # ~0.33 that trips the limit, never crawl below the sustainable rate.
+            "minInterval": 6.0,      # fastest gap  -> 0.167 req/s ceiling
+            "maxInterval": 6.6,      # slowest gap  -> ~0.15 req/s floor
+            # On a block, pause long enough for the bucket to actually refill,
+            # escalating if it persists: 5 min, then 20 min, then 1 hour.
+            "blockPauseScheduleS": [300, 1200, 3600],
+            # ~a day of solid blocking (24 consecutive 1h pauses) => stop and
+            # surface it; almost certainly an expired cookie, not throttling.
+            "catastrophicBlocks": 24,
         }
         opts.update(options or {})
         return await self.collect_cards(
@@ -119,15 +129,19 @@ class SalesCollector:
         rate_per_sec = options.get("ratePerSec", 1.5)
         jitter = options.get("jitter", 0.4)
         adaptive = options.get("adaptive", False)
+        # Adaptive band (only used when adaptive): minInterval caps top speed,
+        # maxInterval caps how slow on_block can drag the steady rate.
+        min_interval = options.get("minInterval", 3.0)
+        max_interval = options.get("maxInterval", 60.0)
         # persist: drip mode — never give up on blocks (back off + adapt + keep
         # going), for an unattended multi-day crawl. Off = batch mode that stops
         # cleanly after a few blocks so a caller can resume later.
         persist = options.get("persist", False)
         with_sales = options.get("withSales", True)
         with_price_history = options.get("withPriceHistory", True)
-        # Block handling.
-        base_pause_ms = options.get("blockBasePauseMs", 30_000)
-        max_pause_ms = options.get("blockMaxPauseMs", 300_000)
+        # Block handling: an escalating pause ladder (seconds) indexed by the
+        # consecutive-block count. The refill bucket needs minutes, not seconds.
+        block_pause_schedule_s = options.get("blockPauseScheduleS", [30, 90, 300])
         max_consecutive_blocks = options.get("maxConsecutiveBlocks", 3)
         # Safety valve even in persist mode: a wall this tall means something is
         # broken (expired cookie, hard IP ban), not transient throttling.
@@ -145,7 +159,8 @@ class SalesCollector:
         }
 
         limiter = RateLimiter(
-            rate_per_sec=rate_per_sec, jitter=jitter, adaptive=adaptive
+            rate_per_sec=rate_per_sec, jitter=jitter, adaptive=adaptive,
+            min_interval=min_interval, max_interval=max_interval,
         )
         client = make_client()
 
@@ -198,9 +213,7 @@ class SalesCollector:
                                 f"{report['cards_processed']} cards this run; resumable on re-run."
                             )
                         break
-                    pause_s = self._block_pause_s(
-                        err, consecutive_blocks, base_pause_ms, max_pause_ms
-                    )
+                    pause_s = self._block_pause_s(consecutive_blocks, block_pause_schedule_s)
                     if verbose:
                         scope = f"{consecutive_blocks}" if persist else f"{consecutive_blocks}/{max_consecutive_blocks}"
                         print(
@@ -233,21 +246,17 @@ class SalesCollector:
         return report
 
     @staticmethod
-    def _block_pause_s(
-        err: RateLimited, consecutive_blocks: int, base_pause_ms: int, max_pause_ms: int
-    ) -> float:
-        """Seconds to wait after a block, capped at ``max_pause_ms``.
+    def _block_pause_s(consecutive_blocks: int, schedule_s: list[float]) -> float:
+        """Seconds to pause after a block, from an escalating ladder.
 
-        Backoff escalates exponentially with consecutive blocks. TCGplayer's
-        ``Retry-After`` is honoured only as a *floor raiser*: in practice it
-        comes back as a few seconds while the real cooldown is longer, so a
-        literal short wait just 429s again immediately. We therefore wait the
-        larger of the server's hint and our own escalating floor.
+        Indexed by the consecutive-block count (1-based), holding at the last
+        entry. e.g. ``[300, 1200, 3600]`` => 5 min, then 20 min, then 1 hour for
+        every further consecutive block. TCGplayer's ``Retry-After`` is ignored
+        on purpose: it comes back as a few seconds while the real cooldown is
+        minutes, so honouring it just 429s again immediately.
         """
-        exp_s = min(base_pause_ms * (2 ** (consecutive_blocks - 1)), max_pause_ms) / 1000
-        if err.retry_after and err.retry_after > 0:
-            return min(max(err.retry_after, exp_s), max_pause_ms / 1000)
-        return exp_s
+        idx = min(max(consecutive_blocks, 1) - 1, len(schedule_s) - 1)
+        return schedule_s[idx]
 
     # ─── Card selection ───────────────────────────────────────
 
