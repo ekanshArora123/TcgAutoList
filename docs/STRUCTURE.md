@@ -1,5 +1,7 @@
 # Project Structure
 
+TcgAutoList is a **platform of loosely-coupled mini-projects** for the TCG ecosystem (see the root `CLAUDE.md` for the vision and the mini-project catalog). Most subsystems below are usable in isolation — a pricing engine, market/sales data collectors, an analytics dashboard, a card-data MCP server — and compose into larger workflows such as the seller listing pipeline. The layout reflects that: each `services/*` folder owns one external system, and the `dashboard/` is the control-plane + analytics surface.
+
 ## Hierarchy
 
 ```
@@ -49,8 +51,8 @@ Each service owns one external system and provides abstraction over it. Callers 
 
 ### frontend (dashboard/frontend/)
 - React + Vite + TypeScript
-- Pages: CollectionGridPage (card images), CollectionPage (table), AnalyticsPage (charts)
-- Read-only for now. Will gain control capabilities (trigger workflows, override prices, manage listings).
+- Pages: CollectionGridPage (card images), CollectionPage (table), AnalyticsPage (charts), CardDetailPage (per-card sales/price graph)
+- **Standalone mini-project:** the analytics + browsing dashboard runs independently of the seller pipeline (read-only for now). Will also serve as a control plane — trigger workflows, override prices, manage listings.
 
 ### backend (dashboard/backend/)
 - Flask REST API serving the frontend
@@ -58,9 +60,9 @@ Each service owns one external system and provides abstraction over it. Callers 
 - The whole backend is now Python, so it can import `card_server` services directly — the former TS/Python language boundary is resolved.
 
 ### orchestrator (dashboard/backend/orchestrator/)
-- State machine that drives the listing workflow
-- Processes one card at a time: pick → price → route tier → photo → list → done
-- Consumes all three services (card-server, telegram, ebay)
+- The **seller listing pipeline** — one mini-project among several, not the whole project's purpose.
+- State machine that drives the listing workflow: processes one card at a time — pick → price → route tier → photo → list → done
+- A composed workflow — consumes all three services (card-server, telegram, ebay); only meaningful as the pipeline, unlike the standalone data/analytics subsystems.
 - **Current:** Tier 1 pipeline works. Tier 2/3 LLM and eBay posting are stubs.
 
 ## Language
