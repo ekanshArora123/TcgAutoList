@@ -9,7 +9,6 @@ There is no fixed end product. The platform accretes capabilities over time towa
 **Core tenets:**
 - **Reuse first.** Before writing new code, make use of existing functionality. This is the whole point — capabilities compound instead of duplicating each other.
 - **Modular and generally usable.** Design components to be reused and composed, with clear boundaries and a shared substrate — not one-offs.
-- **Pokemon now, doors open.** Pokemon + TCGplayer is the current domain. Don't over-engineer for other games, but avoid hardcoding assumptions that would needlessly block other TCGs later.
 
 **Working model:** there's no fixed rule for what comes next — each session either **improves an existing capability** (e.g. make pricing more robust or agentic, harden a scraper) or **adds a new one** (e.g. vendor live-sales tracking), whichever is most valuable at the time. New work should lean on what already exists.
 
@@ -72,29 +71,13 @@ services/card_server/         (imported as `services.card_server`)
 │   ├── pricing_service.py    <- Pricing operations + TCGplayer fetch workflows
 │   └── reporting_service.py  <- Read-only browse + analytics for the dashboard (no writes)
 ├── helpers/                  <- INTERNAL (services compose these)
-│   ├── crud/                 <- Pure DB CRUD (cards, skus, inventory, prices)
-│   ├── pricing/
-│   │   ├── algorithm.py      <- Pricing algorithm (see docs/pricing-algorithm.md)
-│   │   └── config.py         <- All pricing magic numbers
-│   ├── tcgplayer/
-│   │   ├── fetch_prices.py   <- Active + sold listings (see docs/tcgplayer-api.md)
-│   │   ├── fetch_card_info.py<- Card metadata fetching
-│   │   ├── fetch_sales_history.py <- Raw sold-listings history (~1yr, paginated; graph data)
-│   │   ├── fetch_price_history.py <- Weekly TCGplayer market-price history (infinite-api; graph data)
-│   │   ├── transport.py      <- Shared async HTTP client + adaptive rate limiter (AIMD backoff)
-│   │   └── formatters.py     <- Condition/finish format conversion
-│   └── market/
-│       ├── collector.py      <- Market data collection orchestration (pricing snapshots)
-│       ├── fetchers.py       <- External API calls
-│       ├── aggregators.py    <- Raw data → aggregate stats
-│       ├── snapshots.py      <- DB read/write for market_snapshots
-│       ├── sales_collector.py<- Graph-data gathering: raw sales + market-price history (NOT pricing)
-│       ├── sales_store.py    <- DB read/write for the raw `sales` table
-│       └── price_history_store.py <- DB read/write for `market_price_history`
-├── collect.py                <- CLI runner for market data collection (pricing)
-├── collect_sales.py          <- CLI runner for graph data: sales + market-price history (batch / `--loop` / `--crawl` multi-day backfill)
-├── dedup_inventory.py        <- One-off utility script
-└── migrate.py                <- MySQL -> SQLite migration (historical)
+│   ├── crud/                 <- Pure DB CRUD per table (cards, skus, inventory, prices)
+│   ├── pricing/              <- algorithm.py + config.py (see docs/pricing-algorithm.md)
+│   ├── tcgplayer/            <- API fetchers, formatters, shared rate-limited transport (see docs/tcgplayer-api.md)
+│   └── market/               <- snapshot collection (pricing) + raw sales & price-history stores (graph)
+├── collect.py                <- CLI: market snapshots (pricing)
+├── collect_sales.py          <- CLI: sales + market-price history (graph; batch / `--loop` / `--crawl`)
+└── migrate.py, dedup_inventory.py  <- historical migration + one-off utility
 ```
 
 ## Database Schema
@@ -166,6 +149,6 @@ pytest -q                                       # run tests
 
 ## Testing
 
-Tests live in `tests/` (pytest). Run with `pytest -q` from the repo root.
+Tests live in `tests/` (pytest). Run with `pytest -q` from the repo root. Live external-API contract tests are marked `external` and excluded by default; run them with `pytest -m external` (they need real creds, e.g. `TCGPLAYER_AUTH_COOKIE`).
 
 **Maintain the tests as the code changes** — when you add or change behavior (pricing logic, tier routing, formatters, listing/render output, service methods), update or add the corresponding test in the same change so `pytest` stays green. Don't land logic changes without adjusting the tests they affect.
