@@ -2,27 +2,32 @@
 
 ## Project Overview
 
-TcgAutoList is an **interconnected platform of loosely-coupled mini-projects** that automate or assist parts of the trading-card-game (TCG) ecosystem. Each mini-project has standalone merit — a pricing engine, an analytics dashboard, TCGplayer scrapers, market/sales data collectors — and composes with the others into a larger suite. The audience is not only sellers: the goal is to solve or automate problems across the whole TCG world (sellers, vendors, collectors, analysts).
+TcgAutoList is a growing platform of **interconnected capabilities** that assist with all sorts of trading-card-game (TCG) problems. The pieces are not isolated projects — they work together like organs. A card-data store, TCGplayer scrapers, a pricing engine, market/sales data collectors, an analytics dashboard, and a seller listing pipeline each build on and reuse the others.
 
-The project grew out of one concrete goal — list and sell a ~10,000 card collection on eBay — and that seller workflow is still here, but it is now **one mini-project among equals**, not the purpose of the repo.
+There is no fixed end product. The platform accretes capabilities over time toward the open-ended goal of assisting with TCG problems. It is built primarily for one person's own needs today (managing and selling a ~10,000 card Pokemon collection), with a longer-term ambition to deploy it so other buyers and sellers can use it too.
 
-**Working model:** each unit of work either (a) **improves an existing capability** (e.g. make the pricing algorithm more robust or agentic, harden a scraper) or (b) **adds a new capability** (e.g. a way for vendors to live-track sales). Mini-projects share the same data substrate and design conventions so they stay composable.
+**Core tenets:**
+- **Reuse first.** Before writing new code, make use of existing functionality. This is the whole point — capabilities compound instead of duplicating each other.
+- **Modular and generally usable.** Design components to be reused and composed, with clear boundaries and a shared substrate — not one-offs.
+- **Pokemon now, doors open.** Pokemon + TCGplayer is the current domain. Don't over-engineer for other games, but avoid hardcoding assumptions that would needlessly block other TCGs later.
 
-## Platform & Mini-Projects
+**Working model:** there's no fixed rule for what comes next — each session either **improves an existing capability** (e.g. make pricing more robust or agentic, harden a scraper) or **adds a new one** (e.g. vendor live-sales tracking), whichever is most valuable at the time. New work should lean on what already exists.
 
-A flat catalog of the composable units in the repo today. Most are usable in isolation; a few only make sense as a composed workflow. No unit has special status over the others.
+## Capabilities
 
-| Mini-project | Lives in | What it does | Standalone? |
-|--------------|----------|--------------|-------------|
-| **Card-data store + MCP server** | `services/card_server/` (`db.py`, `schema.sql`, `index.py`) | SQLite substrate (cards/skus/inventory/prices + market tables) exposed as CRUD services and 30+ FastMCP tools. | Yes — the shared substrate everything composes on; runs as an MCP server. |
-| **Pricing engine** | `helpers/pricing/algorithm.py` + `config.py` via `pricing_service.py` | Lowest-listing anchor + sold sanity checks, confidence scoring, cross-condition extrapolation, liquid value. | Yes — reusable independent of listing. |
-| **TCGplayer scrapers/fetchers** | `helpers/tcgplayer/` | Active/sold listings, card metadata, condition/finish formatters. See `docs/tcgplayer-api.md`. | Yes — feed pricing or anything else. |
-| **Market-data collector** | `helpers/market/` + `collect.py` | Periodic aggregate snapshots → `market_snapshots` (feeds pricing). Idempotent per date. | Yes — standalone CLI. |
-| **Sales-history + market-price collector & per-card graph** | `sales_collector.py`, `sales_store.py`, `price_history_store.py`, `collect_sales.py`; graph in the dashboard | Gathers ~1yr of raw sold listings + weekly TCGplayer market price for the per-card graph. **Never feeds pricing.** | Yes — standalone CLI + analytics feature. |
-| **Analytics dashboard** | `dashboard/frontend/` + `dashboard/backend/app.py` → `reporting_service.py` | Browse/filter/search the collection, charts, per-card detail + sales graph. Read-only. | Yes — runs independently of the seller pipeline. |
-| **Seller listing pipeline** | `services/telegram/` + `dashboard/backend/orchestrator/` + `services/ebay/` | Turns owned inventory into live listings: `/next` → pick unlisted card → fetch price → route by tier → request photo → build listing → post → mark done. | No — a composed workflow over the store, pricing, Telegram, and eBay. |
+The interconnected capabilities in the repo today. They reuse each other — the **Builds on** column shows the composition. New capabilities should extend this web, not duplicate it.
 
-**Stubs / future.** eBay posting (`services/ebay/service.py`) and Tier 2/3 LLM pricing (`orchestrator/llm.py`, `tools.py`, `system_prompt.py`) are stubs. Future mini-projects are open-ended — e.g. vendor live sales tracking, and a **sell/hold decision engine** over longitudinal price history (the raw `sales` + `market_price_history` tables are the data plane already being collected for it).
+| Capability | Lives in | What it does | Builds on |
+|------------|----------|--------------|-----------|
+| **Card-data store + MCP server** | `services/card_server/` (`db.py`, `schema.sql`, `index.py`) | SQLite substrate (cards/skus/inventory/prices + market tables) exposed as CRUD services and 30+ FastMCP tools. | The shared foundation — everything else builds on it. |
+| **TCGplayer scrapers/fetchers** | `helpers/tcgplayer/` | Active/sold listings, card metadata, condition/finish formatters, shared HTTP transport. See `docs/tcgplayer-api.md`. | TCGplayer APIs. |
+| **Pricing engine** | `helpers/pricing/` via `pricing_service.py` | Lowest-listing anchor + sold sanity checks, confidence scoring, cross-condition extrapolation, liquid value. | Card-data store, scrapers, market-data. |
+| **Market-data collector** | `helpers/market/` + `collect.py` | Periodic aggregate snapshots → `market_snapshots` (feeds pricing). Idempotent per date. | Card-data store, scrapers. |
+| **Sales-history + market-price collector & graph** | `sales_collector.py`, `sales_store.py`, `price_history_store.py`, `collect_sales.py` | ~1yr of raw sold listings + weekly TCGplayer market price for the per-card graph. Kept out of the pricing path. | Card-data store, scrapers/transport. |
+| **Analytics dashboard** | `dashboard/frontend/` + `dashboard/backend/app.py` → `reporting_service.py` | Browse/filter/search the collection, charts, per-card detail + sales graph. | Card-data store (reporting), sales/market data. |
+| **Seller listing pipeline** | `services/telegram/` + `dashboard/backend/orchestrator/` + `services/ebay/` | Turns owned inventory into live listings: `/next` → pick unlisted card → fetch price → route by tier → request photo → build listing → post → mark done. | Card-data store, pricing, Telegram, eBay. |
+
+**Stubs / future.** eBay posting (`services/ebay/service.py`) and Tier 2/3 LLM pricing (`orchestrator/llm.py`, `tools.py`, `system_prompt.py`) are stubs. Future capabilities are open-ended and build on the same substrate — e.g. vendor live sales tracking, and a **sell/hold decision engine** over longitudinal price history (the raw `sales` + `market_price_history` tables are the data plane already being collected for it).
 
 ## Architecture
 

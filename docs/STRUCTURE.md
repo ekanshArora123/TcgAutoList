@@ -1,6 +1,6 @@
 # Project Structure
 
-TcgAutoList is a **platform of loosely-coupled mini-projects** for the TCG ecosystem (see the root `CLAUDE.md` for the vision and the mini-project catalog). Most subsystems below are usable in isolation — a pricing engine, market/sales data collectors, an analytics dashboard, a card-data MCP server — and compose into larger workflows such as the seller listing pipeline. The layout reflects that: each `services/*` folder owns one external system, and the `dashboard/` is the control-plane + analytics surface.
+TcgAutoList is a growing platform of **interconnected capabilities** for TCG problems (see the root `CLAUDE.md` for the vision and capability catalog). The subsystems below reuse each other and compose — a card-data store the rest build on, TCGplayer scrapers, a pricing engine, market/sales data collectors, an analytics dashboard, and a seller listing pipeline. The layout reflects a core tenet — modular, generally-reusable components with clear boundaries: each `services/*` folder owns one external system, and the `dashboard/` is the control-plane + analytics surface.
 
 ## Hierarchy
 
@@ -35,7 +35,7 @@ Each service owns one external system and provides abstraction over it. Callers 
 - **Exposes:** CollectionService + PricingService (simple API for coded callers), MCP tools (rich API for LLM)
 - **Internal:** CRUD helpers, TCGplayer fetchers, pricing math, market aggregators
 - **Status:** Done
-- **Standalone:** Imported as `services.card_server`. Runs independently as an MCP server via `python -m services.card_server.index` (from the repo root).
+- **Reused by everything:** Imported as `services.card_server` — the shared substrate the other capabilities build on. Also runs as an MCP server via `python -m services.card_server.index` (from the repo root).
 
 ### telegram (services/telegram/)
 - **Owns:** Telegram Bot API (send/receive messages, photos, inline keyboards)
@@ -52,7 +52,7 @@ Each service owns one external system and provides abstraction over it. Callers 
 ### frontend (dashboard/frontend/)
 - React + Vite + TypeScript
 - Pages: CollectionGridPage (card images), CollectionPage (table), AnalyticsPage (charts), CardDetailPage (per-card sales/price graph)
-- **Standalone mini-project:** the analytics + browsing dashboard runs independently of the seller pipeline (read-only for now). Will also serve as a control plane — trigger workflows, override prices, manage listings.
+- The analytics + browsing surface, built on the card-data store's reporting layer (read-only for now). Will also grow into a control plane — trigger workflows, override prices, manage listings.
 
 ### backend (dashboard/backend/)
 - Flask REST API serving the frontend
@@ -60,9 +60,9 @@ Each service owns one external system and provides abstraction over it. Callers 
 - The whole backend is now Python, so it can import `card_server` services directly — the former TS/Python language boundary is resolved.
 
 ### orchestrator (dashboard/backend/orchestrator/)
-- The **seller listing pipeline** — one mini-project among several, not the whole project's purpose.
+- The **seller listing pipeline** — one capability of the platform, composed from several others.
 - State machine that drives the listing workflow: processes one card at a time — pick → price → route tier → photo → list → done
-- A composed workflow — consumes all three services (card-server, telegram, ebay); only meaningful as the pipeline, unlike the standalone data/analytics subsystems.
+- Reuses the card-data store, pricing, Telegram, and eBay services rather than reimplementing any of them.
 - **Current:** Tier 1 pipeline works. Tier 2/3 LLM and eBay posting are stubs.
 
 ## Language
