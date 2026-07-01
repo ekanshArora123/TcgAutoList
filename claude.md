@@ -1,10 +1,28 @@
-# TcgAutoList — Agentic Pokemon Card eBay Listing System
+# TcgAutoList — TCG Automation Platform
 
 ## Project Overview
 
-Automates listing ~10,000 Pokemon cards on eBay using an agentic architecture with MCP servers and a Telegram bot for photo intake.
+TcgAutoList is an **interconnected platform of loosely-coupled mini-projects** that automate or assist parts of the trading-card-game (TCG) ecosystem. Each mini-project has standalone merit — a pricing engine, an analytics dashboard, TCGplayer scrapers, market/sales data collectors — and composes with the others into a larger suite. The audience is not only sellers: the goal is to solve or automate problems across the whole TCG world (sellers, vendors, collectors, analysts).
 
-**Workflow:** `/next` via Telegram -> pick next unlisted card -> fetch price -> route by tier -> request photo -> build listing -> post to eBay -> mark done -> wait for next command.
+The project grew out of one concrete goal — list and sell a ~10,000 card collection on eBay — and that seller workflow is still here, but it is now **one mini-project among equals**, not the purpose of the repo.
+
+**Working model:** each unit of work either (a) **improves an existing capability** (e.g. make the pricing algorithm more robust or agentic, harden a scraper) or (b) **adds a new capability** (e.g. a way for vendors to live-track sales). Mini-projects share the same data substrate and design conventions so they stay composable.
+
+## Platform & Mini-Projects
+
+A flat catalog of the composable units in the repo today. Most are usable in isolation; a few only make sense as a composed workflow. No unit has special status over the others.
+
+| Mini-project | Lives in | What it does | Standalone? |
+|--------------|----------|--------------|-------------|
+| **Card-data store + MCP server** | `services/card_server/` (`db.py`, `schema.sql`, `index.py`) | SQLite substrate (cards/skus/inventory/prices + market tables) exposed as CRUD services and 30+ FastMCP tools. | Yes — the shared substrate everything composes on; runs as an MCP server. |
+| **Pricing engine** | `helpers/pricing/algorithm.py` + `config.py` via `pricing_service.py` | Lowest-listing anchor + sold sanity checks, confidence scoring, cross-condition extrapolation, liquid value. | Yes — reusable independent of listing. |
+| **TCGplayer scrapers/fetchers** | `helpers/tcgplayer/` | Active/sold listings, card metadata, condition/finish formatters. See `docs/tcgplayer-api.md`. | Yes — feed pricing or anything else. |
+| **Market-data collector** | `helpers/market/` + `collect.py` | Periodic aggregate snapshots → `market_snapshots` (feeds pricing). Idempotent per date. | Yes — standalone CLI. |
+| **Sales-history + market-price collector & per-card graph** | `sales_collector.py`, `sales_store.py`, `price_history_store.py`, `collect_sales.py`; graph in the dashboard | Gathers ~1yr of raw sold listings + weekly TCGplayer market price for the per-card graph. **Never feeds pricing.** | Yes — standalone CLI + analytics feature. |
+| **Analytics dashboard** | `dashboard/frontend/` + `dashboard/backend/app.py` → `reporting_service.py` | Browse/filter/search the collection, charts, per-card detail + sales graph. Read-only. | Yes — runs independently of the seller pipeline. |
+| **Seller listing pipeline** | `services/telegram/` + `dashboard/backend/orchestrator/` + `services/ebay/` | Turns owned inventory into live listings: `/next` → pick unlisted card → fetch price → route by tier → request photo → build listing → post → mark done. | No — a composed workflow over the store, pricing, Telegram, and eBay. |
+
+**Stubs / future.** eBay posting (`services/ebay/service.py`) and Tier 2/3 LLM pricing (`orchestrator/llm.py`, `tools.py`, `system_prompt.py`) are stubs. Future mini-projects are open-ended — e.g. vendor live sales tracking, and a **sell/hold decision engine** over longitudinal price history (the raw `sales` + `market_price_history` tables are the data plane already being collected for it).
 
 ## Architecture
 
@@ -21,7 +39,7 @@ See `docs/STRUCTURE.md` for full folder layout.
 
 ### Tiered Escalation Model
 
-LLM involvement scales with pricing difficulty. Most cards go through a dumb coded pipeline.
+This governs the pricing engine and seller listing pipeline. LLM involvement scales with pricing difficulty. Most cards go through a dumb coded pipeline.
 
 | Tier | Criteria | LLM? | Tokens | % of Cards |
 |------|----------|------|--------|------------|
@@ -50,6 +68,9 @@ Tier thresholds are configurable in `dashboard/backend/orchestrator/types.py` (`
 | card-server (DB, CRUD, services, MCP) | Done | 30+ MCP tools, all 4 table helpers |
 | TCGplayer API (listings, solds, card info) | Done | See `docs/tcgplayer-api.md` for API reference |
 | Pricing algorithm v1 | Done | See `docs/pricing-algorithm.md` for full details |
+| Market-data collector (pricing snapshots) | Done | `helpers/market/` + `collect.py` → `market_snapshots` |
+| Sales-history + market-price collection & per-card graph | Done | Robust: adaptive rate limiting + `--crawl` multi-day backfill. Graph data only, not pricing. |
+| Analytics dashboard (browse + charts + card detail) | Done | Read-only via `reporting_service.py` |
 | MySQL -> SQLite migration | Done | `services/card_server/migrate.py` |
 | Telegram bot | Done | Commands, photos, inline keyboards |
 | Tier routing | Done | Confidence-based, configurable thresholds |
@@ -92,6 +113,9 @@ services/card_server/         (imported as `services.card_server`)
 │   ├── tcgplayer/
 │   │   ├── fetch_prices.py   <- Active + sold listings (see docs/tcgplayer-api.md)
 │   │   ├── fetch_card_info.py<- Card metadata fetching
+│   │   ├── fetch_sales_history.py <- Raw sold-listings history (~1yr, paginated; graph data)
+│   │   ├── fetch_price_history.py <- Weekly TCGplayer market-price history (infinite-api; graph data)
+│   │   ├── transport.py      <- Shared async HTTP client + adaptive rate limiter (AIMD backoff)
 │   │   └── formatters.py     <- Condition/finish format conversion
 │   └── market/
 │       ├── collector.py      <- Market data collection orchestration (pricing snapshots)
@@ -102,7 +126,7 @@ services/card_server/         (imported as `services.card_server`)
 │       ├── sales_store.py    <- DB read/write for the raw `sales` table
 │       └── price_history_store.py <- DB read/write for `market_price_history`
 ├── collect.py                <- CLI runner for market data collection (pricing)
-├── collect_sales.py          <- CLI runner for graph data: sales + market-price history
+├── collect_sales.py          <- CLI runner for graph data: sales + market-price history (batch / `--loop` / `--crawl` multi-day backfill)
 ├── dedup_inventory.py        <- One-off utility script
 └── migrate.py                <- MySQL -> SQLite migration (historical)
 ```
