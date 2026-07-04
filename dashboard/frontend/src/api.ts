@@ -360,15 +360,25 @@ export interface GradedCardItem {
   front_photo_path: string | null;
   back_photo_path: string | null;
   ebay_listing_id: string | null;
-  card_id: string;
+  // card_id is the OPTIONAL TCGplayer link (null until the graded->raw converter
+  // or a manual entry sets it).
+  card_id: string | null;
   finish: string;
-  specialty_one: string;
   grading_company: string;
   grade: number;
+  grade_label: string | null;
+  grader_spec_id: string | null;
+  // Grader-supplied identity (card_name/set_name/card_number are COALESCEd
+  // grader-first on the backend).
   card_name: string;
   set_name: string | null;
-  rarity: string | null;
   card_number: string | null;
+  card_year: string | null;
+  card_variety: string | null;
+  card_language: string | null;
+  population: number | null;
+  population_higher: number | null;
+  rarity: string | null;
   era: string | null;
   estimated_price: number | null;
   confidence_percent: number | null;
@@ -430,4 +440,33 @@ export function fetchGradedCardDetail(
     grade: String(key.grade),
   }).toString();
   return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
+}
+
+// Add a graded slab by cert number (POST — the dashboard's first write call).
+// card_id is the optional, manually-entered TCGplayer id.
+export async function addGradedByCert(
+  certId: string,
+  gradingCompany: string,
+  cardId?: string,
+): Promise<GradedCardItem> {
+  const res = await fetch(`${BASE}/graded`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cert_id: certId,
+      grading_company: gradingCompany,
+      ...(cardId ? { card_id: cardId } : {}),
+    }),
+  });
+  if (!res.ok) {
+    let msg = `Add failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
 }

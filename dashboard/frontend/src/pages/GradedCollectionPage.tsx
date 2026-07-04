@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  fetchGradedCollection, fetchGradedFilters, cardImageUrl,
+  fetchGradedCollection, fetchGradedFilters, addGradedByCert,
   type GradedCardItem, type GradedResponse, type GradedFilters,
 } from "../api";
+import CardImage from "../components/CardImage";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
-const gradeLabel = (c: GradedCardItem) => `${c.grading_company} ${c.grade}`;
 
 // The graded collection view. Parallel to CollectionGridPage but reads the
 // graded endpoints; the raw collection page is untouched.
@@ -16,6 +16,13 @@ export default function GradedCollectionPage() {
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+
+  // Add-by-cert form
+  const [certInput, setCertInput] = useState("");
+  const [tcgIdInput, setTcgIdInput] = useState("");
+  const [addCompany, setAddCompany] = useState("PSA");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -29,8 +36,52 @@ export default function GradedCollectionPage() {
   useEffect(() => { fetchGradedFilters().then(setFilters); }, []);
   useEffect(() => { load(); }, [load]);
 
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!certInput.trim() || adding) return;
+    setAdding(true);
+    setAddError("");
+    try {
+      await addGradedByCert(certInput.trim(), addCompany, tcgIdInput.trim() || undefined);
+      setCertInput("");
+      setTcgIdInput("");
+      setPage(1);
+      await load();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Add failed");
+    } finally {
+      setAdding(false);
+    }
+  }
+
   return (
     <div>
+      {/* Add a graded card by cert number */}
+      <form className="graded-add-form" onSubmit={handleAdd}>
+        <span className="graded-add-title">Add graded card</span>
+        <input
+          className="search-input"
+          placeholder="Cert #"
+          value={certInput}
+          onChange={(e) => setCertInput(e.target.value)}
+        />
+        <input
+          className="search-input"
+          placeholder="TCGplayer ID (optional)"
+          value={tcgIdInput}
+          onChange={(e) => setTcgIdInput(e.target.value)}
+        />
+        <select className="filter-select" value={addCompany} onChange={(e) => setAddCompany(e.target.value)}>
+          {Array.from(new Set(["PSA", ...(filters?.grading_companies || [])])).map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <button className="price-range-btn" type="submit" disabled={adding || !certInput.trim()}>
+          {adding ? "Fetching…" : "Add"}
+        </button>
+        {addError && <span className="graded-add-error">{addError}</span>}
+      </form>
+
       <div className="filters-bar">
         <span style={{ fontSize: 18, fontWeight: 600 }}>Graded Slabs</span>
         {filters && (
@@ -51,35 +102,10 @@ export default function GradedCollectionPage() {
       {loading ? (
         <div className="loading">Loading...</div>
       ) : !data || data.items.length === 0 ? (
-        <div className="loading">No graded slabs yet.</div>
+        <div className="loading">No graded slabs yet. Add one by cert number above.</div>
       ) : (
         <div className="card-grid">
-          {data.items.map((c) => (
-            <div key={c.graded_inventory_id} className="card-tile">
-              <div className="card-tile-image">
-                <img
-                  src={cardImageUrl(c.card_id)}
-                  alt={c.card_name}
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-              </div>
-              <div className="card-tile-name">{c.card_name}</div>
-              <div className="card-tile-tags">
-                <span className="tag tag-special">{gradeLabel(c)}</span>
-                {c.finish !== "Regular" && <span className="tag">{c.finish}</span>}
-                {c.cert_id && <span className="tag">Cert #{c.cert_id}</span>}
-              </div>
-              <div className="card-tile-price-row">
-                <span className={`card-tile-price ${c.estimated_price == null ? "no-price" : ""}`}>
-                  {fmt(c.estimated_price)}
-                </span>
-                <span className={`status-badge status-${c.status}`}>{c.status}</span>
-              </div>
-              <div style={{ fontSize: 11, color: "#8b949e" }}>
-                {c.set_name || "Unknown Set"}{c.card_number ? ` · ${c.card_number}` : ""}
-              </div>
-            </div>
-          ))}
+          {data.items.map((c) => <GradedTile key={c.graded_inventory_id} card={c} />)}
         </div>
       )}
 
@@ -90,6 +116,46 @@ export default function GradedCollectionPage() {
           <button disabled={page >= data.total_pages} onClick={() => setPage((p) => p + 1)}>Next</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// White box, red outline: big grade number on the left, PSA card name in the
+// middle, card info underneath. Reuses the shared CardImage.
+function GradedTile({ card }: { card: GradedCardItem }) {
+  const gradeText = card.grade ? String(card.grade) : (card.grade_label || "AUTH");
+  return (
+    <div className="graded-tile">
+      <div className="graded-tile-top">
+        <div className="graded-badge">
+          <span className="graded-company">{card.grading_company}</span>
+          <span className="graded-grade-num">{gradeText}</span>
+        </div>
+        <div className="graded-name-block">
+          <div className="graded-name" title={card.card_name}>{card.card_name}</div>
+          <div className="graded-sub">
+            {card.card_set || card.set_name || "Unknown Set"}
+            {card.card_number ? ` · #${card.card_number}` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div className="graded-tile-image">
+        <CardImage cardId={card.card_id} alt={card.card_name} />
+      </div>
+
+      <div className="graded-info">
+        {card.card_variety && <div className="adv-row"><span>Variety</span><span>{card.card_variety}</span></div>}
+        {card.card_language && <div className="adv-row"><span>Language</span><span>{card.card_language}</span></div>}
+        {card.card_year && <div className="adv-row"><span>Year</span><span>{card.card_year}</span></div>}
+        <div className="adv-row"><span>Grade</span><span>{card.grading_company} {card.grade_label || card.grade}</span></div>
+        {card.population != null && <div className="adv-row"><span>Population</span><span>{card.population}</span></div>}
+        {card.cert_id && <div className="adv-row"><span>Cert #</span><span>{card.cert_id}</span></div>}
+        <div className="adv-row"><span>Status</span><span className={`status-badge status-${card.status}`}>{card.status}</span></div>
+        {card.estimated_price != null && (
+          <div className="adv-row"><span>Est. Price</span><span>{fmt(card.estimated_price)}</span></div>
+        )}
+      </div>
     </div>
   );
 }

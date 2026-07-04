@@ -22,6 +22,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from services.card_server.db import init_database
+from services.card_server.helpers.tcgplayer.transport import RateLimited
 from services.card_server.services.collection_service import CollectionService
 from services.card_server.services.reporting_service import ReportingService
 
@@ -182,7 +183,9 @@ def add_graded():
         result = asyncio.run(collection.add_graded_by_cert(cert_id, company, card_id))
     except ValueError as e:  # unsupported company / bad input
         return jsonify({"error": str(e)}), 400
-    except Exception as e:  # PSA API / token / network error
+    except RateLimited:  # grader API daily quota exhausted
+        return jsonify({"error": f"{company} API rate limit reached — try again later."}), 429
+    except Exception as e:  # token missing / network / parse error
         return jsonify({"error": f"grader lookup failed: {e}"}), 502
 
     if result is None:

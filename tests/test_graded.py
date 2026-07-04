@@ -140,3 +140,91 @@ def test_migration_relocates_graded_and_leaves_raw(tmp_path):
 
     # Idempotent
     assert migrate_graded.run(db_path=p)["moved_skus"] == 0
+
+
+# ─── PSA provider + add-by-cert + graded_skus upgrade ────────
+
+_PSA_SAMPLE = {"PSACert": {"CertNumber": "94597302", "SpecID": 4808918, "Year": "2005",
+    "Brand": "POKEMON EX DEOXYS", "Category": "TCG Cards", "CardNumber": "106",
+    "Subject": "LATIOS-HOLO", "Variety": "EX DEOXYS-FRENCH", "CardGrade": "PR 1",
+    "TotalPopulation": 2, "PopulationHigher": 22}}
+
+
+def test_psa_map_cert_and_parse_grade():
+    from services.card_server.helpers.grading.psa import map_cert
+    from services.card_server.helpers.grading.formatters import parse_grade, parse_language
+
+    m = map_cert(_PSA_SAMPLE)
+    assert m["grading_company"] == "PSA"
+    assert m["grader_spec_id"] == "4808918"
+    assert m["grade"] == 1.0 and m["grade_label"] == "PR 1"
+    assert m["card_subject"] == "LATIOS-HOLO" and m["card_language"] == "French"
+    assert m["population"] == 2 and m["population_higher"] == 22
+    assert map_cert({}) is None
+    assert parse_grade("GEM-MT 10") == 10.0 and parse_grade("NM-MT 8.5") == 8.5
+    assert parse_grade("Authentic") is None
+    assert parse_language("BASE SET", "CHARIZARD") == "English"
+
+
+def _mock_psa(monkeypatch, info=None):
+    """Patch the PSA provider so add_graded_by_cert makes no network call."""
+    import types as _t
+    from services.card_server.helpers.grading import registry
+    from services.card_server.helpers.grading.psa import map_cert
+
+    async def fake_fetch(cert, **kw):
+        return (info or map_cert(_PSA_SAMPLE)) | {"cert_id": str(cert)}
+
+    monkeypatch.setitem(registry._PROVIDERS, "PSA", _t.SimpleNamespace(COMPANY="PSA", fetch_cert=fake_fetch))
+
+
+def test_add_graded_by_cert(db, monkeypatch):
+    import asyncio
+    _mock_psa(monkeypatch)
+    cs = CollectionService(db)
+    slab = asyncio.run(cs.add_graded_by_cert("94597302", "PSA"))
+    assert slab["card_name"] == "LATIOS-HOLO"
+    assert slab["grade"] == 1.0 and slab["grade_label"] == "PR 1"
+    assert slab["card_language"] == "French" and slab["population"] == 2
+    assert slab["card_id"] is None  # TCGplayer link deferred
+    assert slab["cert_id"] == "94597302"
+
+    # Re-adding the same cert dedups the SKU (same spec+grade) but adds a slab.
+    asyncio.run(cs.add_graded_by_cert("94597302", "PSA"))
+    assert db.execute("SELECT COUNT(*) FROM graded_skus").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM graded_inventory").fetchone()[0] == 2
+
+    # It shows up in the graded browse.
+    assert ReportingService(db).browse_graded({})["total"] == 2
+
+
+def test_graded_skus_upgrade_from_legacy(tmp_path):
+    import sqlite3
+    from services.card_server.db import init_database, close_database
+
+    p = str(tmp_path / "legacy_gs.db")
+    conn = sqlite3.connect(p, isolation_level=None)
+    conn.executescript(
+        """
+        CREATE TABLE cards (id TEXT PRIMARY KEY, card_name TEXT NOT NULL, set_name TEXT);
+        CREATE TABLE graded_skus (graded_sku_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            card_id TEXT NOT NULL REFERENCES cards(id), finish TEXT NOT NULL DEFAULT 'Regular',
+            specialty_one TEXT NOT NULL DEFAULT 'None', grading_company TEXT NOT NULL, grade REAL NOT NULL,
+            qty INTEGER DEFAULT 0, latest_calc_date TEXT, created_at TEXT,
+            UNIQUE(card_id, finish, specialty_one, grading_company, grade));
+        INSERT INTO cards(id,card_name) VALUES('85534','Latios');
+        INSERT INTO graded_skus(card_id,grading_company,grade) VALUES('85534','PSA',9);
+        """
+    )
+    conn.close()
+
+    db = init_database(p)
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(graded_skus)")}
+    assert "grader_spec_id" in cols and "population" in cols
+    # legacy row preserved
+    row = db.execute("SELECT card_id, grade FROM graded_skus").fetchone()
+    assert row["card_id"] == "85534" and row["grade"] == 9.0
+    # card_id is now nullable
+    db.execute("INSERT INTO graded_skus(grading_company,grade,grader_spec_id) VALUES('PSA',1,'999')")
+    assert db.execute("SELECT COUNT(*) FROM graded_skus").fetchone()[0] == 2
+    close_database()

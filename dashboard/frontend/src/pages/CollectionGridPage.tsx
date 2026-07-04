@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
-  fetchCollection, fetchFilters, cardImageUrl,
+  fetchCollection, fetchFilters,
   type CollectionItem, type CollectionResponse, type Filters,
 } from "../api";
+import CardImage from "../components/CardImage";
 
 // Path to a card's detail page. Identity is the SKU minus condition; tags are
 // excluded from the key (tagged cards don't route — see CardTile).
@@ -227,25 +228,13 @@ export default function CollectionGridPage() {
 }
 
 function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean }) {
-  const [imgError, setImgError] = useState(false);
   const isFirstEdition = card.specialty_one === "1st Edition" || card.specialty_one === "First Edition";
   // Tagged cards don't get their own page yet — only untagged tiles link out.
   const hasTags = !!(card.tags && card.tags.trim());
 
   const imageInner = (
     <>
-      {card.has_image && !imgError ? (
-        <img
-          src={cardImageUrl(card.card_id)}
-          alt={card.card_name}
-          loading="lazy"
-          onError={() => setImgError(true)}
-        />
-      ) : (
-        <div className="card-tile-no-image">
-          <span>{card.card_name}</span>
-        </div>
-      )}
+      <CardImage cardId={card.card_id} alt={card.card_name} hasImage={card.has_image} />
       {isFirstEdition && <div className="first-edition-badge">1st Ed</div>}
     </>
   );
