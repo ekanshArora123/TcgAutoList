@@ -347,3 +347,87 @@ export function fetchCardPriceHistory(
   const qs = new URLSearchParams({ finish, days: String(days) }).toString();
   return fetchJson(`${BASE}/card/${cardId}/price-history?${qs}`);
 }
+
+// ── Graded cards (parallel to the raw collection types above) ──
+
+export interface GradedCardItem {
+  graded_inventory_id: number;
+  graded_sku_id: number;
+  cert_id: string | null;
+  qty: number;
+  tags: string | null;
+  status: string;
+  front_photo_path: string | null;
+  back_photo_path: string | null;
+  ebay_listing_id: string | null;
+  card_id: string;
+  finish: string;
+  specialty_one: string;
+  grading_company: string;
+  grade: number;
+  card_name: string;
+  set_name: string | null;
+  rarity: string | null;
+  card_number: string | null;
+  era: string | null;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+  calculation_date: string | null;
+}
+
+export interface GradedResponse {
+  items: GradedCardItem[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface GradedFilters {
+  grading_companies: string[];
+  statuses: string[];
+}
+
+export interface GradedCardDetail {
+  card: {
+    card_id: string;
+    card_name: string;
+    set_name: string | null;
+    rarity: string | null;
+    card_number: string | null;
+    era: string | null;
+    card_type: string | null;
+    finish: string;
+    specialty_one: string;
+    grading_company: string;
+    grade: number;
+  };
+  kind: "graded";
+  has_image: boolean;
+  qty: number;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+  raw_estimated_price: number | null;
+}
+
+export function fetchGradedCollection(params: Record<string, string>): Promise<GradedResponse> {
+  const qs = new URLSearchParams(params).toString();
+  return fetchJson(`${BASE}/graded?${qs}`);
+}
+
+export function fetchGradedFilters(): Promise<GradedFilters> {
+  return fetchJson(`${BASE}/graded/companies`);
+}
+
+export function fetchGradedCardDetail(
+  cardId: string,
+  key: { finish: string; specialty_one: string; grading_company: string; grade: number },
+): Promise<GradedCardDetail> {
+  const qs = new URLSearchParams({
+    finish: key.finish,
+    specialty_one: key.specialty_one,
+    grading_company: key.grading_company,
+    grade: String(key.grade),
+  }).toString();
+  return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
+}

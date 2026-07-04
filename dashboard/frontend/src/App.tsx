@@ -3,6 +3,7 @@ import CollectionGridPage from "./pages/CollectionGridPage";
 import CollectionPage from "./pages/CollectionPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import CardDetailPage from "./pages/CardDetailPage";
+import GradedCollectionPage from "./pages/GradedCollectionPage";
 import "./App.css";
 
 function App() {
@@ -17,6 +18,9 @@ function App() {
           <NavLink to="/info" className={({ isActive }) => `nav-btn ${isActive ? "active" : ""}`}>
             Info
           </NavLink>
+          <NavLink to="/graded" className={({ isActive }) => `nav-btn ${isActive ? "active" : ""}`}>
+            Graded
+          </NavLink>
           <NavLink to="/analytics" className={({ isActive }) => `nav-btn ${isActive ? "active" : ""}`}>
             Analytics
           </NavLink>
@@ -26,6 +30,7 @@ function App() {
         <Routes>
           <Route path="/" element={<CollectionGridPage />} />
           <Route path="/info" element={<CollectionPage />} />
+          <Route path="/graded" element={<GradedCollectionPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/card/:cardId" element={<CardDetailPage />} />
         </Routes>
