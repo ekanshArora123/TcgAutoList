@@ -18,7 +18,7 @@ The working capabilities in the repo today — built and in use. They reuse each
 
 | Capability | Lives in | What it does | Builds on |
 |------------|----------|--------------|-----------|
-| **Card-data store + MCP server** | `services/card_server/` (`db.py`, `schema.sql`, `index.py`) | SQLite substrate (cards/skus/inventory/prices + market tables) exposed as CRUD services and 30+ FastMCP tools. | The shared foundation — everything else builds on it. |
+| **Card-data store + MCP server** | `services/card_server/` (`db.py`, `schema.sql`, `index.py`) | SQLite substrate (cards/skus/inventory/prices + market tables) exposed as CRUD services. | The shared foundation — everything else builds on it. |
 | **TCGplayer scrapers/fetchers** | `helpers/tcgplayer/` | Active/sold listings, card metadata, condition/finish formatters, shared HTTP transport. See `docs/tcgplayer-api.md`. | TCGplayer APIs. |
 | **Pricing engine** | `helpers/pricing/` via `pricing_service.py` | Lowest-listing anchor + sold sanity checks, confidence scoring, cross-condition extrapolation, liquid value. | Card-data store, scrapers, market-data. |
 | **Market-data collector** | `helpers/market/` + `collect.py` | Periodic aggregate snapshots → `market_snapshots` (feeds pricing). Idempotent per date. | Card-data store, scrapers. |
@@ -39,6 +39,7 @@ What's in progress or planned and where each is heading — so new work coordina
 | **Dashboard as control plane** | Read-only today | Trigger workflows, override prices, manage listings from the UI. |
 | **DevOps / deployment** | Vercel (frontend) + a simple Azure pipeline exist | A sub-project like any other, following the tenets: harden CI/CD, secrets, environments. |
 | **Vendor live-sales tracking** | Idea | Let vendors track sales in real time — an example of the platform reaching beyond the owner's own selling. |
+| **MCP server(s)** | Deferred (not a current concern) | FastMCP server(s) that will be implemented later to wrap the existing services (card-server CRUD/pricing/reporting, etc.) as LLM-callable tools.|
 
 ## Architecture
 
@@ -51,7 +52,6 @@ See `docs/STRUCTURE.md` for the full folder layout and the **Capabilities** tabl
 - **All durable state in SQLite.** Every capability can stop/restart without losing progress; the DB is the single source of truth.
 - **Idempotent by default.** Re-running skips work already done (already-listed cards, already-collected snapshots, …).
 - **Services own their external system.** card-server owns the DB/TCGplayer/pricing; telegram owns Telegram; ebay owns eBay. Callers don't duplicate owned functionality or depend on a service's internal format.
-- **Coded path imports directly; LLM path uses MCP.** Non-LLM code imports card-server services directly; MCP (STDIO) is wired only when an LLM conversation needs tool access.
 
 Capability-specific decisions live in that capability's local doc — e.g. the seller pipeline's `/next` trigger, one-photo-at-a-time, and per-card context reset are in `dashboard/backend/orchestrator/PIPELINE.md`.
 
@@ -62,7 +62,7 @@ Three service files are public: the orchestrator calls `collection_service` + `p
 ```
 services/card_server/         (imported as `services.card_server`)
 ├── data/cards.db             <- SQLite database (gitignored)
-├── index.py                  <- MCP entry (FastMCP): 30+ tools, delegates to services
+├── index.py                  <- MCP entry in future
 ├── db.py                     <- SQLite init/close
 ├── schema.sql                <- core chain (cards, skus, inventory, prices) + 3 market tables
 ├── types.py                  <- Pydantic models + type aliases
@@ -103,7 +103,7 @@ All constants live in `services/card_server/helpers/pricing/config.py`; the full
 
 Python (3.11+). The majority of the codebase is in Python except for the frontend which is React.
 
-Python | SQLite via stdlib `sqlite3` | `mcp` (FastMCP) | `python-telegram-bot` | Pydantic | `httpx` | `python-dotenv`
+Python | SQLite via stdlib `sqlite3` | `python-telegram-bot` | Pydantic | `httpx` | `python-dotenv`
 
 **No packaging / no install.** Dependencies are in `requirements.txt` (`pip install -r requirements.txt`). Imports resolve via the repo root being on `sys.path` — always run modules from the repo root with `python -m <dotted.path>`. Import paths mirror the folder layout: `services.card_server.*`, `services.telegram.*`, `services.ebay.*`, `dashboard.backend.orchestrator.*`. (Folders use underscores, not hyphens, so they're valid module names.)
 
@@ -130,8 +130,6 @@ run.bat            # Windows
 
 # Or run pieces manually (always from the repo root so imports resolve):
 python -m dashboard.backend.orchestrator.main   # the full app (entry point; needs .env)
-python -m services.card_server.index            # card-server MCP server (stdio)
-python -m services.card_server.collect          # market data collection runner (pricing snapshots)
 python -m services.card_server.collect_sales     # comprehensive raw sales-history collection (graph data; separate from pricing)
 python dashboard/backend/app.py                 # Flask API on :5000
 cd dashboard/frontend && npm run dev            # Vite dev server on :5173
