@@ -10,29 +10,46 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Optional
 
-_INSERT_SQL = """
-    INSERT INTO graded_skus (card_id, finish, specialty_one, grading_company, grade, qty)
-    VALUES (:card_id, :finish, :specialty_one, :grading_company, :grade, :qty)
-"""
+# All grader-identity fields are generic (any company maps onto them). card_id
+# is the OPTIONAL, deferred TCGplayer link.
+_COLUMNS = (
+    "grading_company", "grade", "grade_label", "grader_spec_id",
+    "card_year", "card_set", "card_category", "card_number", "card_subject",
+    "card_variety", "card_language", "population", "population_higher", "pop_fetched_at",
+    "card_id", "finish", "specialty_one", "qty",
+)
 
-_GET_BY_COMPOSITE_SQL = """
+_INSERT_SQL = (
+    "INSERT INTO graded_skus (" + ", ".join(_COLUMNS) + ") "
+    "VALUES (" + ", ".join(f":{c}" for c in _COLUMNS) + ")"
+)
+
+# Cert-sourced identity: (company, grader spec, grade).
+_SPEC_LOOKUP_SQL = """
     SELECT * FROM graded_skus
-    WHERE card_id = :card_id AND finish = :finish AND specialty_one = :specialty_one
-      AND grading_company = :grading_company AND grade = :grade
+    WHERE grading_company = :grading_company AND grader_spec_id = :grader_spec_id AND grade = :grade
 """
 
-_UPDATABLE = ("finish", "specialty_one", "grading_company", "grade", "qty", "latest_calc_date")
+# Legacy/manual identity (no grader spec): the card-based composite key.
+_LEGACY_LOOKUP_SQL = """
+    SELECT * FROM graded_skus
+    WHERE grader_spec_id IS NULL AND card_id IS :card_id AND finish = :finish
+      AND specialty_one = :specialty_one AND grading_company = :grading_company AND grade = :grade
+"""
+
+# Everything except identity autoincrement + created_at may be updated (e.g. a pop
+# refresh, or the graded->raw converter setting card_id later).
+_UPDATABLE = tuple(c for c in _COLUMNS if c != "qty") + ("qty", "latest_calc_date")
 
 
 def _normalize(params: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "card_id": params["card_id"],
-        "finish": params.get("finish") or "Regular",
-        "specialty_one": params.get("specialty_one") or "None",
-        "grading_company": params["grading_company"],
-        "grade": float(params["grade"]),
-        "qty": params.get("qty", 0) or 0,
-    }
+    row = {c: params.get(c) for c in _COLUMNS}
+    row["grading_company"] = params["grading_company"]
+    row["grade"] = float(params["grade"])
+    row["finish"] = params.get("finish") or "Regular"
+    row["specialty_one"] = params.get("specialty_one") or "None"
+    row["qty"] = params.get("qty", 0) or 0
+    return row
 
 
 class GradedSkusHelper:
@@ -45,7 +62,11 @@ class GradedSkusHelper:
 
     def get_or_create(self, input: dict[str, Any]) -> dict:
         norm = _normalize(input)
-        existing = self.db.execute(_GET_BY_COMPOSITE_SQL, norm).fetchone()
+        # Cert-sourced cards dedup on the grader spec; manual/legacy on the card key.
+        if norm.get("grader_spec_id"):
+            existing = self.db.execute(_SPEC_LOOKUP_SQL, norm).fetchone()
+        else:
+            existing = self.db.execute(_LEGACY_LOOKUP_SQL, norm).fetchone()
         if existing:
             return dict(existing)
         return self.create(input)
@@ -56,25 +77,22 @@ class GradedSkusHelper:
         ).fetchone()
         return dict(row) if row else None
 
-    def find_by_composite_key(
-        self,
-        card_id: str,
-        finish: str,
-        specialty_one: str,
-        grading_company: str,
-        grade: float,
-    ) -> Optional[dict]:
+    def find_by_spec(self, grading_company: str, grader_spec_id: str, grade: float) -> Optional[dict]:
         row = self.db.execute(
-            _GET_BY_COMPOSITE_SQL,
-            {
-                "card_id": card_id,
-                "finish": finish,
-                "specialty_one": specialty_one,
-                "grading_company": grading_company,
-                "grade": float(grade),
-            },
+            _SPEC_LOOKUP_SQL,
+            {"grading_company": grading_company, "grader_spec_id": grader_spec_id, "grade": float(grade)},
         ).fetchone()
         return dict(row) if row else None
+
+    def link_card(self, graded_sku_id: int, card_id: Optional[str]) -> Optional[dict]:
+        """Set/clear the optional TCGplayer card_id link. Isolated seam — the
+        future graded->raw converter is the intended caller (and replaces any
+        interim manual entry)."""
+        self.db.execute(
+            "UPDATE graded_skus SET card_id = :card_id WHERE graded_sku_id = :graded_sku_id",
+            {"card_id": card_id, "graded_sku_id": graded_sku_id},
+        )
+        return self.get_by_id(graded_sku_id)
 
     def get_by_card_id(self, card_id: str) -> list[dict]:
         rows = self.db.execute(

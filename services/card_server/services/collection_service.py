@@ -7,6 +7,7 @@ One of the two service classes coded callers use. Ported from collectionService.
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 from typing import Any, Optional
 
 from ..helpers.crud.cards import CardsHelper
@@ -16,6 +17,7 @@ from ..helpers.crud.graded_skus import GradedSkusHelper
 from ..helpers.crud.inventory import InventoryHelper
 from ..helpers.crud.prices import PricesHelper
 from ..helpers.crud.skus import SkusHelper
+from ..helpers.grading import registry as grading_registry
 from ..helpers.tcgplayer.fetch_card_info import fetch_card_info
 
 
@@ -241,3 +243,69 @@ class CollectionService:
 
     def delete_graded_inventory_item(self, graded_inventory_id: int) -> bool:
         return self.graded_inventory.delete(graded_inventory_id)
+
+    async def add_graded_by_cert(
+        self, cert_id: str, grading_company: str = "PSA", card_id: Optional[str] = None
+    ) -> Optional[dict]:
+        """Add a graded slab by cert number: fetch identity + population from the
+        grading company, upsert the graded SKU (identity from the grader), and
+        create the physical slab. `card_id` is the OPTIONAL, manually-entered
+        TCGplayer link (deferred feature — used only so the raw image/pricing can
+        attach later). Returns the new slab's detail, or None if the cert isn't
+        found. Re-adding a known cert's spec refreshes its population.
+        """
+        provider = grading_registry.get_provider(grading_company)
+        if provider is None:
+            raise ValueError(f"Unsupported grading company: {grading_company}")
+
+        info = await provider.fetch_cert(cert_id)
+        if not info:
+            return None  # cert not found at the grader
+
+        # Optional manual TCGplayer link — ensure the raw card row exists (auto-
+        # fetches metadata/image) so a NULL-safe link can attach. Bad id → skip.
+        linked_card_id: Optional[str] = None
+        if card_id:
+            card = await self.get_card(str(card_id))
+            if card:
+                linked_card_id = card["id"]
+
+        grade = info.get("grade")
+        sku_params = {
+            **{k: info.get(k) for k in (
+                "grading_company", "grade_label", "grader_spec_id", "card_year",
+                "card_set", "card_category", "card_number", "card_subject",
+                "card_variety", "card_language", "population", "population_higher",
+            )},
+            "grade": grade if grade is not None else 0.0,  # 'Authentic' → 0.0 sentinel
+            "pop_fetched_at": date.today().isoformat(),
+            "card_id": linked_card_id,
+        }
+        graded_sku = self.graded_skus.get_or_create(sku_params)
+
+        # Refresh pop (and attach the link if newly provided) on an existing SKU.
+        updates: dict[str, Any] = {
+            "graded_sku_id": graded_sku["graded_sku_id"],
+            "population": sku_params["population"],
+            "population_higher": sku_params["population_higher"],
+            "pop_fetched_at": sku_params["pop_fetched_at"],
+        }
+        if linked_card_id and not graded_sku.get("card_id"):
+            updates["card_id"] = linked_card_id
+        self.graded_skus.update(updates)
+
+        inv = self.graded_inventory.create(
+            {
+                "graded_sku_id": graded_sku["graded_sku_id"],
+                "cert_id": info.get("cert_id") or str(cert_id),
+                "qty": 1,
+            }
+        )
+        return self.graded_inventory.get_detail_by_id(inv["graded_inventory_id"])
+
+    def link_graded_to_card(self, graded_sku_id: int, card_id: Optional[str]) -> Optional[dict]:
+        """Isolated seam for the future graded->raw converter to set the TCGplayer link."""
+        return self.graded_skus.link_card(graded_sku_id, card_id)
+
+    def supported_grading_companies(self) -> list[str]:
+        return grading_registry.supported_companies()

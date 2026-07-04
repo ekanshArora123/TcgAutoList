@@ -182,24 +182,44 @@ CREATE INDEX IF NOT EXISTS idx_mph_card_date ON market_price_history(card_id, bu
 -- by a plain card_id join.
 -----------------------------------------------------
 
--- graded_skus: a graded *variant* of a card. The graded analog of `skus`: where
--- a raw SKU is differentiated by condition, a graded SKU is differentiated by
--- grading_company + numeric grade.
+-- graded_skus: a graded *variant* of a card. Differentiated by grading_company
+-- + numeric grade. Identity + population come from the grading company (per cert
+-- lookup); the grader-identity columns are named GENERICALLY so any company maps
+-- onto them. The TCGplayer `card_id` link is OPTIONAL/nullable (deferred; only
+-- used for raw-vs-graded pricing, filled later by the graded->raw converter).
 CREATE TABLE IF NOT EXISTS graded_skus (
     graded_sku_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-    card_id          TEXT NOT NULL REFERENCES cards(id),
-    finish           TEXT NOT NULL DEFAULT 'Regular',      -- Regular, Holo, Reverse-Holo
-    specialty_one    TEXT NOT NULL DEFAULT 'None',         -- TCGplayer variant (First Edition, etc.) — a 1st-Ed PSA 10 != Unlimited PSA 10
     grading_company  TEXT NOT NULL,                        -- PSA, BGS, CGC, SGC, ACE, TAG, Other
-    grade            REAL NOT NULL,                        -- numeric grade out of 10 (10, 9.5, 9, ...)
+    grade            REAL NOT NULL,                        -- numeric grade (10, 9.5, 1, ...)
+    grade_label      TEXT,                                 -- grader's exact label ("GEM-MT 10", "PR 1")
+    -- Generic grader-supplied identity (works for any grading company)
+    grader_spec_id   TEXT,                                 -- grader's internal card/spec id (e.g. PSA SpecID) — identity key
+    card_year        TEXT,
+    card_set         TEXT,                                 -- grader's set/brand (e.g. "POKEMON EX DEOXYS")
+    card_category    TEXT,
+    card_number      TEXT,
+    card_subject     TEXT,                                 -- card name/subject per grader
+    card_variety     TEXT,                                 -- variety (holo, 1st ed, language, ...)
+    card_language    TEXT,
+    population        INTEGER,                             -- grader population at this grade
+    population_higher INTEGER,                             -- count graded higher
+    pop_fetched_at   TEXT,                                 -- when pop/identity was last fetched
+    -- Optional, DEFERRED link to the TCGplayer card (for raw-vs-graded pricing)
+    card_id          TEXT REFERENCES cards(id),            -- NULLABLE — filled later by the graded->raw converter
+    finish           TEXT NOT NULL DEFAULT 'Regular',      -- retained for the eventual TCGplayer mapping
+    specialty_one    TEXT NOT NULL DEFAULT 'None',
     qty              INTEGER DEFAULT 0,                    -- aggregate count of slabs with this exact graded SKU
-    latest_calc_date TEXT,                                 -- date of most recent price calculation for this graded SKU
+    latest_calc_date TEXT,                                 -- date of most recent price calculation
     created_at       TEXT DEFAULT (datetime('now')),
 
+    -- legacy/manual rows (no grader spec) dedup on the card-based key
     UNIQUE(card_id, finish, specialty_one, grading_company, grade)
 );
 
 CREATE INDEX IF NOT EXISTS idx_graded_skus_card_id ON graded_skus(card_id);
+-- idx_graded_skus_spec (unique, cert-sourced identity) is created in db.py after
+-- the graded_skus rebuild, so executescript never references grader_spec_id on a
+-- not-yet-migrated table.
 
 -- graded_inventory: individual physical slabs you own. The graded analog of
 -- `inventory`; each row references a graded_sku and carries its cert/serial id.

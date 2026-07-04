@@ -16,19 +16,28 @@ from .graded_skus import GradedSkusHelper
 # Canonical "owned graded slab with its current price" join (graded analog of
 # INV_SKU_CARD_PRICE_FROM). The price is the graded_prices row whose date matches
 # the graded SKU's latest_calc_date.
+# cards is LEFT JOINed because the TCGplayer link (g.card_id) is optional/nullable.
 GRADED_INV_FROM = """
     FROM graded_inventory i
     JOIN graded_skus g ON i.graded_sku_id = g.graded_sku_id
-    JOIN cards c ON g.card_id = c.id
+    LEFT JOIN cards c ON g.card_id = c.id
     LEFT JOIN graded_prices p ON i.graded_sku_id = p.graded_sku_id
       AND p.calculation_date = g.latest_calc_date
 """
 
+# Identity/display comes from the grader (card_subject/card_set/...); the raw
+# `cards` fields are only present when a card_id link exists. `card_name`/
+# `set_name`/`card_number` COALESCE grader-first so callers read them uniformly.
 _DETAIL_SELECT = """
     SELECT
       i.*,
-      g.card_id, g.finish, g.specialty_one, g.grading_company, g.grade,
-      c.card_name, c.set_name, c.rarity, c.card_number,
+      g.card_id, g.finish, g.specialty_one, g.grading_company, g.grade, g.grade_label,
+      g.grader_spec_id, g.card_year, g.card_set, g.card_category, g.card_variety,
+      g.card_language, g.population, g.population_higher,
+      COALESCE(g.card_subject, c.card_name) AS card_name,
+      COALESCE(g.card_set, c.set_name) AS set_name,
+      COALESCE(g.card_number, c.card_number) AS card_number,
+      c.rarity,
       p.estimated_price
 """ + GRADED_INV_FROM
 

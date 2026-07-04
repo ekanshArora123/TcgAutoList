@@ -722,8 +722,13 @@ class ReportingService:
             f"""
             SELECT i.graded_inventory_id, i.graded_sku_id, i.cert_id, i.qty, i.tags, i.status,
                    i.front_photo_path, i.back_photo_path, i.ebay_listing_id,
-                   g.card_id, g.finish, g.specialty_one, g.grading_company, g.grade,
-                   c.card_name, c.set_name, c.rarity, c.card_number, c.era,
+                   g.card_id, g.finish, g.grading_company, g.grade, g.grade_label,
+                   g.grader_spec_id, g.card_year, g.card_variety, g.card_language,
+                   g.population, g.population_higher,
+                   COALESCE(g.card_subject, c.card_name) AS card_name,
+                   COALESCE(g.card_set, c.set_name) AS set_name,
+                   COALESCE(g.card_number, c.card_number) AS card_number,
+                   c.rarity, c.era,
                    p.estimated_price, p.confidence_percent, p.calculation_date
             {GRADED_INV_FROM} {where}
             ORDER BY g.grade DESC, i.created_at ASC LIMIT ? OFFSET ?

@@ -7,6 +7,7 @@ that lives here is HTTP concerns and the on-disk card-image lookup, which is a
 filesystem concern the dashboard owns.
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from services.card_server.db import init_database
+from services.card_server.services.collection_service import CollectionService
 from services.card_server.services.reporting_service import ReportingService
 
 app = Flask(__name__)
@@ -32,6 +34,8 @@ _IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "card
 # One shared connection (check_same_thread=False) owned by card-server.
 _db = init_database(os.environ.get("DB_PATH"))
 reporting = ReportingService(_db)
+# Write path (the dashboard's first): adding graded cards by cert number.
+collection = CollectionService(_db)
 
 
 def _image_card_ids() -> set[str]:
@@ -158,6 +162,32 @@ def collection_grid():
 def graded_grid():
     """Owned graded slabs — the graded collection view."""
     return jsonify(reporting.browse_graded(request.args.to_dict()))
+
+
+@app.route("/api/graded", methods=["POST"])
+def add_graded():
+    """Add a graded slab by cert number (fetches identity + pop from the grader).
+
+    Body: { cert_id, grading_company?="PSA", card_id? }. `card_id` is the optional,
+    manually-entered TCGplayer id. The dashboard's first write endpoint.
+    """
+    body = request.get_json(silent=True) or {}
+    cert_id = str(body.get("cert_id") or "").strip()
+    if not cert_id:
+        return jsonify({"error": "cert_id is required"}), 400
+    company = str(body.get("grading_company") or "PSA").strip()
+    card_id = str(body.get("card_id") or "").strip() or None
+
+    try:
+        result = asyncio.run(collection.add_graded_by_cert(cert_id, company, card_id))
+    except ValueError as e:  # unsupported company / bad input
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:  # PSA API / token / network error
+        return jsonify({"error": f"grader lookup failed: {e}"}), 502
+
+    if result is None:
+        return jsonify({"error": f"cert {cert_id} not found at {company}"}), 404
+    return jsonify(result), 201
 
 
 @app.route("/api/graded/companies")
