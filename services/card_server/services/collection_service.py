@@ -10,6 +10,9 @@ import sqlite3
 from typing import Any, Optional
 
 from ..helpers.crud.cards import CardsHelper
+from ..helpers.crud.graded_inventory import GradedInventoryHelper
+from ..helpers.crud.graded_prices import GradedPricesHelper
+from ..helpers.crud.graded_skus import GradedSkusHelper
 from ..helpers.crud.inventory import InventoryHelper
 from ..helpers.crud.prices import PricesHelper
 from ..helpers.crud.skus import SkusHelper
@@ -23,6 +26,10 @@ class CollectionService:
         self.skus = SkusHelper(db)
         self.inventory = InventoryHelper(db)
         self.prices = PricesHelper(db)
+        # Graded cards: parallel chain, separate helpers (raw helpers unchanged).
+        self.graded_skus = GradedSkusHelper(db)
+        self.graded_inventory = GradedInventoryHelper(db)
+        self.graded_prices = GradedPricesHelper(db)
 
     # ─── Card Lookups (with auto-fetch) ──────────────────────
 
@@ -188,3 +195,49 @@ class CollectionService:
 
     def bulk_add_to_inventory(self, items: list[dict[str, Any]]) -> int:
         return self.inventory.bulk_create(items)
+
+    # ─── Graded cards (parallel to the raw operations above) ──
+
+    def add_graded_to_inventory(self, params: dict[str, Any]) -> Optional[dict]:
+        """Add a physical graded slab: resolve its graded SKU (company+grade) and
+        create a graded_inventory row carrying the cert id."""
+        graded_sku = self.graded_skus.get_or_create(
+            {
+                "card_id": params["card_id"],
+                "finish": params.get("finish") or "Regular",
+                "specialty_one": params.get("specialty_one") or "None",
+                "grading_company": params["grading_company"],
+                "grade": params["grade"],
+                "qty": 0,
+            }
+        )
+        return self.graded_inventory.create(
+            {
+                "graded_sku_id": graded_sku["graded_sku_id"],
+                "cert_id": params.get("cert_id"),
+                "qty": params.get("qty") or 1,
+                "tags": params.get("tags"),
+                "status": "unlisted",
+            }
+        )
+
+    def resolve_graded_sku(self, input: dict[str, Any]) -> dict:
+        return self.graded_skus.get_or_create(input)
+
+    def get_graded_skus_for_card(self, card_id: str) -> list[dict]:
+        return self.graded_skus.get_by_card_id(card_id)
+
+    def search_graded_skus(self, filters: dict[str, Any]) -> list[dict]:
+        return self.graded_skus.search(filters)
+
+    def list_grading_companies(self) -> list[str]:
+        return self.graded_skus.get_all_companies()
+
+    def get_graded_inventory_detail(self, graded_inventory_id: int) -> Optional[dict]:
+        return self.graded_inventory.get_detail_by_id(graded_inventory_id)
+
+    def search_graded_inventory_with_details(self, filters: dict[str, Any]) -> list[dict]:
+        return self.graded_inventory.search_with_details(filters)
+
+    def delete_graded_inventory_item(self, graded_inventory_id: int) -> bool:
+        return self.graded_inventory.delete(graded_inventory_id)

@@ -172,3 +172,69 @@ CREATE TABLE IF NOT EXISTS market_price_history (
 
 CREATE INDEX IF NOT EXISTS idx_mph_variant ON market_price_history(card_id, condition, finish, source);
 CREATE INDEX IF NOT EXISTS idx_mph_card_date ON market_price_history(card_id, bucket_date);
+
+-----------------------------------------------------
+-- GRADED CARDS (parallel to skus/inventory/prices)
+-- Graded slabs are modeled as their own parallel chain rather than mixed into
+-- the raw tables, so the raw path is untouched. A future kind (e.g. sealed)
+-- would follow the same parallel pattern. All three reference the SHARED
+-- `cards` row (same TCGplayer product id), so a slab relates to its raw version
+-- by a plain card_id join.
+-----------------------------------------------------
+
+-- graded_skus: a graded *variant* of a card. The graded analog of `skus`: where
+-- a raw SKU is differentiated by condition, a graded SKU is differentiated by
+-- grading_company + numeric grade.
+CREATE TABLE IF NOT EXISTS graded_skus (
+    graded_sku_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id          TEXT NOT NULL REFERENCES cards(id),
+    finish           TEXT NOT NULL DEFAULT 'Regular',      -- Regular, Holo, Reverse-Holo
+    specialty_one    TEXT NOT NULL DEFAULT 'None',         -- TCGplayer variant (First Edition, etc.) — a 1st-Ed PSA 10 != Unlimited PSA 10
+    grading_company  TEXT NOT NULL,                        -- PSA, BGS, CGC, SGC, ACE, TAG, Other
+    grade            REAL NOT NULL,                        -- numeric grade out of 10 (10, 9.5, 9, ...)
+    qty              INTEGER DEFAULT 0,                    -- aggregate count of slabs with this exact graded SKU
+    latest_calc_date TEXT,                                 -- date of most recent price calculation for this graded SKU
+    created_at       TEXT DEFAULT (datetime('now')),
+
+    UNIQUE(card_id, finish, specialty_one, grading_company, grade)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graded_skus_card_id ON graded_skus(card_id);
+
+-- graded_inventory: individual physical slabs you own. The graded analog of
+-- `inventory`; each row references a graded_sku and carries its cert/serial id.
+CREATE TABLE IF NOT EXISTS graded_inventory (
+    graded_inventory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    graded_sku_id       INTEGER NOT NULL REFERENCES graded_skus(graded_sku_id),
+    cert_id             TEXT,                               -- grading cert / slab serial number
+    qty                 INTEGER DEFAULT 1,
+    tags                TEXT,                               -- comma-separated notes
+    status              TEXT DEFAULT 'unlisted',            -- unlisted, photo_requested, listed, skipped, sold
+    front_photo_path    TEXT,
+    back_photo_path     TEXT,
+    ebay_listing_id     TEXT,
+    listed_at           TEXT,
+    created_at          TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_graded_inventory_sku ON graded_inventory(graded_sku_id);
+CREATE INDEX IF NOT EXISTS idx_graded_inventory_status ON graded_inventory(status);
+
+-- graded_prices: historical price estimates per graded SKU (mirror of `prices`).
+-- Graded pricing is manual today (TCGplayer has no graded data).
+CREATE TABLE IF NOT EXISTS graded_prices (
+    graded_sku_id                   INTEGER NOT NULL REFERENCES graded_skus(graded_sku_id),
+    calculation_date                TEXT NOT NULL,                  -- ISO date string YYYY-MM-DD
+    estimated_price                 REAL,
+    estimated_liquid_value          REAL,
+    confidence_percent              INTEGER,
+    manual_check_necessary          INTEGER DEFAULT 0,
+    manually_checked                INTEGER DEFAULT 0,
+    algorithm_version               TEXT,
+    estimated_low_price             REAL,
+    estimated_high_price            REAL,
+    estimated_low_price_liquid      REAL,
+    estimated_high_price_liquid     REAL,
+
+    PRIMARY KEY (graded_sku_id, calculation_date)
+);

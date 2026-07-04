@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from ..helpers.crud.cards import CardsHelper
+from ..helpers.crud.graded_inventory import GRADED_INV_FROM, GradedInventoryHelper
+from ..helpers.crud.graded_skus import GradedSkusHelper
 from ..helpers.crud.inventory import INV_SKU_CARD_PRICE_FROM, InventoryHelper
 from ..helpers.crud.skus import SkusHelper
 
@@ -176,6 +178,9 @@ class ReportingService:
         self.cards = CardsHelper(db)
         self.skus = SkusHelper(db)
         self.inventory = InventoryHelper(db)
+        # Graded reads use a parallel chain; raw helpers/queries are unchanged.
+        self.graded_skus = GradedSkusHelper(db)
+        self.graded_inventory = GradedInventoryHelper(db)
 
     # ─── Collection browse ───────────────────────────────────
 
@@ -670,6 +675,123 @@ class ReportingService:
             [n],
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+    # ─── Graded reads (parallel to the raw browse/detail above) ──
+
+    def _raw_top_price(self, card_id: str, finish: str, specialty_one: str = "None") -> Optional[float]:
+        """Best (highest) raw price estimate for a card variant — the raw anchor a
+        graded slab is compared against. Reads raw skus/prices; no raw code changes."""
+        row = self.db.execute(
+            """
+            SELECT MAX(p.estimated_price) AS raw_price
+            FROM skus s
+            JOIN prices p ON s.sku_id = p.sku_id AND p.calculation_date = s.latest_calc_date
+            WHERE s.card_id = ? AND s.finish = ? AND s.specialty_one = ?
+              AND s.specialty_two = 'None'
+            """,
+            [card_id, finish, specialty_one],
+        ).fetchone()
+        return row["raw_price"] if row else None
+
+    def browse_graded(self, filters: dict[str, Any]) -> dict[str, Any]:
+        """Paginated list of owned graded slabs (the graded collection view).
+
+        Reuses the shared pagination helpers (_paginate/_page_result). Filters:
+        card_id, grading_company, status.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if filters.get("card_id"):
+            conditions.append("g.card_id = ?")
+            params.append(filters["card_id"])
+        if filters.get("grading_company"):
+            conditions.append("g.grading_company = ?")
+            params.append(filters["grading_company"])
+        if filters.get("status"):
+            conditions.append("i.status = ?")
+            params.append(filters["status"])
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        page, per_page, offset = _paginate(filters.get("page"), filters.get("per_page"), 48)
+
+        total = self.db.execute(
+            f"SELECT COUNT(*) as total {GRADED_INV_FROM} {where}", params
+        ).fetchone()["total"]
+
+        rows = self.db.execute(
+            f"""
+            SELECT i.graded_inventory_id, i.graded_sku_id, i.cert_id, i.qty, i.tags, i.status,
+                   i.front_photo_path, i.back_photo_path, i.ebay_listing_id,
+                   g.card_id, g.finish, g.specialty_one, g.grading_company, g.grade,
+                   c.card_name, c.set_name, c.rarity, c.card_number, c.era,
+                   p.estimated_price, p.confidence_percent, p.calculation_date
+            {GRADED_INV_FROM} {where}
+            ORDER BY g.grade DESC, i.created_at ASC LIMIT ? OFFSET ?
+            """,
+            params + [per_page, offset],
+        ).fetchall()
+        return _page_result([dict(r) for r in rows], total, page, per_page)
+
+    def graded_card_detail(
+        self,
+        card_id: str,
+        finish: str = "Regular",
+        specialty_one: str = "None",
+        grading_company: str = "",
+        grade: Optional[float] = None,
+        image_card_ids: Optional[list[str]] = None,
+    ) -> Optional[dict[str, Any]]:
+        """One graded variant's detail: the slab rollup for a company+grade plus
+        `raw_estimated_price` (the top raw price of the same card) for comparison."""
+        card = self.cards.get_by_id(card_id)
+        if not card or not grading_company or grade is None:
+            return None
+
+        row = self.db.execute(
+            """
+            SELECT SUM(i.qty) AS qty,
+                   MAX(p.estimated_price) AS estimated_price,
+                   MAX(p.confidence_percent) AS confidence_percent
+            """
+            + GRADED_INV_FROM
+            + """
+            WHERE g.card_id = ? AND g.finish = ? AND g.specialty_one = ?
+              AND g.grading_company = ? AND g.grade = ?
+            """,
+            [card_id, finish, specialty_one, grading_company, float(grade)],
+        ).fetchone()
+        image_set = set(_digit_ids(image_card_ids))
+        return {
+            "card": {
+                "card_id": card["id"],
+                "card_name": card["card_name"],
+                "set_name": card["set_name"],
+                "rarity": card["rarity"],
+                "card_number": card["card_number"],
+                "era": card["era"],
+                "card_type": card["card_type"],
+                "finish": finish,
+                "specialty_one": specialty_one,
+                "grading_company": grading_company,
+                "grade": float(grade),
+            },
+            "kind": "graded",
+            "has_image": str(card_id) in image_set,
+            "qty": (row["qty"] or 0) if row else 0,
+            "estimated_price": row["estimated_price"] if row else None,
+            "confidence_percent": row["confidence_percent"] if row else None,
+            "raw_estimated_price": self._raw_top_price(card_id, finish, specialty_one),
+        }
+
+    def graded_filter_options(self) -> dict[str, list[str]]:
+        """Distinct values for the graded view's filter dropdowns."""
+        statuses = self.db.execute(
+            "SELECT DISTINCT status FROM graded_inventory WHERE status IS NOT NULL ORDER BY status"
+        ).fetchall()
+        return {
+            "grading_companies": self.graded_skus.get_all_companies(),
+            "statuses": [r["status"] for r in statuses],
+        }
 
 
 def _page_result(items: list[dict], total: int, page: int, per_page: int) -> dict[str, Any]:

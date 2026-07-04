@@ -151,6 +151,42 @@ def collection_grid():
     )
 
 
+# ── Graded cards (parallel read endpoints) ──────────────────
+
+
+@app.route("/api/graded")
+def graded_grid():
+    """Owned graded slabs — the graded collection view."""
+    return jsonify(reporting.browse_graded(request.args.to_dict()))
+
+
+@app.route("/api/graded/companies")
+def graded_companies():
+    """Filter dropdown values for the graded view (companies + statuses)."""
+    return jsonify(reporting.graded_filter_options())
+
+
+@app.route("/api/graded/<card_id>")
+def graded_card_detail(card_id):
+    """One graded variant's detail (company+grade) + raw-vs-graded comparison."""
+    grade_arg = request.args.get("grade")
+    try:
+        grade = float(grade_arg) if grade_arg not in (None, "") else None
+    except ValueError:
+        grade = None
+    detail = reporting.graded_card_detail(
+        card_id,
+        finish=request.args.get("finish", "Regular"),
+        specialty_one=request.args.get("specialty_one", "None"),
+        grading_company=request.args.get("grading_company", ""),
+        grade=grade,
+        image_card_ids=list(_image_card_ids()),
+    )
+    if detail is None:
+        return "", 404
+    return jsonify(detail)
+
+
 # ── Analytics ───────────────────────────────────────────────
 
 

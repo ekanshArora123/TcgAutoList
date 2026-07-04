@@ -210,3 +210,118 @@ class InventoryDetail(InventoryItem):
     rarity: Optional[str] = None
     card_number: Optional[str] = None
     estimated_price: Optional[float] = None
+
+
+# ─── Graded cards (parallel to skus / inventory / prices) ────
+# Graded slabs are their own parallel chain; the raw models above are untouched.
+
+# Grading companies. Free-form is allowed at the DB level (grading_company is
+# TEXT), but these are the recognized values.
+GradingCompany = Literal["PSA", "BGS", "CGC", "SGC", "ACE", "TAG", "Other"]
+
+GRADING_COMPANIES: tuple[str, ...] = ("PSA", "BGS", "CGC", "SGC", "ACE", "TAG", "Other")
+
+
+class GradedSku(BaseModel):
+    graded_sku_id: int
+    card_id: str
+    finish: CardFinish = "Regular"
+    specialty_one: str = "None"
+    grading_company: str
+    grade: float
+    qty: int = 0
+    latest_calc_date: Optional[str] = None
+
+
+class CreateGradedSku(BaseModel):
+    card_id: str
+    finish: CardFinish = "Regular"
+    specialty_one: str = "None"
+    grading_company: str
+    grade: float
+    qty: int = 0
+
+
+class SearchGradedSkusInput(BaseModel):
+    card_id: Optional[str] = None
+    finish: Optional[CardFinish] = None
+    grading_company: Optional[str] = None
+    grade: Optional[float] = None
+    limit: int = 50
+    offset: int = 0
+
+
+class GradedInventoryItem(BaseModel):
+    graded_inventory_id: int
+    graded_sku_id: int
+    cert_id: Optional[str] = None
+    qty: int = 1
+    tags: Optional[str] = None
+    status: InventoryStatus = "unlisted"
+    front_photo_path: Optional[str] = None
+    back_photo_path: Optional[str] = None
+    ebay_listing_id: Optional[str] = None
+    listed_at: Optional[str] = None
+
+
+class CreateGradedInventoryItem(BaseModel):
+    graded_sku_id: int
+    cert_id: Optional[str] = None
+    qty: int = 1
+    tags: Optional[str] = None
+    status: InventoryStatus = "unlisted"
+
+
+class UpdateGradedInventoryItem(BaseModel):
+    graded_inventory_id: int
+    graded_sku_id: Optional[int] = None
+    cert_id: Optional[str] = None
+    qty: Optional[int] = None
+    tags: Optional[str] = None
+    status: Optional[InventoryStatus] = None
+    front_photo_path: Optional[str] = None
+    back_photo_path: Optional[str] = None
+    ebay_listing_id: Optional[str] = None
+    listed_at: Optional[str] = None
+
+
+class SearchGradedInventoryInput(BaseModel):
+    graded_sku_id: Optional[int] = None
+    status: Optional[InventoryStatus] = None
+    card_id: Optional[str] = None
+    grading_company: Optional[str] = None
+    limit: int = 50
+    offset: int = 0
+
+
+class GradedPrice(BaseModel):
+    graded_sku_id: int
+    calculation_date: str
+    estimated_price: Optional[float] = None
+    estimated_liquid_value: Optional[float] = None
+    confidence_percent: Optional[float] = None
+    manual_check_necessary: bool = False
+    manually_checked: bool = False
+    algorithm_version: Optional[str] = None
+    estimated_low_price: Optional[float] = None
+    estimated_high_price: Optional[float] = None
+    estimated_low_price_liquid: Optional[float] = None
+    estimated_high_price_liquid: Optional[float] = None
+
+
+CreateGradedPrice = GradedPrice
+
+
+class GradedInventoryDetail(GradedInventoryItem):
+    """Full graded slab with card info, graded-SKU details, and latest price."""
+
+    card_id: str
+    card_name: str
+    set_name: Optional[str] = None
+    finish: CardFinish
+    specialty_one: str = "None"
+    grading_company: str
+    grade: float
+    rarity: Optional[str] = None
+    card_number: Optional[str] = None
+    estimated_price: Optional[float] = None
