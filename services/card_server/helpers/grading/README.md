@@ -91,5 +91,13 @@ logged-in session to read pop counts. Setup (needs a PSA/Collectors account):
    spend the 1/day image call to learn PSA's image-CDN URL pattern, then fetch
    images off the CDN directly; or a headless-browser scrape; or a paid tier.
 
+3. **Population report.** The scrape supports it (login-gated spec page), but it's
+   **not wired on by default** — `population` / `population_higher` come back
+   `None` until someone sets up the signed-in `PSA_USER_DATA_DIR` profile (see the
+   login steps above) AND we surface pop in the UI. Deferred by owner for now; the
+   plumbing exists (`_scrape_population` / `_summarize_population` in `psa.py`),
+   just needs the auth profile + frontend display, and ideally a periodic pop
+   refresh collector (mirroring `collect_sales.py`).
+
 Also deferred (owner will handle): the raw-card price estimate shown next to a
 graded card.
