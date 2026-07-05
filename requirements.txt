@@ -12,5 +12,10 @@ python-dotenv>=1.0
 flask>=3.0
 flask-cors>=4.0
 
+# PSA graded-cert scraping: the public psacard.com cert site is Cloudflare-
+# protected + JS-rendered (the official API is quota-limited to ~1 call/day), so
+# we drive a real (headed) browser. After install run: `playwright install chromium`.
+playwright>=1.40
+
 # Tests
 pytest>=8.0

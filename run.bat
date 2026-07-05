@@ -53,6 +53,10 @@ if not exist ".venv\Scripts\python.exe" (
         echo ERROR: dependency install failed. .venv left unmarked; rerun to rebuild.
         exit /b 1
     )
+    REM Playwright browser binary (PSA graded-card cert scraping). Not covered by
+    REM requirements.txt - the pip package still needs its Chromium downloaded.
+    echo Installing Playwright Chromium [PSA scraping] ...
+    .venv\Scripts\python.exe -m playwright install chromium
     REM mark ready only after a clean, complete install
     echo ready> ".venv\.ready"
 )

@@ -144,21 +144,45 @@ def test_migration_relocates_graded_and_leaves_raw(tmp_path):
 
 # ─── PSA provider + add-by-cert + graded_skus upgrade ────────
 
-_PSA_SAMPLE = {"PSACert": {"CertNumber": "94597302", "SpecID": 4808918, "Year": "2005",
-    "Brand": "POKEMON EX DEOXYS", "Category": "TCG Cards", "CardNumber": "106",
-    "Subject": "LATIOS-HOLO", "Variety": "EX DEOXYS-FRENCH", "CardGrade": "PR 1",
-    "TotalPopulation": 2, "PopulationHigher": 22}}
+# A real snapshot of what the PSA-website scraper feeds ``map_cert``: the cert
+# page's Item-Information fields (dt→dd) + SpecID, plus the Grade/Amount rows
+# captured from the (login-gated) population report for spec 4808918. These are
+# the actual values on psacard.com for cert 94597302 as of this writing.
+_PSA_SCRAPED = {
+    "cert_number": "94597302",
+    "grade_label": "PR 1",
+    "year": "2005",
+    "brand": "POKEMON EX DEOXYS",
+    "subject": "LATIOS-HOLO",
+    "card_number": "106",
+    "category": "TCG Cards",
+    "variety": "EX DEOXYS-FRENCH",
+    "spec_id": "4808918",
+    "population_rows": [
+        {"grade": "9", "amount": "4"}, {"grade": "8", "amount": "5"},
+        {"grade": "7", "amount": "6"}, {"grade": "6", "amount": "2"},
+        {"grade": "5", "amount": "1"}, {"grade": "4", "amount": "1"},
+        {"grade": "3", "amount": "2"}, {"grade": "2", "amount": "1"},
+        {"grade": "1", "amount": "2"}, {"grade": "Auth", "amount": "4"},
+    ],
+}
 
 
 def test_psa_map_cert_and_parse_grade():
     from services.card_server.helpers.grading.psa import map_cert
     from services.card_server.helpers.grading.formatters import parse_grade, parse_language
 
-    m = map_cert(_PSA_SAMPLE)
+    m = map_cert(_PSA_SCRAPED)
     assert m["grading_company"] == "PSA"
+    assert m["cert_id"] == "94597302"
     assert m["grader_spec_id"] == "4808918"
     assert m["grade"] == 1.0 and m["grade_label"] == "PR 1"
     assert m["card_subject"] == "LATIOS-HOLO" and m["card_language"] == "French"
+    assert m["card_year"] == "2005" and m["card_set"] == "POKEMON EX DEOXYS"
+    assert m["card_category"] == "TCG Cards" and m["card_number"] == "106"
+    # population = amount at this card's grade (PR 1 → 2); population_higher =
+    # sum of every strictly-higher NUMERIC grade (4+5+6+2+1+1+2+1 = 22); the
+    # non-numeric "Auth" row is excluded from both — matching PSA's API.
     assert m["population"] == 2 and m["population_higher"] == 22
     assert map_cert({}) is None
     assert parse_grade("GEM-MT 10") == 10.0 and parse_grade("NM-MT 8.5") == 8.5
@@ -166,14 +190,34 @@ def test_psa_map_cert_and_parse_grade():
     assert parse_language("BASE SET", "CHARIZARD") == "English"
 
 
+def test_psa_population_summary_edges():
+    """Population maths: comma-separated counts, a top-grade card (nothing
+    higher → 0), and the graceful no-data case."""
+    from services.card_server.helpers.grading.psa import map_cert, _summarize_population
+
+    # Real spec-8858072 rows (cert 94597322, GEM MT 10). "1,600" carries a comma.
+    rows = [
+        {"grade": "10", "amount": "1,600"}, {"grade": "9", "amount": "4,514"},
+        {"grade": "8.5", "amount": "21"}, {"grade": "8", "amount": "1,889"},
+        {"grade": "1", "amount": "1"},
+    ]
+    assert _summarize_population(rows, 10.0) == (1600, 0)     # top grade, none higher
+    assert _summarize_population(rows, 8.5) == (21, 6114)     # higher = 1600 + 4514
+    # No rows / unknown grade → both None (graceful, e.g. login-gated population).
+    assert _summarize_population([], 9.0) == (None, None)
+    assert _summarize_population(None, 9.0) == (None, None)
+    m = map_cert({**_PSA_SCRAPED, "population_rows": []})
+    assert m["population"] is None and m["population_higher"] is None
+
+
 def _mock_psa(monkeypatch, info=None):
-    """Patch the PSA provider so add_graded_by_cert makes no network call."""
+    """Patch the PSA provider so add_graded_by_cert makes no network/browser call."""
     import types as _t
     from services.card_server.helpers.grading import registry
     from services.card_server.helpers.grading.psa import map_cert
 
     async def fake_fetch(cert, **kw):
-        return (info or map_cert(_PSA_SAMPLE)) | {"cert_id": str(cert)}
+        return (info or map_cert(_PSA_SCRAPED)) | {"cert_id": str(cert)}
 
     monkeypatch.setitem(registry._PROVIDERS, "PSA", _t.SimpleNamespace(COMPANY="PSA", fetch_cert=fake_fetch))
 
@@ -228,3 +272,41 @@ def test_graded_skus_upgrade_from_legacy(tmp_path):
     db.execute("INSERT INTO graded_skus(grading_company,grade,grader_spec_id) VALUES('PSA',1,'999')")
     assert db.execute("SELECT COUNT(*) FROM graded_skus").fetchone()[0] == 2
     close_database()
+
+
+# ─── LIVE PSA website scrape (browser; excluded from the default run) ─────────
+# Marked `external`: needs Playwright + Chromium and a display (Cloudflare blocks
+# headless, so this launches a headed browser). Run with `pytest -m external`.
+# Population is login-gated, so identity is asserted here; population comes back
+# only when a signed-in PSA_USER_DATA_DIR profile is configured.
+
+_LIVE_CERTS = {
+    "94597302": {"card_subject": "LATIOS-HOLO", "grade": 1.0, "grade_label": "PR 1",
+                 "card_language": "French", "card_year": "2005",
+                 "card_set": "POKEMON EX DEOXYS", "grader_spec_id": "4808918"},
+    "94597392": {"card_subject": "MOVIE EDITION", "grade": 9.0, "grade_label": "MINT 9",
+                 "card_year": "1999", "grader_spec_id": "2687692"},
+    "94597322": {"card_subject": "RAICHU", "grade": 10.0, "grade_label": "GEM MT 10",
+                 "card_year": "2023", "grader_spec_id": "8858072"},
+}
+
+
+@pytest.mark.external
+@pytest.mark.parametrize("cert,expected", _LIVE_CERTS.items())
+def test_psa_fetch_cert_live(cert, expected):
+    import asyncio
+    from services.card_server.helpers.grading import psa
+
+    got = asyncio.run(psa.fetch_cert(cert))
+    assert got is not None, f"cert {cert} not found (scrape failed?)"
+    assert got["cert_id"] == cert
+    for key, want in expected.items():
+        assert got[key] == want, f"{cert}.{key}: {got[key]!r} != {want!r}"
+
+
+@pytest.mark.external
+def test_psa_fetch_cert_live_nonexistent():
+    import asyncio
+    from services.card_server.helpers.grading import psa
+
+    assert asyncio.run(psa.fetch_cert("10000000001")) is None

@@ -24,6 +24,54 @@ exposes equivalents (`grader_spec_id`, `card_year`, `card_set`, `card_number`,
 `card_subject`, `card_variety`, `card_language`, `grade_label`, `population`,
 `population_higher`, `pop_fetched_at`).
 
+## PSA fetching = website scraping (headed browser)
+
+`psa.py` gathers a cert's data by **scraping the public PSA website with a headed
+Playwright/Chromium browser**, not the official API. Why: PSA's JSON API works
+but its quota is ~1 call/day on this account (HTTP 429 "maximum admitted 1 per
+Day"), so it's unusable. The website isn't quota-limited — only Cloudflare-
+protected + JS-rendered — so we drive a real browser through it. See the module
+docstring in `psa.py` for the full rationale and the exact DOM selectors.
+
+**Operational realities (by design — accept or optimize later):**
+- **A real Chrome window opens on every scrape and must stay visible on-screen.**
+  Cloudflare fingerprints headless Chrome and re-blocks a minimized/off-screen
+  window, so headless is disabled by default. This needs a desktop/display
+  session → it **cannot run on a headless deployed server** as-is.
+- **~30–45s per add.** Almost all of it is Cloudflare's "Just a moment…"
+  challenge clearing on each page navigation, plus a fresh browser launch per
+  call. With population enabled a *second* gated page loads (~doubles it). The
+  `POST /api/graded` request is synchronous, so it holds that request/worker open
+  for the duration (fine for a single-user local dashboard). Optimizable later by
+  keeping a warm browser/session instead of launching one per add.
+- **DOM scraping is fragile** — PSA can change class names / markup at any time
+  and the `_CERT_JS` / `_POP_JS` selectors in `psa.py` would then need updating.
+
+**Requires:** `playwright` (in `requirements.txt`) **and** its Chromium binary
+(`python -m playwright install chromium` — run.bat / run.sh do this on venv
+setup; a manual clone must run it once).
+
+**Environment variables (all optional):**
+- `PSA_USER_DATA_DIR` — path to a persistent Chrome profile folder. Set this to
+  enable **population** scraping (see login below). Unset → a throwaway profile →
+  identity only, population is `None`.
+- `PSA_HEADLESS=1` — force headless (normally leave off; Cloudflare blocks it).
+  Only useful on an IP that isn't challenged.
+- `PSA_BROWSER_CHANNEL` — use an installed Chrome channel (e.g. `chrome`) instead
+  of Playwright's bundled Chromium; handy for reusing an existing signed-in Chrome
+  profile.
+
+**Population requires a one-time login. Why:** the cert *identity* page is public,
+but PSA's **population/spec report is behind a sign-in wall** (it redirects to the
+Collectors/PSA login when unauthenticated). So the browser must present a
+logged-in session to read pop counts. Setup (needs a PSA/Collectors account):
+1. Point `PSA_USER_DATA_DIR` at a folder (a persistent browser profile).
+2. `python -m services.card_server.helpers.grading.psa --login` — a real window
+   opens; **you** type your PSA credentials into it (the code never handles them),
+   then press Enter. The session cookie persists in that folder.
+3. Subsequent scrapes with that `PSA_USER_DATA_DIR` are authenticated → population
+   populates. Without it, identity still works and population stays `None`.
+
 ## ⚠️ Future work — these features are DEFERRED and MUST be built
 
 1. **Graded → raw mapper (the "comprehensive converter").** Resolve a TCGplayer
