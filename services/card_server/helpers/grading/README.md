@@ -61,16 +61,24 @@ setup; a manual clone must run it once).
   of Playwright's bundled Chromium; handy for reusing an existing signed-in Chrome
   profile.
 
-**Population requires a one-time login. Why:** the cert *identity* page is public,
-but PSA's **population/spec report is behind a sign-in wall** (it redirects to the
-Collectors/PSA login when unauthenticated). So the browser must present a
-logged-in session to read pop counts. Setup (needs a PSA/Collectors account):
-1. Point `PSA_USER_DATA_DIR` at a folder (a persistent browser profile).
+**A persistent, signed-in profile helps Cloudflare reliability.** `fetch_cert`
+keeps ONE warm browser alive across calls (see the module docstring); pointing it
+at a persistent, PSA-logged-in Chrome profile via `PSA_USER_DATA_DIR` (ideally
+with `PSA_BROWSER_CHANNEL=chrome` so it's real Google Chrome) gives Cloudflare an
+established, trusted session and its `cf_clearance` cookie survives restarts — the
+most reliable + fastest config. Set it up once (needs a PSA/Collectors account):
+1. Point `PSA_USER_DATA_DIR` at a **dedicated** folder (Playwright's own profile;
+   NOT your everyday Chrome profile — a running Chrome locks its profile).
 2. `python -m services.card_server.helpers.grading.psa --login` — a real window
-   opens; **you** type your PSA credentials into it (the code never handles them),
-   then press Enter. The session cookie persists in that folder.
-3. Subsequent scrapes with that `PSA_USER_DATA_DIR` are authenticated → population
-   populates. Without it, identity still works and population stays `None`.
+   opens; **you** sign in by hand (the code never handles your credentials), then
+   press Enter. The session persists in that folder and later runs reuse it (log
+   in once, not every time).
+
+**Population is currently NOT scraped** (deferred — see future work below):
+`fetch_cert` reads only the public cert *identity* page for speed/consistency, so
+`population` / `population_higher` always come back `None` even with a signed-in
+profile. PSA's population report is behind the same sign-in wall; the scrape
+plumbing exists (`_scrape_population`) but is not wired into `fetch_cert` yet.
 
 ## ⚠️ Future work — these features are DEFERRED and MUST be built
 

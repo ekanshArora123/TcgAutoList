@@ -275,10 +275,15 @@ def test_graded_skus_upgrade_from_legacy(tmp_path):
 
 
 # ─── LIVE PSA website scrape (browser; excluded from the default run) ─────────
-# Marked `external`: needs Playwright + Chromium and a display (Cloudflare blocks
-# headless, so this launches a headed browser). Run with `pytest -m external`.
-# Population is login-gated, so identity is asserted here; population comes back
-# only when a signed-in PSA_USER_DATA_DIR profile is configured.
+# Marked `external`: needs Playwright + Chromium and a *visible desktop session*
+# (Cloudflare blocks headless AND treats a backgrounded/off-screen window like
+# headless, so the browser window must be genuinely on-screen). Run with
+# `pytest -m external`. These are best-effort: PSA's Cloudflare challenge varies in
+# difficulty over time and can intermittently refuse to clear a given navigation.
+#
+# The scraper targets the (public) cert identity page only and deliberately skips
+# the login-gated population report for speed/consistency, so `population` and
+# `population_higher` always come back None here.
 
 _LIVE_CERTS = {
     "94597302": {"card_subject": "LATIOS-HOLO", "grade": 1.0, "grade_label": "PR 1",
@@ -302,6 +307,8 @@ def test_psa_fetch_cert_live(cert, expected):
     assert got["cert_id"] == cert
     for key, want in expected.items():
         assert got[key] == want, f"{cert}.{key}: {got[key]!r} != {want!r}"
+    # Cert-only fast path: population is intentionally not fetched.
+    assert got["population"] is None and got["population_higher"] is None
 
 
 @pytest.mark.external
@@ -310,3 +317,37 @@ def test_psa_fetch_cert_live_nonexistent():
     from services.card_server.helpers.grading import psa
 
     assert asyncio.run(psa.fetch_cert("10000000001")) is None
+
+
+@pytest.mark.external
+def test_psa_warm_browser_reused_across_asyncio_run():
+    """The whole point of the warm browser: ONE browser is launched and reused
+    across separate ``asyncio.run`` calls (mirroring Flask's per-request event
+    loop), so Cloudflare is solved once and later lookups are dramatically faster.
+
+    Asserts (a) the same warm context object is reused across two separate
+    ``asyncio.run(fetch_cert(...))`` calls — i.e. the browser wasn't relaunched and
+    the loop-affinity trap is handled — and (b) the second (warm) call is faster
+    than the first (cold). Uses one cert so the check doesn't depend on more than a
+    single successful Cloudflare clear."""
+    import asyncio
+    import time
+
+    from services.card_server.helpers.grading import psa
+
+    cert = "94597302"
+    t0 = time.perf_counter()
+    first = asyncio.run(psa.fetch_cert(cert))
+    cold = time.perf_counter() - t0
+    ctx_after_first = id(psa._WARM._context)
+
+    t0 = time.perf_counter()
+    second = asyncio.run(psa.fetch_cert(cert))
+    warm = time.perf_counter() - t0
+    ctx_after_second = id(psa._WARM._context)
+
+    assert first and second and first["cert_id"] == cert == second["cert_id"]
+    # Same warm context across the two separate event loops → launched once, reused.
+    assert ctx_after_first == ctx_after_second
+    # Warm reuse skips the browser launch + Cloudflare clear, so it's much faster.
+    assert warm < cold
