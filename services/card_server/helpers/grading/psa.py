@@ -393,11 +393,39 @@ async def _scrape_population(page: Any, spec_id: str) -> list[dict[str, Any]]:
     return await page.evaluate(_POP_JS) or []
 
 
-async def _new_context(pw: Any) -> tuple[Any, Any]:
-    """Build a browser context, returning ``(context, closable)``. If
-    ``PSA_USER_DATA_DIR`` is set we use a *persistent* context on that profile
-    (so a one-time sign-in sticks and the population report becomes scrapable);
-    otherwise an ephemeral context (identity only)."""
+def _cdp_url() -> str:
+    """Endpoint of an already-running Chrome to ATTACH to over the DevTools
+    protocol (from ``PSA_CDP_URL`` e.g. ``http://localhost:9222``, or
+    ``PSA_CDP_PORT``). Empty string = launch our own browser instead."""
+    url = os.environ.get("PSA_CDP_URL", "").strip()
+    if url:
+        return url
+    port = os.environ.get("PSA_CDP_PORT", "").strip()
+    return f"http://localhost:{port}" if port else ""
+
+
+async def _new_context(pw: Any) -> tuple[Any, Any, bool]:
+    """Build a browser context, returning ``(context, closable, is_cdp)``.
+
+    Three modes, best-first:
+      * **CDP attach** (``PSA_CDP_URL`` / ``PSA_CDP_PORT`` set) — connect to an
+        already-running Chrome and reuse its live context. This is the most
+        reliable + fastest option: your real, foregrounded, logged-in Chrome has
+        already cleared Cloudflare, so there's *no challenge to solve*. Start it
+        once with e.g. ``chrome.exe --remote-debugging-port=9222``. We only ever
+        open OUR OWN tab and, on teardown, just DISCONNECT — we never close your
+        Chrome or touch your existing tabs.
+      * **Persistent profile** (``PSA_USER_DATA_DIR`` set) — launch our own Chrome
+        on that profile (a one-time sign-in sticks).
+      * **Ephemeral** (neither) — a throwaway launched browser.
+    """
+    cdp = _cdp_url()
+    if cdp:
+        browser = await pw.chromium.connect_over_cdp(cdp)
+        # Reuse the running Chrome's live context (its cookies / cf_clearance).
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        return context, browser, True  # closing a CDP browser only disconnects it
+
     profile_dir = os.environ.get("PSA_USER_DATA_DIR", "").strip()
     ctx_opts = dict(
         user_agent=_USER_AGENT, viewport={"width": 1366, "height": 900}, locale="en-US"
@@ -412,7 +440,7 @@ async def _new_context(pw: Any) -> tuple[Any, Any]:
         context = await browser.new_context(**ctx_opts)
         closable = browser
     await context.add_init_script(_STEALTH_JS)
-    return context, closable
+    return context, closable, False
 
 
 def _identity_from_rows(
@@ -468,7 +496,8 @@ class _WarmBrowser:
         # These live on (and are only touched from) the persistent loop:
         self._pw: Any = None            # the started async_playwright object
         self._context: Any = None       # BrowserContext (warm; holds cf_clearance)
-        self._closable: Any = None      # what to .close() (context or browser)
+        self._closable: Any = None      # what to .close() (context, or the CDP browser = disconnect)
+        self._is_cdp: bool = False       # attached to a running Chrome (don't touch its tabs)
         self._page: Any = None          # the single long-lived, reused scrape tab
         self._lock: Optional[asyncio.Lock] = None  # serializes scrapes on the loop
 
@@ -544,10 +573,15 @@ class _WarmBrowser:
 
                 self._pw = await async_playwright().start()
                 try:
-                    self._context, self._closable = await _new_context(self._pw)
+                    self._context, self._closable, self._is_cdp = await _new_context(self._pw)
                     # Adopt the context's initial blank tab as the "previous" page,
-                    # so the first swap below closes it instead of leaking it.
-                    self._page = self._context.pages[0] if self._context.pages else None
+                    # so the first swap below closes it instead of leaking it. In CDP
+                    # mode we must NOT adopt — those are the user's real tabs — so we
+                    # start with no "previous" and only ever manage tabs we open.
+                    self._page = (
+                        None if self._is_cdp
+                        else (self._context.pages[0] if self._context.pages else None)
+                    )
                 except Exception as err:
                     await self._teardown_inner()
                     raise RuntimeError(f"Failed to launch a warm browser for PSA scrape: {err}") from err
@@ -621,10 +655,19 @@ class _WarmBrowser:
 
     async def _teardown_inner(self) -> None:
         """Close the browser + stop Playwright, swallowing errors. Runs on the
-        persistent loop only. Leaves the instance ready to re-init on next use."""
+        persistent loop only. Leaves the instance ready to re-init on next use.
+
+        For a CDP-attached Chrome, ``.close()`` only DISCONNECTS Playwright (the
+        user's Chrome keeps running); so first we close just OUR tab, then
+        disconnect — never killing their browser or their tabs."""
+        try:
+            if self._is_cdp and self._page is not None and not self._page.is_closed():
+                await self._page.close()  # close only our own tab
+        except Exception:
+            pass
         try:
             if self._closable is not None:
-                await self._closable.close()
+                await self._closable.close()  # CDP: disconnect; else: close browser/context
         except Exception:
             pass
         try:
@@ -633,6 +676,7 @@ class _WarmBrowser:
         except Exception:
             pass
         self._page = self._context = self._closable = self._pw = None
+        self._is_cdp = False
 
 
 # Process-wide warm browser, created on first use and torn down at exit.

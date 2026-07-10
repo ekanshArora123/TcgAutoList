@@ -33,19 +33,37 @@ Day"), so it's unusable. The website isn't quota-limited — only Cloudflare-
 protected + JS-rendered — so we drive a real browser through it. See the module
 docstring in `psa.py` for the full rationale and the exact DOM selectors.
 
-**Operational realities (by design — accept or optimize later):**
-- **A real Chrome window opens on every scrape and must stay visible on-screen.**
-  Cloudflare fingerprints headless Chrome and re-blocks a minimized/off-screen
-  window, so headless is disabled by default. This needs a desktop/display
-  session → it **cannot run on a headless deployed server** as-is.
-- **~30–45s per add.** Almost all of it is Cloudflare's "Just a moment…"
-  challenge clearing on each page navigation, plus a fresh browser launch per
-  call. With population enabled a *second* gated page loads (~doubles it). The
-  `POST /api/graded` request is synchronous, so it holds that request/worker open
-  for the duration (fine for a single-user local dashboard). Optimizable later by
-  keeping a warm browser/session instead of launching one per add.
-- **DOM scraping is fragile** — PSA can change class names / markup at any time
-  and the `_CERT_JS` / `_POP_JS` selectors in `psa.py` would then need updating.
+### Recommended: CDP attach (`PSA_CDP_URL`) — fast & reliable
+
+Set `PSA_CDP_URL` and the code **attaches to an already-running Chrome** over the
+DevTools protocol instead of launching its own. Measured **~0.5–2s per warm
+lookup** (~4s cold), no Cloudflare wedging — because a normally-launched Chrome
+looks legitimate to Cloudflare (Playwright *launching* Chromium trips its
+automation detection, which is what makes the fallback path slow/wedgy). We only
+open our own tab and, on teardown, only **disconnect** — your Chrome and your
+tabs are never touched. Setup:
+
+1. Start Chrome once with a debug port + a dedicated profile (keep it open):
+   `chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\psa-chrome"`
+   (dedicated profile so it doesn't clash with your everyday Chrome; or fully
+   quit Chrome and relaunch your normal profile with the flag).
+2. `PSA_CDP_URL=http://localhost:9222` (or `PSA_CDP_PORT=9222`) in `.env`.
+
+The warm browser (below) reuses this one connection across adds.
+
+### Fallback (no CDP): launch our own browser
+
+Without `PSA_CDP_URL`, `psa.py` launches its own **headed** browser (Cloudflare
+blocks headless). One browser is kept **warm** across calls (a persistent
+background event-loop thread — Playwright objects are loop-bound but Flask hands a
+fresh `asyncio.run` loop per request), so the launch + Cloudflare solve is paid
+once. Caveats of this path:
+- **The window must hold OS foreground** or Cloudflare re-challenges and a lookup
+  fails fast (~15s). So repeat lookups are unreliable unless you're at the desktop
+  — which is exactly why CDP is recommended.
+- **Not deployable headless.**
+- **DOM scraping is fragile** — PSA can change markup and the `_CERT_JS` /
+  `_POP_JS` selectors in `psa.py` would need updating (applies to both paths).
 
 **Requires:** `playwright` (in `requirements.txt`) **and** its Chromium binary
 (`python -m playwright install chromium` — run.bat / run.sh do this on venv
