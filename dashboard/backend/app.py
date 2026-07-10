@@ -67,10 +67,27 @@ def get_filters():
 
 @app.route("/api/images/<card_id>")
 def card_image(card_id):
-    """Serve card image by TCGplayer product ID."""
+    """Serve a card image by TCGplayer product ID.
+
+    Fetch-on-demand: if we don't have the image yet, pull it from TCGplayer once
+    (fail-fast — retries=1, no rate-limit sleep — so the request never hangs) and
+    then serve it. This is what makes a card with a TCGplayer id but no image on
+    disk (e.g. a graded slab linked to a card_id) show a picture with no reload —
+    the browser's <img> request materializes it. Bulk backfills still use the
+    `scripts/fetch_images.py` CLI (which paces itself)."""
     filename = f"{card_id}.webp"
     if not os.path.exists(os.path.join(_IMAGES_DIR, filename)):
-        return "", 404
+        if card_id.isdigit():  # TCGplayer product ids are numeric
+            try:
+                # Lazy import: a missing image dep (Pillow/httpx) degrades to a
+                # placeholder rather than breaking dashboard startup.
+                from services.card_server.scripts.fetch_images import fetch_card_image
+
+                fetch_card_image(card_id, _IMAGES_DIR, retries=1, rate_limit_pause=0)
+            except Exception:
+                pass
+        if not os.path.exists(os.path.join(_IMAGES_DIR, filename)):
+            return "", 404
     return send_from_directory(_IMAGES_DIR, filename)
 
 

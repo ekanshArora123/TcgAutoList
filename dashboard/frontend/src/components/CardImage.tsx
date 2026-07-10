@@ -3,21 +3,22 @@ import { cardImageUrl } from "../api";
 
 // Shared card image with graceful fallback to a named placeholder. Used by both
 // the raw collection tiles and the graded tiles (minimal redundancy).
-// - raw cards pass `hasImage` (from the backend's on-disk check)
-// - graded cards pass just a `cardId` (the optional TCGplayer link); when it's
-//   null or the image 404s, the placeholder shows. Slab-specific images are a
-//   deferred feature — until then a linked card_id reuses the raw card image.
+//
+// Whenever a card has a TCGplayer `cardId` we request the image — the backend
+// image endpoint fetches it on demand if it's missing, so a card with an id but
+// no image on disk (e.g. a graded slab linked to a card_id) fills in with no
+// reload. If the card genuinely has no image (or has no id), `onError` falls back
+// to the named placeholder. (Slab-specific PSA photos are still a deferred
+// feature; a linked card_id reuses the raw card image.)
 export default function CardImage({
   cardId,
   alt,
-  hasImage,
 }: {
   cardId: string | null;
   alt: string;
-  hasImage?: boolean;
 }) {
   const [err, setErr] = useState(false);
-  const show = !!cardId && hasImage !== false && !err;
+  const show = !!cardId && !err;
   return show ? (
     <img src={cardImageUrl(cardId!)} alt={alt} loading="lazy" onError={() => setErr(true)} />
   ) : (

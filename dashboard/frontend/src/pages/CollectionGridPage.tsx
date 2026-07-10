@@ -234,7 +234,7 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
 
   const imageInner = (
     <>
-      <CardImage cardId={card.card_id} alt={card.card_name} hasImage={card.has_image} />
+      <CardImage cardId={card.card_id} alt={card.card_name} />
       {isFirstEdition && <div className="first-edition-badge">1st Ed</div>}
     </>
   );

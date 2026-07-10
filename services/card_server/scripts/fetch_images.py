@@ -19,7 +19,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 
-import requests
+import httpx
 from PIL import Image
 
 # ── Paths ──────────────────────────────────────────────────────
@@ -67,41 +67,53 @@ def existing_images() -> set[str]:
     return {f.stem for f in IMAGES_DIR.glob("*.webp")}
 
 
-def fetch_and_save(product_id: str) -> bool:
-    """Fetch image from TCGplayer, convert to webp, save. Returns True on success."""
+def fetch_card_image(
+    product_id: str,
+    images_dir: Path = IMAGES_DIR,
+    *,
+    retries: int = MAX_RETRIES,
+    rate_limit_pause: int = RATE_LIMIT_PAUSE,
+    timeout: int = 15,
+    force: bool = False,
+) -> bool:
+    """Gather ONE card image by TCGplayer product id: download from the CDN,
+    convert to webp, save as ``images_dir/{id}.webp``. Returns True iff the file
+    exists afterward (already-present counts as success). Silent — the caller
+    decides how to log.
+
+    This is the single reusable "get an image by id" primitive, shared by:
+      * the CLI backfill below (default args: retry + a 120s pause on 429), and
+      * the dashboard's on-demand image endpoint, which passes ``retries=1,
+        rate_limit_pause=0`` to FAIL FAST — a web request must never hang on a
+        two-minute rate-limit sleep.
+    """
+    out_path = Path(images_dir) / f"{product_id}.webp"
+    if out_path.exists() and not force:
+        return True
+
     url = TCGPLAYER_IMAGE_URL.format(product_id=product_id)
-
-    for attempt in range(1, MAX_RETRIES + 1):
+    for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
-
+            resp = httpx.get(url, headers=HEADERS, timeout=timeout, follow_redirects=True)
             if resp.status_code == 429:
-                print(f"  Rate limited. Pausing {RATE_LIMIT_PAUSE}s...")
-                time.sleep(RATE_LIMIT_PAUSE)
+                if rate_limit_pause <= 0:
+                    return False  # fail fast (on-demand path)
+                time.sleep(rate_limit_pause)
                 continue
-
             if resp.status_code == 404:
-                print(f"  {product_id}: not found on TCGplayer (404)")
-                return False
-
+                return False  # no such image on TCGplayer
             resp.raise_for_status()
 
-            img = Image.open(BytesIO(resp.content))
-            out_path = IMAGES_DIR / f"{product_id}.webp"
-            img.save(str(out_path), "WEBP", quality=WEBP_QUALITY)
+            Path(images_dir).mkdir(parents=True, exist_ok=True)
+            Image.open(BytesIO(resp.content)).save(str(out_path), "WEBP", quality=WEBP_QUALITY)
             return True
-
-        except requests.RequestException as e:
-            if attempt < MAX_RETRIES:
-                print(f"  {product_id}: attempt {attempt} failed ({e}), retrying...")
+        except httpx.HTTPError:
+            if attempt < retries:
                 time.sleep(2)
             else:
-                print(f"  {product_id}: FAILED after {MAX_RETRIES} attempts ({e})")
                 return False
-        except Exception as e:
-            print(f"  {product_id}: image processing error ({e})")
-            return False
-
+        except Exception:
+            return False  # image processing / decode error
     return False
 
 
@@ -130,27 +142,20 @@ def main():
     print(f"Fetching {total} card images...")
     success = 0
     fail = 0
-    not_found = 0
 
     for i, cid in enumerate(card_ids, 1):
         if i % 50 == 0 or i == 1:
-            print(f"[{i}/{total}] ({success} ok, {fail} fail, {not_found} not found)")
+            print(f"[{i}/{total}] ({success} ok, {fail} fail)")
 
-        result = fetch_and_save(cid)
-        if result:
+        if fetch_card_image(cid, force=args.force):
             success += 1
         else:
-            # Distinguish 404 from other failures by checking if file was created
-            if not (IMAGES_DIR / f"{cid}.webp").exists():
-                # Check if it was a 404 (logged as "not found")
-                fail += 1
-            else:
-                success += 1
+            fail += 1
 
         if i < total:
             time.sleep(DELAY_MS / 1000)
 
-    print(f"\nDone! {success} downloaded, {fail} failed out of {total}")
+    print(f"\nDone! {success} downloaded/present, {fail} failed out of {total}")
 
 
 if __name__ == "__main__":
