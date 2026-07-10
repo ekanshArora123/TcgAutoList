@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
-  fetchCollection, fetchFilters,
+  fetchCollection, fetchFilters, cardImageUrl,
   type CollectionItem, type CollectionResponse, type Filters,
 } from "../api";
 import CardImage from "../components/CardImage";
@@ -234,7 +234,7 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
 
   const imageInner = (
     <>
-      <CardImage cardId={card.card_id} alt={card.card_name} />
+      <CardImage srcs={[card.card_id ? cardImageUrl(card.card_id) : null]} alt={card.card_name} />
       {isFirstEdition && <div className="first-edition-badge">1st Ed</div>}
     </>
   );

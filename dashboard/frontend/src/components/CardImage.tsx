@@ -1,26 +1,25 @@
 import { useState } from "react";
-import { cardImageUrl } from "../api";
 
-// Shared card image with graceful fallback to a named placeholder. Used by both
-// the raw collection tiles and the graded tiles (minimal redundancy).
+// Shows the first candidate image that loads, falling through the list, then to a
+// named placeholder. Used by both raw tiles (just the card image) and graded
+// tiles (slab front, then the raw card image as a fallback). Minimal redundancy —
+// one component, a per-caller candidate list.
 //
-// Whenever a card has a TCGplayer `cardId` we request the image — the backend
-// image endpoint fetches it on demand if it's missing, so a card with an id but
-// no image on disk (e.g. a graded slab linked to a card_id) fills in with no
-// reload. If the card genuinely has no image (or has no id), `onError` falls back
-// to the named placeholder. (Slab-specific PSA photos are still a deferred
-// feature; a linked card_id reuses the raw card image.)
+// The raw `/api/images/<id>` endpoint fetches missing images on demand, so a
+// linked card_id fills in with no reload; graded slab images are downloaded at
+// add time and served from `/api/graded-images/<cert>`.
 export default function CardImage({
-  cardId,
+  srcs,
   alt,
 }: {
-  cardId: string | null;
+  srcs: (string | null | undefined)[];
   alt: string;
 }) {
-  const [err, setErr] = useState(false);
-  const show = !!cardId && !err;
-  return show ? (
-    <img src={cardImageUrl(cardId!)} alt={alt} loading="lazy" onError={() => setErr(true)} />
+  const candidates = srcs.filter((s): s is string => !!s);
+  const [idx, setIdx] = useState(0);
+  const src = candidates[idx];
+  return src ? (
+    <img src={src} alt={alt} loading="lazy" onError={() => setIdx((i) => i + 1)} />
   ) : (
     <div className="card-tile-no-image">
       <span>{alt}</span>

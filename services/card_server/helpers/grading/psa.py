@@ -168,6 +168,18 @@ _LABELS = {
 # We read ``textContent`` (not ``innerText``) because the <dd> cells carry a CSS
 # ``uppercase`` transform — textContent preserves the true casing (e.g.
 # "TCG Cards", not "TCG CARDS").
+# Cert images: PSA shows two card photos, alt="Cert image 1" (front) and
+# "Cert image 2" (back), on a public CloudFront CDN — or none. We return them
+# ordered [front, back] so the caller can download both (and display the front).
+_CERT_IMAGES_JS = r"""(root) => {
+  const imgs = [...root.querySelectorAll('img')]
+    .map(i => ({ alt: (i.getAttribute('alt') || ''),
+                 src: (i.currentSrc || i.getAttribute('src') || '') }))
+    .filter(i => /^cert image/i.test(i.alt) && /^https?:/.test(i.src));
+  imgs.sort((a, b) => ((a.alt.match(/\d+/) || [9])[0]) - ((b.alt.match(/\d+/) || [9])[0]));
+  return imgs.map(i => i.src);
+}"""
+
 _CERT_JS = r"""() => {
   const rows = {};
   document.querySelectorAll('dl div').forEach(d => {
@@ -177,7 +189,8 @@ _CERT_JS = r"""() => {
   });
   const link = document.querySelector('a[href*="/spec/psa/"]');
   const m = link ? (link.getAttribute('href') || '').match(/\/spec\/psa\/(\d+)/) : null;
-  return { rows, spec_id: m ? m[1] : null };
+  const images = (""" + _CERT_IMAGES_JS + r""")(document);
+  return { rows, spec_id: m ? m[1] : null, images };
 }"""
 
 # FAST PATH: fetch a cert page *from within* an already-Cloudflare-cleared
@@ -209,7 +222,8 @@ _FETCH_JS = r"""async (cert) => {
   });
   const link = doc.querySelector('a[href*="/spec/psa/"]');
   const m = link ? (link.getAttribute('href') || '').match(/\/spec\/psa\/(\d+)/) : null;
-  return { challenged: false, rows, spec_id: m ? m[1] : null };
+  const images = (""" + _CERT_IMAGES_JS + r""")(doc);
+  return { challenged: false, rows, spec_id: m ? m[1] : null, images };
 }"""
 
 # Pull the population report: [{grade, amount}] from the Grade/Amount table.
@@ -289,6 +303,9 @@ def map_cert(scraped: dict[str, Any]) -> Optional[dict[str, Any]]:
     variety = scraped.get("variety")
     brand = scraped.get("brand")
     subject = scraped.get("subject")
+    # Cert images (front/back), if PSA shows them. Ordered [front, back]; either
+    # both or neither. URLs only — downloading/storing is the caller's job.
+    images = scraped.get("image_urls") or []
 
     return {
         "grading_company": COMPANY,
@@ -305,6 +322,8 @@ def map_cert(scraped: dict[str, Any]) -> Optional[dict[str, Any]]:
         "card_language": parse_language(variety, brand, subject),
         "population": population,
         "population_higher": population_higher,
+        "image_front_url": images[0] if len(images) > 0 else None,
+        "image_back_url": images[1] if len(images) > 1 else None,
     }
 
 
@@ -381,6 +400,7 @@ async def _scrape_identity(page: Any, cert_number: str) -> Optional[dict[str, An
         return None  # rendered a page, but not a cert record
     scraped = {field: raw.get(label) for label, field in _LABELS.items()}
     scraped["spec_id"] = data.get("spec_id")
+    scraped["image_urls"] = data.get("images") or []
     return scraped
 
 
@@ -444,19 +464,22 @@ async def _new_context(pw: Any) -> tuple[Any, Any, bool]:
 
 
 def _identity_from_rows(
-    rows: Optional[dict[str, Any]], spec_id: Optional[str]
+    rows: Optional[dict[str, Any]],
+    spec_id: Optional[str],
+    images: Optional[list[str]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Normalize scraped Item-Information ``rows`` (+ SpecID) into the :func:`map_cert`
-    dict. Shared by the fetch fast path and the navigation path so the mapping lives
-    in one place. Population is intentionally left empty here — the fast path targets
-    the (public) cert page only; population is login-gated and deliberately skipped
-    for speed/consistency (``population`` / ``population_higher`` come back None).
-    Returns None if the payload carries no cert number (cert not found)."""
+    """Normalize scraped Item-Information ``rows`` (+ SpecID + cert image URLs) into
+    the :func:`map_cert` dict. Shared by the fetch fast path and the navigation path
+    so the mapping lives in one place. Population is intentionally left empty here —
+    the fast path targets the (public) cert page only; population is login-gated and
+    deliberately skipped for speed/consistency. Returns None if the payload carries
+    no cert number (cert not found)."""
     if not rows or not rows.get("Cert Number"):
         return None
     scraped = {field: rows.get(label) for label, field in _LABELS.items()}
     scraped["spec_id"] = spec_id
     scraped["population_rows"] = []
+    scraped["image_urls"] = images or []
     return map_cert(scraped)
 
 
@@ -471,6 +494,7 @@ async def _nav_scrape_cert(page: Any, cert_number: str) -> Optional[dict[str, An
     return _identity_from_rows(
         {label: scraped.get(field) for label, field in _LABELS.items()},
         scraped.get("spec_id"),
+        scraped.get("image_urls"),
     )
 
 
@@ -644,7 +668,9 @@ class _WarmBrowser:
                     if _SITE in (page.url or ""):
                         res = await page.evaluate(_FETCH_JS, cert_number)
                         if not res.get("challenged"):
-                            return _identity_from_rows(res.get("rows"), res.get("spec_id"))
+                            return _identity_from_rows(
+                                res.get("rows"), res.get("spec_id"), res.get("images")
+                            )
                         # Stale clearance for fetch → re-solve with a real navigation.
                         page = await self._open_fresh_page()
                     return await _nav_scrape_cert(page, cert_number)

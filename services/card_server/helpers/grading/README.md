@@ -98,6 +98,25 @@ most reliable + fastest config. Set it up once (needs a PSA/Collectors account):
 profile. PSA's population report is behind the same sign-in wall; the scrape
 plumbing exists (`_scrape_population`) but is not wired into `fetch_cert` yet.
 
+## Slab images (PSA front/back)
+
+At add time the scraper extracts the two cert-page image URLs — PSA shows a
+**front and a back, or neither** — from PSA's public CloudFront CDN (which is
+*not* Cloudflare-gated). `store_graded_images` (in `scripts/fetch_images.py`)
+downloads both straight with httpx and converts to webp.
+
+**Storage format — one folder per cert, sides suffixed `f`/`b`:**
+
+    data/graded-card-images/{cert}/{cert}f.webp    # front
+    data/graded-card-images/{cert}/{cert}b.webp    # back
+
+Served at `GET /api/graded-images/{cert}` (front) and `/api/graded-images/{cert}/back`.
+The graded tile displays the **front**, falling back to the linked raw card image,
+then a placeholder. The **back is stored but not shown yet.** Download is
+best-effort at add time (a failure never blocks the add) and happens only then —
+the opaque CDN URLs are available only during the scrape, so there's no on-demand
+re-fetch; re-adding a cert re-downloads.
+
 ## ⚠️ Future work — these features are DEFERRED and MUST be built
 
 1. **Graded → raw mapper (the "comprehensive converter").** Resolve a TCGplayer
@@ -109,13 +128,10 @@ plumbing exists (`_scrape_population`) but is not wired into `fetch_cert` yet.
    with a TCGplayer equivalent, same-card different-language, and cards that exist
    in neither (leave unlinked).
 
-2. **Comprehensive slab-image getter.** Fetch + store graded slab images by cert
-   number. Blocked today: PSA's free API image endpoint is quota-gated (~1/day)
-   and the website is Cloudflare-protected (plain GETs 403). Until this exists,
-   graded cards have **no** slab image (the frontend falls back to the raw card
-   image where a `card_id` link exists, else a placeholder). Possible approach:
-   spend the 1/day image call to learn PSA's image-CDN URL pattern, then fetch
-   images off the CDN directly; or a headless-browser scrape; or a paid tier.
+2. **Slab images — largely DONE** (see "Slab images" above): front + back are
+   downloaded and stored at add time, and the front is displayed. Remaining:
+   display the back in the UI; a backfill for graded cards added before this
+   existed (re-adding the cert re-fetches); and refresh if PSA's images change.
 
 3. **Population report.** The scrape supports it (login-gated spec page), but it's
    **not wired on by default** — `population` / `population_higher` come back

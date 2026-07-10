@@ -31,6 +31,8 @@ CORS(app)
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "card-images"))
+# Graded slab images live one folder per cert: graded-card-images/{cert}/{cert}f.webp
+_GRADED_IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "graded-card-images"))
 
 # One shared connection (check_same_thread=False) owned by card-server.
 _db = init_database(os.environ.get("DB_PATH"))
@@ -89,6 +91,21 @@ def card_image(card_id):
         if not os.path.exists(os.path.join(_IMAGES_DIR, filename)):
             return "", 404
     return send_from_directory(_IMAGES_DIR, filename)
+
+
+@app.route("/api/graded-images/<cert_id>")
+@app.route("/api/graded-images/<cert_id>/<side>")
+def graded_image(cert_id, side="front"):
+    """Serve a stored graded slab image by cert number. Front by default; pass
+    side=back (or b) for the back. 404 if we don't have it (the frontend then
+    falls back to the raw card image). Downloaded once at add time — not
+    on-demand, since the CDN URLs are only available during the cert scrape."""
+    suffix = "b" if str(side).lower() in ("back", "b") else "f"
+    folder = os.path.join(_GRADED_IMAGES_DIR, str(cert_id))
+    filename = f"{cert_id}{suffix}.webp"
+    if not os.path.exists(os.path.join(folder, filename)):
+        return "", 404
+    return send_from_directory(folder, filename)
 
 
 @app.route("/api/card/<card_id>")

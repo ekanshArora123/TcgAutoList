@@ -294,13 +294,27 @@ class CollectionService:
             updates["card_id"] = linked_card_id
         self.graded_skus.update(updates)
 
+        stored_cert = info.get("cert_id") or str(cert_id)
         inv = self.graded_inventory.create(
             {
                 "graded_sku_id": graded_sku["graded_sku_id"],
-                "cert_id": info.get("cert_id") or str(cert_id),
+                "cert_id": stored_cert,
                 "qty": 1,
             }
         )
+
+        # Best-effort: download the slab's front/back images (their URLs are only
+        # available from the scrape). Lazy import + swallow errors so a missing
+        # image dep or a failed download never fails the add.
+        try:
+            from ..scripts.fetch_images import store_graded_images
+
+            store_graded_images(
+                stored_cert, info.get("image_front_url"), info.get("image_back_url")
+            )
+        except Exception:
+            pass
+
         return self.graded_inventory.get_detail_by_id(inv["graded_inventory_id"])
 
     def link_graded_to_card(self, graded_sku_id: int, card_id: Optional[str]) -> Optional[dict]:

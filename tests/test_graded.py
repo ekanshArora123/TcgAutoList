@@ -351,3 +351,23 @@ def test_psa_warm_browser_reused_across_asyncio_run():
     assert ctx_after_first == ctx_after_second
     # Warm reuse skips the browser launch + Cloudflare clear, so it's much faster.
     assert warm < cold
+
+
+# ─── PSA slab image extraction + storage ─────────────────────
+
+def test_map_cert_image_urls():
+    from services.card_server.helpers.grading.psa import map_cert
+    m = map_cert({"cert_number": "1", "grade_label": "GEM-MT 10",
+                  "image_urls": ["https://cdn/f.jpg", "https://cdn/b.jpg"]})
+    assert m["image_front_url"] == "https://cdn/f.jpg"
+    assert m["image_back_url"] == "https://cdn/b.jpg"
+    # no images -> both None
+    m2 = map_cert({"cert_number": "1", "grade_label": "PR 1"})
+    assert m2["image_front_url"] is None and m2["image_back_url"] is None
+
+
+def test_store_graded_images_no_urls_is_noop(tmp_path):
+    from services.card_server.scripts.fetch_images import store_graded_images
+    r = store_graded_images("94597302", None, None, images_dir=tmp_path)
+    assert r == {"front": False, "back": False}
+    assert not (tmp_path / "94597302").exists()  # nothing written when no urls

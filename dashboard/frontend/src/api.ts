@@ -219,6 +219,12 @@ export function cardImageUrl(cardId: string): string {
   return `${BASE}/images/${cardId}`;
 }
 
+// A graded slab image by cert number (front by default). 404s until it's been
+// downloaded at add time; the graded tile then falls back to the raw card image.
+export function gradedImageUrl(certId: string, side: "front" | "back" = "front"): string {
+  return side === "back" ? `${BASE}/graded-images/${certId}/back` : `${BASE}/graded-images/${certId}`;
+}
+
 // ── Card detail page ──
 
 // The variant axes that, together with card_id, identify a card's page

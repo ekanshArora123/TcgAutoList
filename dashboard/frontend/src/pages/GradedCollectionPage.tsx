@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  fetchGradedCollection, fetchGradedFilters, addGradedByCert,
+  fetchGradedCollection, fetchGradedFilters, addGradedByCert, cardImageUrl, gradedImageUrl,
   type GradedCardItem, type GradedResponse, type GradedFilters,
 } from "../api";
 import CardImage from "../components/CardImage";
@@ -141,7 +141,15 @@ function GradedTile({ card }: { card: GradedCardItem }) {
       </div>
 
       <div className="graded-tile-image">
-        <CardImage cardId={card.card_id} alt={card.card_name} />
+        {/* PSA slab front first; fall back to the linked raw card image, then a
+            placeholder. (Only the front is shown; the back is stored for later.) */}
+        <CardImage
+          srcs={[
+            card.cert_id ? gradedImageUrl(card.cert_id) : null,
+            card.card_id ? cardImageUrl(card.card_id) : null,
+          ]}
+          alt={card.card_name}
+        />
       </div>
 
       <div className="graded-info">
