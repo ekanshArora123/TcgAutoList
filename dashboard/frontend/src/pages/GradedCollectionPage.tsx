@@ -124,21 +124,26 @@ export default function GradedCollectionPage() {
 // middle, card info underneath. Reuses the shared CardImage.
 function GradedTile({ card }: { card: GradedCardItem }) {
   const gradeText = card.grade ? String(card.grade) : (card.grade_label || "AUTH");
+  // The grade/name header is a stand-in for a missing picture — hide it once an
+  // image (slab front, or the raw-card fallback) is actually showing.
+  const [hasImage, setHasImage] = useState(false);
   return (
     <div className="graded-tile">
-      <div className="graded-tile-top">
-        <div className="graded-badge">
-          <span className="graded-company">{card.grading_company}</span>
-          <span className="graded-grade-num">{gradeText}</span>
-        </div>
-        <div className="graded-name-block">
-          <div className="graded-name" title={card.card_name}>{card.card_name}</div>
-          <div className="graded-sub">
-            {card.card_set || card.set_name || "Unknown Set"}
-            {card.card_number ? ` · #${card.card_number}` : ""}
+      {!hasImage && (
+        <div className="graded-tile-top">
+          <div className="graded-badge">
+            <span className="graded-company">{card.grading_company}</span>
+            <span className="graded-grade-num">{gradeText}</span>
+          </div>
+          <div className="graded-name-block">
+            <div className="graded-name" title={card.card_name}>{card.card_name}</div>
+            <div className="graded-sub">
+              {card.card_set || card.set_name || "Unknown Set"}
+              {card.card_number ? ` · #${card.card_number}` : ""}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="graded-tile-image">
         {/* PSA slab front first; fall back to the linked raw card image, then a
@@ -149,6 +154,7 @@ function GradedTile({ card }: { card: GradedCardItem }) {
             card.card_id ? cardImageUrl(card.card_id) : null,
           ]}
           alt={card.card_name}
+          onShown={setHasImage}
         />
       </div>
 

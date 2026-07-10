@@ -262,13 +262,16 @@ class CollectionService:
         if not info:
             return None  # cert not found at the grader
 
-        # Optional manual TCGplayer link — ensure the raw card row exists (auto-
-        # fetches metadata/image) so a NULL-safe link can attach. Bad id → skip.
-        linked_card_id: Optional[str] = None
-        if card_id:
-            card = await self.get_card(str(card_id))
-            if card:
-                linked_card_id = card["id"]
+        # Optional manual TCGplayer link. Prefer full metadata via get_card; but a
+        # valid product id can have a CDN image even when the search API returns no
+        # metadata — and the link is needed for the image to display. So if get_card
+        # fails, still peg the id when it has a real image (a minimal cards row from
+        # the grader's own fields satisfies the FK; the graded->raw converter can
+        # enrich it later). Only ids with a real image are pegged, so a typo'd id
+        # doesn't pollute the cards table.
+        linked_card_id: Optional[str] = (
+            await self._resolve_card_link(str(card_id), info) if card_id else None
+        )
 
         grade = info.get("grade")
         sku_params = {
@@ -316,6 +319,41 @@ class CollectionService:
             pass
 
         return self.graded_inventory.get_detail_by_id(inv["graded_inventory_id"])
+
+    async def _resolve_card_link(self, card_id: str, info: dict[str, Any]) -> Optional[str]:
+        """Resolve a user-provided TCGplayer id to a linkable card_id for a graded
+        slab. Returns the id to link, or None if it can't be used.
+
+        1. get_card → full metadata (creates the cards row). Best case.
+        2. else, if the id has a real image on TCGplayer's CDN, peg it: upsert a
+           minimal cards row (name/set/number from the grader's own fields) so the
+           FK holds and the image displays. (Pre-fetching also caches it.)
+        3. else (no metadata AND no image → likely a bad id) → None, so we don't
+           pollute the cards table with a junk id.
+        """
+        card_id = str(card_id).strip()
+        if not card_id:
+            return None
+        card = await self.get_card(card_id)
+        if card:
+            return card["id"]
+        try:
+            from ..scripts.fetch_images import fetch_card_image
+
+            if fetch_card_image(card_id, retries=1, rate_limit_pause=0):
+                self.cards.upsert(
+                    {
+                        "id": card_id,
+                        "card_name": info.get("card_subject") or "Unknown",
+                        "set_name": info.get("card_set"),
+                        "card_number": info.get("card_number"),
+                        "product_line": "Pokemon",
+                    }
+                )
+                return card_id
+        except Exception:
+            pass
+        return None
 
     def link_graded_to_card(self, graded_sku_id: int, card_id: Optional[str]) -> Optional[dict]:
         """Isolated seam for the future graded->raw converter to set the TCGplayer link."""
