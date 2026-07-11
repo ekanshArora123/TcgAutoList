@@ -25,6 +25,7 @@ The working capabilities in the repo today — built and in use. They reuse each
 | **Sales-history + market-price collector & graph** | `sales_collector.py`, `sales_store.py`, `price_history_store.py`, `collect_sales.py` | ~1yr of raw sold listings + weekly TCGplayer market price for the per-card graph. Kept out of the pricing path. | Card-data store, scrapers/transport. |
 | **Analytics dashboard** | `dashboard/frontend/` + `dashboard/backend/app.py` → `reporting_service.py` | Browse/filter/search the collection, charts, per-card detail + sales graph. | Card-data store (reporting), sales/market data. |
 | **Seller listing pipeline** | `services/telegram/` + `dashboard/backend/orchestrator/` + `services/ebay/` | Turns owned inventory into live listings: `/next` → pick unlisted card → fetch price → route by tier → request photo → build listing → post → mark done. | Card-data store, pricing, Telegram, eBay. |
+| **Graded cards (PSA)** | `helpers/grading/` + `helpers/crud/graded_*` + graded methods in `collection_service`/`reporting_service` + a "Graded" dashboard tab | Add a graded slab by cert #: scrape PSA (headed browser) for identity/population + front/back images, store as a parallel chain, browse them. See `helpers/grading/README.md`. | Card-data store, the browser scraper, TCGplayer (fallback image). |
 
 ## Status & Roadmap
 
@@ -36,7 +37,7 @@ What's in progress or planned and where each is heading — so new work coordina
 | **Tier 2/3 LLM pricing** | Pseudocode (`orchestrator/llm.py`, `tools.py`, `system_prompt.py`) | Scoped-context (T2) / full-context (T3) LLM pricing for hard cards. See the tiered-escalation note under Architecture. |
 | **Price override** | Stub (orchestrator detects a numeric reply but doesn't apply it) | Let a human override the computed price mid-flow. |
 | **Sell/hold decision engine** | Design frontier; data plane already collecting | Decide which cards to sell vs hold from longitudinal price data (`sales` + `market_price_history`). Layered stats with LLM escalation on the tail. Coordinate with the pricing engine — don't re-derive prices. |
-| **Dashboard as control plane** | Read-only today | Trigger workflows, override prices, manage listings from the UI. |
+| **Dashboard as control plane** | Trigger workflows, override prices, manage listings from the UI, etc.|
 | **DevOps / deployment** | Vercel (frontend) + a simple Azure pipeline exist | A sub-project like any other, following the tenets: harden CI/CD, secrets, environments. |
 | **Vendor live-sales tracking** | Idea | Let vendors track sales in real time — an example of the platform reaching beyond the owner's own selling. |
 | **MCP server(s)** | Deferred (not a current concern) | FastMCP server(s) that will be implemented later to wrap the existing services (card-server CRUD/pricing/reporting, etc.) as LLM-callable tools.|
@@ -52,6 +53,10 @@ See `docs/STRUCTURE.md` for the full folder layout and the **Capabilities** tabl
 - **All durable state in SQLite.** Every capability can stop/restart without losing progress; the DB is the single source of truth.
 - **Idempotent by default.** Re-running skips work already done (already-listed cards, already-collected snapshots, …).
 - **Services own their external system.** card-server owns the DB/TCGplayer/pricing; telegram owns Telegram; ebay owns eBay. Callers don't duplicate owned functionality or depend on a service's internal format.
+- **New item "kinds" get a parallel chain.** A new kind (graded cards, sealed product) mirrors the raw chain with its own tables (`graded_skus`/`graded_inventory`/`graded_prices`) and unifies only at the read layer, leaving the raw path untouched. Details in `helpers/grading/README.md`, will likely vary for every kind.
+- **Reduce redundancy with specific helpers; don't over-abstract.** Whenever two paths share real logic, extract a *specific* helper — one concrete, currently-shared piece of behavior — and have each caller pass its own parameters (e.g. `save_webp_from_url` shared by the raw and graded image fetches; the reporting `_paginate`/`_page_result` helpers shared by raw and graded browse). Do this consistently — cutting duplication is the goal. The only thing to avoid is *speculative* abstraction: don't build a generic framework for a case that doesn't exist yet; rule of thumb is if the type of problem is gonna be encountered with the addition of new functionality, then it makes sense to abstract. But if its restricted to one instance thats independent from the rest of the functionality then it doesnt need it. Generic algorithms should get extracted if they take up a lot of space or are complex to understand.
+- **Migrations: `schema.sql` for fresh DBs, `db.py` for existing ones.** `schema.sql` (all `CREATE … IF NOT EXISTS`) builds a fresh DB; `db.py`'s init runs guarded, idempotent upgrades for existing DBs (relax a NOT NULL via table rebuild, add columns, dedup rows, add a partial unique index). Any index/constraint that references a not-yet-migrated column is created in `db.py` *after* the upgrade — never in `schema.sql` — so `executescript` can't trip on an un-upgraded table.
+- **Card images fetched on demand.** `/api/images/<id>` downloads a missing image from TCGplayer on first request (no reload; nothing pre-fetched in the read-only reporting path), via one `save_webp_from_url` primitive that the bulk backfill (`scripts/fetch_images.py`) and the graded slab-image download also build on.
 
 Capability-specific decisions live in that capability's local doc — e.g. the seller pipeline's `/next` trigger, one-photo-at-a-time, and per-card context reset are in `dashboard/backend/orchestrator/PIPELINE.md`.
 
@@ -87,7 +92,7 @@ Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish var
 **Key decisions:**
 - `inventory.pricing_sku_id` allows pricing a borderline card against a different condition (e.g., LP-NM priced as NM)
 - `inventory.tags` is comma-separated (not normalized) for variable card-specific details (hidden creases, marks)
-- `specialty_one` = TCGplayer-level variants (1st Edition) with their own product IDs. `specialty_two` = non-TCGplayer variants (graded, errors) that trigger manual review.
+- `specialty_one` = TCGplayer-level variants (1st Edition) with their own product IDs. `specialty_two` = non-TCGplayer **error** attributes (miscuts, holo bleeds, …) that trigger manual review. (Graded cards used to ride on `specialty_two` but now live in their own parallel tables
 
 ## Pricing
 
