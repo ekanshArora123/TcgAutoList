@@ -219,6 +219,12 @@ export function cardImageUrl(cardId: string): string {
   return `${BASE}/images/${cardId}`;
 }
 
+// A graded slab image by cert number (front by default). 404s until it's been
+// downloaded at add time; the graded tile then falls back to the raw card image.
+export function gradedImageUrl(certId: string, side: "front" | "back" = "front"): string {
+  return side === "back" ? `${BASE}/graded-images/${certId}/back` : `${BASE}/graded-images/${certId}`;
+}
+
 // ── Card detail page ──
 
 // The variant axes that, together with card_id, identify a card's page
@@ -346,4 +352,127 @@ export function fetchCardPriceHistory(
 ): Promise<CardPriceHistory> {
   const qs = new URLSearchParams({ finish, days: String(days) }).toString();
   return fetchJson(`${BASE}/card/${cardId}/price-history?${qs}`);
+}
+
+// ── Graded cards (parallel to the raw collection types above) ──
+
+export interface GradedCardItem {
+  graded_inventory_id: number;
+  graded_sku_id: number;
+  cert_id: string | null;
+  qty: number;
+  tags: string | null;
+  status: string;
+  front_photo_path: string | null;
+  back_photo_path: string | null;
+  ebay_listing_id: string | null;
+  // card_id is the OPTIONAL TCGplayer link (null until the graded->raw converter
+  // or a manual entry sets it).
+  card_id: string | null;
+  finish: string;
+  grading_company: string;
+  grade: number;
+  grade_label: string | null;
+  grader_spec_id: string | null;
+  // Grader-supplied identity (card_name/set_name/card_number are COALESCEd
+  // grader-first on the backend).
+  card_name: string;
+  set_name: string | null;
+  card_number: string | null;
+  card_year: string | null;
+  card_variety: string | null;
+  card_language: string | null;
+  population: number | null;
+  population_higher: number | null;
+  rarity: string | null;
+  era: string | null;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+  calculation_date: string | null;
+}
+
+export interface GradedResponse {
+  items: GradedCardItem[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface GradedFilters {
+  grading_companies: string[];
+  statuses: string[];
+}
+
+export interface GradedCardDetail {
+  card: {
+    card_id: string;
+    card_name: string;
+    set_name: string | null;
+    rarity: string | null;
+    card_number: string | null;
+    era: string | null;
+    card_type: string | null;
+    finish: string;
+    specialty_one: string;
+    grading_company: string;
+    grade: number;
+  };
+  kind: "graded";
+  has_image: boolean;
+  qty: number;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+  raw_estimated_price: number | null;
+}
+
+export function fetchGradedCollection(params: Record<string, string>): Promise<GradedResponse> {
+  const qs = new URLSearchParams(params).toString();
+  return fetchJson(`${BASE}/graded?${qs}`);
+}
+
+export function fetchGradedFilters(): Promise<GradedFilters> {
+  return fetchJson(`${BASE}/graded/companies`);
+}
+
+export function fetchGradedCardDetail(
+  cardId: string,
+  key: { finish: string; specialty_one: string; grading_company: string; grade: number },
+): Promise<GradedCardDetail> {
+  const qs = new URLSearchParams({
+    finish: key.finish,
+    specialty_one: key.specialty_one,
+    grading_company: key.grading_company,
+    grade: String(key.grade),
+  }).toString();
+  return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
+}
+
+// Add a graded slab by cert number (POST — the dashboard's first write call).
+// card_id is the optional, manually-entered TCGplayer id.
+export async function addGradedByCert(
+  certId: string,
+  gradingCompany: string,
+  cardId?: string,
+): Promise<GradedCardItem> {
+  const res = await fetch(`${BASE}/graded`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cert_id: certId,
+      grading_company: gradingCompany,
+      ...(cardId ? { card_id: cardId } : {}),
+    }),
+  });
+  if (!res.ok) {
+    let msg = `Add failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
 }

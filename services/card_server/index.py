@@ -415,6 +415,104 @@ async def fetch_active_listings_tool(
     return _ok(await pricing.fetch_active_listings_data(tcgplayer_id, condition, finish))
 
 
+# ─── Graded Card Tools (parallel to the raw tools above) ─────
+
+
+@mcp.tool()
+async def add_graded_to_inventory(
+    card_id: str,
+    grading_company: str,
+    grade: float,
+    finish: Optional[str] = None,
+    specialty_one: Optional[str] = None,
+    cert_id: Optional[str] = None,
+    qty: Optional[int] = None,
+    tags: Optional[str] = None,
+) -> str:
+    """Add a physical graded slab to inventory (resolves the graded SKU automatically)."""
+    return _ok(
+        collection.add_graded_to_inventory(
+            {
+                "card_id": card_id,
+                "grading_company": grading_company,
+                "grade": grade,
+                "finish": finish,
+                "specialty_one": specialty_one,
+                "cert_id": cert_id,
+                "qty": qty,
+                "tags": tags,
+            }
+        )
+    )
+
+
+@mcp.tool()
+async def resolve_graded_sku(
+    card_id: str,
+    grading_company: str,
+    grade: float,
+    finish: str = "Regular",
+    specialty_one: str = "None",
+    qty: int = 0,
+) -> str:
+    """Get or create a graded SKU for a card+company+grade (+finish/specialty)."""
+    return _ok(
+        collection.resolve_graded_sku(
+            {
+                "card_id": card_id,
+                "grading_company": grading_company,
+                "grade": grade,
+                "finish": finish,
+                "specialty_one": specialty_one,
+                "qty": qty,
+            }
+        )
+    )
+
+
+@mcp.tool()
+async def get_graded_skus_for_card(card_id: str) -> str:
+    """Get all graded SKU variants (company/grade) for a card."""
+    return _ok(collection.get_graded_skus_for_card(card_id))
+
+
+@mcp.tool()
+async def search_graded(
+    card_id: Optional[str] = None,
+    finish: Optional[str] = None,
+    grading_company: Optional[str] = None,
+    grade: Optional[float] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    """Search graded SKUs with filters."""
+    return _ok(
+        collection.search_graded_skus(
+            {
+                "card_id": card_id,
+                "finish": finish,
+                "grading_company": grading_company,
+                "grade": grade,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+    )
+
+
+@mcp.tool()
+async def get_graded_inventory_item(graded_inventory_id: int) -> str:
+    """Get a graded slab with full card/price details."""
+    item = collection.get_graded_inventory_detail(graded_inventory_id)
+    return _ok(item) if item else _err(f"Graded inventory item {graded_inventory_id} not found")
+
+
+@mcp.tool()
+async def list_grading_companies() -> str:
+    """Get all grading companies in use (PSA, BGS, CGC, ...)."""
+    return _ok(collection.list_grading_companies())
+
+
 def main() -> None:
     try:
         mcp.run(transport="stdio")

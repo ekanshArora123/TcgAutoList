@@ -32,9 +32,9 @@ Each service owns one external system and provides abstraction over it. Callers 
 
 ### card-server (services/card_server/)
 - **Owns:** SQLite database, TCGplayer API, pricing algorithm, market data collection
-- **Exposes:** CollectionService + PricingService (simple API for coded callers), MCP tools (rich API for LLM)
+- **Exposes:** CollectionService + PricingService (simple API for coded callers), MCP tools in the future
 - **Internal:** CRUD helpers, TCGplayer fetchers, pricing math, market aggregators
-- **Reused by everything:** Imported as `services.card_server` — the shared substrate the other capabilities build on. Also runs as an MCP server via `python -m services.card_server.index` (from the repo root).
+- **Reused by everything:** Imported as `services.card_server` — the shared substrate the other capabilities build on. Can also run as a MCP server via `python -m services.card_server.index` (from the repo root).
 
 ### telegram (services/telegram/)
 - **Owns:** Telegram Bot API (send/receive messages, photos, inline keyboards)

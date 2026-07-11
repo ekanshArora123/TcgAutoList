@@ -64,6 +64,10 @@ if [ -z "$PY" ]; then
     PY="$(venv_py)"
     "$PY" -m pip install --upgrade pip >/dev/null
     "$PY" -m pip install -r "$ROOT/requirements.txt"
+    # Playwright browser binary (PSA graded-card cert scraping). Not covered by
+    # requirements.txt — the pip package still needs its Chromium downloaded.
+    echo "Installing Playwright Chromium (PSA scraping)..."
+    "$PY" -m playwright install chromium
     : > "$ROOT/.venv/.ready"   # mark ready only after a clean, complete install
 fi
 

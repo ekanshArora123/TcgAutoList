@@ -7,6 +7,7 @@ that lives here is HTTP concerns and the on-disk card-image lookup, which is a
 filesystem concern the dashboard owns.
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -21,6 +22,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from services.card_server.db import init_database
+from services.card_server.helpers.tcgplayer.transport import RateLimited
+from services.card_server.services.collection_service import CollectionService
 from services.card_server.services.reporting_service import ReportingService
 
 app = Flask(__name__)
@@ -28,10 +31,14 @@ CORS(app)
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "card-images"))
+# Graded slab images live one folder per cert: graded-card-images/{cert}/{cert}f.webp
+_GRADED_IMAGES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "data", "graded-card-images"))
 
 # One shared connection (check_same_thread=False) owned by card-server.
 _db = init_database(os.environ.get("DB_PATH"))
 reporting = ReportingService(_db)
+# Write path (the dashboard's first): adding graded cards by cert number.
+collection = CollectionService(_db)
 
 
 def _image_card_ids() -> set[str]:
@@ -62,11 +69,43 @@ def get_filters():
 
 @app.route("/api/images/<card_id>")
 def card_image(card_id):
-    """Serve card image by TCGplayer product ID."""
+    """Serve a card image by TCGplayer product ID.
+
+    Fetch-on-demand: if we don't have the image yet, pull it from TCGplayer once
+    (fail-fast — retries=1, no rate-limit sleep — so the request never hangs) and
+    then serve it. This is what makes a card with a TCGplayer id but no image on
+    disk (e.g. a graded slab linked to a card_id) show a picture with no reload —
+    the browser's <img> request materializes it. Bulk backfills still use the
+    `scripts/fetch_images.py` CLI (which paces itself)."""
     filename = f"{card_id}.webp"
     if not os.path.exists(os.path.join(_IMAGES_DIR, filename)):
-        return "", 404
+        if card_id.isdigit():  # TCGplayer product ids are numeric
+            try:
+                # Lazy import: a missing image dep (Pillow/httpx) degrades to a
+                # placeholder rather than breaking dashboard startup.
+                from services.card_server.scripts.fetch_images import fetch_card_image
+
+                fetch_card_image(card_id, _IMAGES_DIR, retries=1, rate_limit_pause=0)
+            except Exception:
+                pass
+        if not os.path.exists(os.path.join(_IMAGES_DIR, filename)):
+            return "", 404
     return send_from_directory(_IMAGES_DIR, filename)
+
+
+@app.route("/api/graded-images/<cert_id>")
+@app.route("/api/graded-images/<cert_id>/<side>")
+def graded_image(cert_id, side="front"):
+    """Serve a stored graded slab image by cert number. Front by default; pass
+    side=back (or b) for the back. 404 if we don't have it (the frontend then
+    falls back to the raw card image). Downloaded once at add time — not
+    on-demand, since the CDN URLs are only available during the cert scrape."""
+    suffix = "b" if str(side).lower() in ("back", "b") else "f"
+    folder = os.path.join(_GRADED_IMAGES_DIR, str(cert_id))
+    filename = f"{cert_id}{suffix}.webp"
+    if not os.path.exists(os.path.join(folder, filename)):
+        return "", 404
+    return send_from_directory(folder, filename)
 
 
 @app.route("/api/card/<card_id>")
@@ -149,6 +188,70 @@ def collection_grid():
             has_image=has_image,
         )
     )
+
+
+# ── Graded cards (parallel read endpoints) ──────────────────
+
+
+@app.route("/api/graded")
+def graded_grid():
+    """Owned graded slabs — the graded collection view."""
+    return jsonify(reporting.browse_graded(request.args.to_dict()))
+
+
+@app.route("/api/graded", methods=["POST"])
+def add_graded():
+    """Add a graded slab by cert number (fetches identity + pop from the grader).
+
+    Body: { cert_id, grading_company?="PSA", card_id? }. `card_id` is the optional,
+    manually-entered TCGplayer id. The dashboard's first write endpoint.
+    """
+    body = request.get_json(silent=True) or {}
+    cert_id = str(body.get("cert_id") or "").strip()
+    if not cert_id:
+        return jsonify({"error": "cert_id is required"}), 400
+    company = str(body.get("grading_company") or "PSA").strip()
+    card_id = str(body.get("card_id") or "").strip() or None
+
+    try:
+        result = asyncio.run(collection.add_graded_by_cert(cert_id, company, card_id))
+    except ValueError as e:  # unsupported company / bad input
+        return jsonify({"error": str(e)}), 400
+    except RateLimited:  # grader API daily quota exhausted
+        return jsonify({"error": f"{company} API rate limit reached — try again later."}), 429
+    except Exception as e:  # token missing / network / parse error
+        return jsonify({"error": f"grader lookup failed: {e}"}), 502
+
+    if result is None:
+        return jsonify({"error": f"cert {cert_id} not found at {company}"}), 404
+    return jsonify(result), 201
+
+
+@app.route("/api/graded/companies")
+def graded_companies():
+    """Filter dropdown values for the graded view (companies + statuses)."""
+    return jsonify(reporting.graded_filter_options())
+
+
+@app.route("/api/graded/<card_id>")
+def graded_card_detail(card_id):
+    """One graded variant's detail (company+grade) + raw-vs-graded comparison."""
+    grade_arg = request.args.get("grade")
+    try:
+        grade = float(grade_arg) if grade_arg not in (None, "") else None
+    except ValueError:
+        grade = None
+    detail = reporting.graded_card_detail(
+        card_id,
+        finish=request.args.get("finish", "Regular"),
+        specialty_one=request.args.get("specialty_one", "None"),
+        grading_company=request.args.get("grading_company", ""),
+        grade=grade,
+        image_card_ids=list(_image_card_ids()),
+    )
+    if detail is None:
+        return "", 404
+    return jsonify(detail)
 
 
 # ── Analytics ───────────────────────────────────────────────

@@ -12,5 +12,15 @@ python-dotenv>=1.0
 flask>=3.0
 flask-cors>=4.0
 
+# PSA graded-cert scraping: the public psacard.com cert site is Cloudflare-
+# protected + JS-rendered (the official API is quota-limited to ~1 call/day), so
+# we drive a real (headed) browser. After install run: `playwright install chromium`.
+playwright>=1.40
+
+# Card-image fetch (TCGplayer product-image CDN -> webp). httpx (above) does the
+# download; Pillow converts to webp. Used by scripts/fetch_images.py (bulk) and
+# the dashboard's on-demand /api/images/<id> endpoint.
+Pillow>=10.0
+
 # Tests
 pytest>=8.0
