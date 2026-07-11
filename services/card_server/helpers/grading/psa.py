@@ -296,10 +296,17 @@ def map_cert(scraped: dict[str, Any]) -> Optional[dict[str, Any]]:
         return None
 
     grade_label = scraped.get("grade_label")
-    grade = parse_grade(grade_label)
+    grade_raw = parse_grade(grade_label)  # numeric grade, or None for non-numeric labels
     population, population_higher = _summarize_population(
-        scraped.get("population_rows"), grade
+        scraped.get("population_rows"), grade_raw
     )
+    # Robustness for "awkward" grades: PSA grades are usually 1-10 (+ half), but
+    # values like "PSA Unavailable" or "Authentic" have no clean number. Condense
+    # anything unparseable to the -1 sentinel (kept out of pop math above via
+    # grade_raw); the exact text stays in grade_label. TODO: comprehensive handling
+    # — many awkward grades are an error qualifier concatenated to a number (e.g.
+    # "OC 8"); see the grading README.
+    grade = grade_raw if grade_raw is not None else -1.0
     variety = scraped.get("variety")
     brand = scraped.get("brand")
     subject = scraped.get("subject")

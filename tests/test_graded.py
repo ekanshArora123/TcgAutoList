@@ -233,13 +233,14 @@ def test_add_graded_by_cert(db, monkeypatch):
     assert slab["card_id"] is None  # TCGplayer link deferred
     assert slab["cert_id"] == "94597302"
 
-    # Re-adding the same cert dedups the SKU (same spec+grade) but adds a slab.
+    # Re-adding the same cert is idempotent — a cert is one physical slab, so no
+    # duplicate SKU and no duplicate inventory row.
     asyncio.run(cs.add_graded_by_cert("94597302", "PSA"))
     assert db.execute("SELECT COUNT(*) FROM graded_skus").fetchone()[0] == 1
-    assert db.execute("SELECT COUNT(*) FROM graded_inventory").fetchone()[0] == 2
+    assert db.execute("SELECT COUNT(*) FROM graded_inventory").fetchone()[0] == 1
 
     # It shows up in the graded browse.
-    assert ReportingService(db).browse_graded({})["total"] == 2
+    assert ReportingService(db).browse_graded({})["total"] == 1
 
 
 def test_graded_skus_upgrade_from_legacy(tmp_path):
@@ -371,3 +372,47 @@ def test_store_graded_images_no_urls_is_noop(tmp_path):
     r = store_graded_images("94597302", None, None, images_dir=tmp_path)
     assert r == {"front": False, "back": False}
     assert not (tmp_path / "94597302").exists()  # nothing written when no urls
+
+
+# ─── duplicate-cert guard + awkward grades ───────────────────
+
+def test_awkward_grade_condensed_to_sentinel():
+    from services.card_server.helpers.grading.psa import map_cert
+    assert map_cert({"cert_number": "1", "grade_label": "PSA Unavailable"})["grade"] == -1.0
+    assert map_cert({"cert_number": "1", "grade_label": "Authentic"})["grade"] == -1.0
+    assert map_cert({"cert_number": "1", "grade_label": "GEM-MT 10"})["grade"] == 10.0
+    # weird grade must not poison population math
+    assert map_cert({"cert_number": "1", "grade_label": "PSA Unavailable"})["population"] is None
+
+
+def test_add_graded_by_cert_idempotent_on_cert(db, monkeypatch):
+    import asyncio
+    _mock_psa(monkeypatch)  # provider echoes cert_id = the cert passed in
+    cs = CollectionService(db)
+    asyncio.run(cs.add_graded_by_cert("94597302", "PSA"))
+    asyncio.run(cs.add_graded_by_cert("94597302", "PSA"))  # same physical slab again
+    assert db.execute("SELECT COUNT(*) FROM graded_inventory WHERE cert_id='94597302'").fetchone()[0] == 1
+
+
+def test_dedup_graded_inventory_certs(tmp_path):
+    import sqlite3
+    from services.card_server.db import _dedup_graded_inventory_certs
+    conn = sqlite3.connect(str(tmp_path / "dup.db"), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE graded_skus (graded_sku_id INTEGER PRIMARY KEY, qty INTEGER DEFAULT 0);
+        CREATE TABLE graded_inventory (graded_inventory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            graded_sku_id INTEGER, cert_id TEXT, qty INTEGER DEFAULT 1);
+        INSERT INTO graded_skus(graded_sku_id,qty) VALUES(1,0);
+        INSERT INTO graded_inventory(graded_sku_id,cert_id,qty) VALUES
+            (1,'X',1),(1,'X',1),(1,NULL,1),(1,NULL,1);
+        """
+    )
+    _dedup_graded_inventory_certs(conn)
+    assert conn.execute("SELECT COUNT(*) FROM graded_inventory WHERE cert_id='X'").fetchone()[0] == 1
+    # cert-less rows are exempt (manual adds without a cert)
+    assert conn.execute("SELECT COUNT(*) FROM graded_inventory WHERE cert_id IS NULL").fetchone()[0] == 2
+    # re-run is a no-op (unique index now enforces it)
+    _dedup_graded_inventory_certs(conn)
+    assert conn.execute("SELECT COUNT(*) FROM graded_inventory").fetchone()[0] == 3

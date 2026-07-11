@@ -45,8 +45,39 @@ def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
             pass  # column already exists
 
     _upgrade_graded_skus(_db)
+    _dedup_graded_inventory_certs(_db)
 
     return _db
+
+
+def _dedup_graded_inventory_certs(db: sqlite3.Connection) -> None:
+    """A cert number is a single physical slab, so a cert must appear at most once
+    in graded_inventory. Drop any duplicate rows (keep the earliest), refresh the
+    affected graded_skus' aggregate qty, then enforce it with a partial unique
+    index. Guarded/idempotent; the index is created here (not in schema.sql) so
+    executescript never trips over pre-existing duplicates. NULL certs (cert-less
+    manual adds) are exempt — they stay non-unique."""
+    db.execute(
+        """
+        DELETE FROM graded_inventory
+        WHERE cert_id IS NOT NULL AND graded_inventory_id NOT IN (
+            SELECT MIN(graded_inventory_id) FROM graded_inventory
+            WHERE cert_id IS NOT NULL GROUP BY cert_id
+        )
+        """
+    )
+    db.execute(
+        """
+        UPDATE graded_skus SET qty = (
+            SELECT COALESCE(SUM(qty), 0) FROM graded_inventory
+            WHERE graded_inventory.graded_sku_id = graded_skus.graded_sku_id
+        )
+        """
+    )
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_graded_inventory_cert "
+        "ON graded_inventory(cert_id) WHERE cert_id IS NOT NULL"
+    )
 
 
 # Column list for the current graded_skus shape (must match schema.sql).

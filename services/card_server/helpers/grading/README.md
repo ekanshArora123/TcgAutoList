@@ -141,5 +141,15 @@ re-fetch; re-adding a cert re-downloads.
    just needs the auth profile + frontend display, and ideally a periodic pop
    refresh collector (mirroring `collect_sales.py`).
 
+4. **Awkward / non-standard grades.** Grades usually run 1-10 (+ half), but PSA
+   has values like `Authentic` and `PSA Unavailable` (no number), and error
+   qualifiers concatenated to a number (`OC 8` = off-center 8, `MK 9` = mark 9).
+   **Today (interim):** anything without a clean number is condensed to a `grade`
+   of **-1** (displayed as **ERR**); the exact text is kept in `grade_label`, and
+   qualifier+number values still parse to just the number. A full model would
+   store the numeric grade + qualifier separately and display them properly.
+   (`parse_grade` in `formatters.py`, the `-1` sentinel in `psa.py` / `add_graded_by_cert`,
+   and the `ERR` rendering in `GradedCollectionPage`.)
+
 Also deferred (owner will handle): the raw-card price estimate shown next to a
 graded card.

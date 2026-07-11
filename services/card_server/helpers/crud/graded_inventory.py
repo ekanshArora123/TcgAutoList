@@ -100,6 +100,16 @@ class GradedInventoryHelper:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_by_cert(self, cert_id: str) -> Optional[dict]:
+        """A cert number is a single physical slab, so at most one row. None if not
+        found (or cert_id is falsy — cert-less manual adds don't dedup on cert)."""
+        if not cert_id:
+            return None
+        row = self.db.execute(
+            "SELECT * FROM graded_inventory WHERE cert_id = ? LIMIT 1", (str(cert_id),)
+        ).fetchone()
+        return dict(row) if row else None
+
     def get_detail_by_id(self, graded_inventory_id: int) -> Optional[dict]:
         row = self.db.execute(
             _DETAIL_SELECT + " WHERE i.graded_inventory_id = ?", (graded_inventory_id,)

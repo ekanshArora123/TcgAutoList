@@ -239,6 +239,9 @@ CREATE TABLE IF NOT EXISTS graded_inventory (
 
 CREATE INDEX IF NOT EXISTS idx_graded_inventory_sku ON graded_inventory(graded_sku_id);
 CREATE INDEX IF NOT EXISTS idx_graded_inventory_status ON graded_inventory(status);
+-- A cert number is a single physical slab -> at most one row per non-null cert.
+-- The partial UNIQUE index (idx_graded_inventory_cert) is created in db.py, after
+-- de-duping, so executescript never trips over pre-existing duplicates.
 
 -- graded_prices: historical price estimates per graded SKU (mirror of `prices`).
 -- Graded pricing is manual today (TCGplayer has no graded data).

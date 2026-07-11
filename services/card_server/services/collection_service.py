@@ -280,7 +280,7 @@ class CollectionService:
                 "card_set", "card_category", "card_number", "card_subject",
                 "card_variety", "card_language", "population", "population_higher",
             )},
-            "grade": grade if grade is not None else 0.0,  # 'Authentic' → 0.0 sentinel
+            "grade": grade if grade is not None else -1.0,  # awkward/unparseable → -1 sentinel
             "pop_fetched_at": date.today().isoformat(),
             "card_id": linked_card_id,
         }
@@ -298,13 +298,25 @@ class CollectionService:
         self.graded_skus.update(updates)
 
         stored_cert = info.get("cert_id") or str(cert_id)
-        inv = self.graded_inventory.create(
-            {
-                "graded_sku_id": graded_sku["graded_sku_id"],
-                "cert_id": stored_cert,
-                "qty": 1,
-            }
-        )
+        # A cert number is a single physical slab, so never insert a duplicate:
+        # reuse the existing row for this cert (re-pointing its graded_sku if the
+        # variant changed). This makes re-adding a cert idempotent — it refreshes
+        # pop/images below instead of creating a second copy.
+        existing = self.graded_inventory.get_by_cert(stored_cert)
+        if existing:
+            inv_id = existing["graded_inventory_id"]
+            if existing.get("graded_sku_id") != graded_sku["graded_sku_id"]:
+                self.graded_inventory.update(
+                    {"graded_inventory_id": inv_id, "graded_sku_id": graded_sku["graded_sku_id"]}
+                )
+        else:
+            inv_id = self.graded_inventory.create(
+                {
+                    "graded_sku_id": graded_sku["graded_sku_id"],
+                    "cert_id": stored_cert,
+                    "qty": 1,
+                }
+            )["graded_inventory_id"]
 
         # Best-effort: download the slab's front/back images (their URLs are only
         # available from the scrape). Lazy import + swallow errors so a missing
@@ -318,7 +330,7 @@ class CollectionService:
         except Exception:
             pass
 
-        return self.graded_inventory.get_detail_by_id(inv["graded_inventory_id"])
+        return self.graded_inventory.get_detail_by_id(inv_id)
 
     async def _resolve_card_link(self, card_id: str, info: dict[str, Any]) -> Optional[str]:
         """Resolve a user-provided TCGplayer id to a linkable card_id for a graded

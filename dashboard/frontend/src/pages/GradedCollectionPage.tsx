@@ -123,7 +123,9 @@ export default function GradedCollectionPage() {
 // White box, red outline: big grade number on the left, PSA card name in the
 // middle, card info underneath. Reuses the shared CardImage.
 function GradedTile({ card }: { card: GradedCardItem }) {
-  const gradeText = card.grade ? String(card.grade) : (card.grade_label || "AUTH");
+  // Awkward/unavailable grades come through as the -1 sentinel (see psa.py); show
+  // "ERR" rather than a number. The exact PSA text stays in the Grade info row.
+  const gradeText = card.grade > 0 ? String(card.grade) : "ERR";
   // The grade/name header is a stand-in for a missing picture — hide it once an
   // image (slab front, or the raw-card fallback) is actually showing.
   const [hasImage, setHasImage] = useState(false);
@@ -162,7 +164,7 @@ function GradedTile({ card }: { card: GradedCardItem }) {
         {card.card_variety && <div className="adv-row"><span>Variety</span><span>{card.card_variety}</span></div>}
         {card.card_language && <div className="adv-row"><span>Language</span><span>{card.card_language}</span></div>}
         {card.card_year && <div className="adv-row"><span>Year</span><span>{card.card_year}</span></div>}
-        <div className="adv-row"><span>Grade</span><span>{card.grading_company} {card.grade_label || card.grade}</span></div>
+        <div className="adv-row"><span>Grade</span><span>{card.grade_label || (card.grade > 0 ? `${card.grading_company} ${card.grade}` : "ERR")}</span></div>
         {card.population != null && <div className="adv-row"><span>Population</span><span>{card.population}</span></div>}
         {card.cert_id && <div className="adv-row"><span>Cert #</span><span>{card.cert_id}</span></div>}
         <div className="adv-row"><span>Status</span><span className={`status-badge status-${card.status}`}>{card.status}</span></div>

@@ -16,7 +16,15 @@ _LANGUAGES = (
 
 def parse_grade(label: Optional[str]) -> Optional[float]:
     """Numeric grade from a grader's grade label. 'PR 1' → 1.0, 'GEM-MT 10' → 10.0,
-    'NM-MT 8.5' → 8.5. Returns None for label-only grades like 'Authentic'."""
+    'NM-MT 8.5' → 8.5. Returns None for label-only grades like 'Authentic' or
+    'PSA Unavailable' (callers condense those to the -1 sentinel).
+
+    TODO (awkward grades — see grading README): comprehensive handling of
+    non-standard grades. Grades usually run 1-10 (+ half), but many awkward values
+    are an error qualifier concatenated to a number (e.g. 'OC 8' = off-center 8,
+    'MK 9' = mark 9); today those grab the number and drop the qualifier. Others
+    ('Authentic', 'PSA Unavailable') have no number at all. A full model would
+    capture the qualifier alongside the numeric grade."""
     if not label:
         return None
     m = _GRADE_NUM.search(label)
