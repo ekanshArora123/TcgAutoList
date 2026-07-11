@@ -1,22 +1,50 @@
 # Grading providers (graded cards)
 
-Fetchers that pull graded-card data from grading companies' public APIs by cert
-number, plus notes on how graded cards are modeled. Sibling to `tcgplayer/`; one
+Fetchers that pull graded-card data from grading companies by cert number —
+scraping the site or hitting an API as the source demands (PSA is **scraped**; see
+below) — plus notes on how graded cards are modeled. Sibling to `tcgplayer/`; one
 module per company (`psa.py` today), behind a small provider registry so more
 companies drop in later. The graded DB chain (`graded_skus` / `graded_inventory`
 / `graded_prices`) lives in `helpers/crud/graded_*.py`; the write workflow is
 `CollectionService.add_graded_by_cert(...)`.
 
+## Data model (parallel to the raw chain)
+
+Graded cards are a **parallel chain** mirroring the raw one — `graded_skus` ‖
+`skus`, `graded_inventory` ‖ `inventory`, `graded_prices` ‖ `prices` — so the raw
+path stays untouched and the two meet only at the read layer (the dashboard
+browse). A future kind (e.g. sealed) should follow the same pattern. Graded used
+to ride on the raw `skus.specialty_two` convention; that column now holds only
+error attributes (miscuts, holo bleeds), which is why graded got its own tables.
+
+Identity keys:
+- **`graded_skus`** dedups on `(grading_company, grader_spec_id, grade)` via a
+  partial unique index (a legacy card-based key is kept for manual adds that have
+  no grader spec).
+- **A cert number is one physical slab**, so `graded_inventory.cert_id` has a
+  partial unique index (non-null) and `add_graded_by_cert` is **idempotent** —
+  re-adding a cert refreshes it (pop/images) rather than creating a duplicate.
+
+Frontend: graded cards get their own **"Graded" tab**, not mixed into the raw
+collection grid (keeps the raw browse untouched).
+
 ## Design: identity is decoupled from the TCGplayer link
 
-A graded card's **identity and population come from the grading company** (e.g.
-PSA `GetByCertNumber`: year, set, number, subject, variety, grade, population).
-This works for 100% of graded cards, in any language, including cards TCGplayer
-doesn't carry.
+A graded card's **identity comes from the grading company** (PSA's public cert
+page: year, set, number, subject, variety, grade — and population once that's
+wired up, see future work), not from TCGplayer. This works for 100% of graded
+cards, in any language, including cards TCGplayer doesn't carry.
 
 The link to a TCGplayer `cards` row (`graded_skus.card_id`) is **optional and
-nullable** — it exists only to enable raw-vs-graded price comparison later, and
-is intentionally left `NULL` at add time for now.
+nullable** — it drives the (future) raw-vs-graded price comparison and the raw
+fallback image. It's set at add time **only if you enter a TCGplayer id** in the
+add form (the interim manual link); otherwise it stays `NULL`. Linking is robust:
+a provided id is pegged — with a minimal stub `cards` row built from the grader's
+own fields — whenever it has a real image on TCGplayer's CDN, *even if the
+search-API metadata lookup returns nothing*, so the image still displays; a
+typo'd id with no image is left unlinked (no junk `cards` row). The future
+graded→raw converter (future work) will populate `card_id` comprehensively and
+can replace this interim `_resolve_card_link` hook.
 
 Grader-identity columns on `graded_skus` are named **generically** (not
 PSA-specific) so any grading company maps onto them — assume every company
@@ -69,22 +97,22 @@ once. Caveats of this path:
 (`python -m playwright install chromium` — run.bat / run.sh do this on venv
 setup; a manual clone must run it once).
 
-**Environment variables (all optional):**
-- `PSA_USER_DATA_DIR` — path to a persistent Chrome profile folder. Set this to
-  enable **population** scraping (see login below). Unset → a throwaway profile →
-  identity only, population is `None`.
+**Environment variables (all optional; only relevant to the fallback launch path
+— CDP above needs none of them):**
+- `PSA_USER_DATA_DIR` — path to a persistent Chrome profile folder. Improves
+  Cloudflare reliability on the launch path (an established, signed-in session
+  whose `cf_clearance` survives restarts) and is the prerequisite for the
+  (deferred) population scrape. Unset → a throwaway profile.
 - `PSA_HEADLESS=1` — force headless (normally leave off; Cloudflare blocks it).
   Only useful on an IP that isn't challenged.
 - `PSA_BROWSER_CHANNEL` — use an installed Chrome channel (e.g. `chrome`) instead
-  of Playwright's bundled Chromium; handy for reusing an existing signed-in Chrome
-  profile.
+  of Playwright's bundled Chromium.
 
-**A persistent, signed-in profile helps Cloudflare reliability.** `fetch_cert`
-keeps ONE warm browser alive across calls (see the module docstring); pointing it
-at a persistent, PSA-logged-in Chrome profile via `PSA_USER_DATA_DIR` (ideally
-with `PSA_BROWSER_CHANNEL=chrome` so it's real Google Chrome) gives Cloudflare an
-established, trusted session and its `cf_clearance` cookie survives restarts — the
-most reliable + fastest config. Set it up once (needs a PSA/Collectors account):
+**Best config for the fallback launch path** (CDP above is still preferred): point
+`PSA_USER_DATA_DIR` at a persistent, PSA-logged-in Chrome profile (ideally with
+`PSA_BROWSER_CHANNEL=chrome`). `fetch_cert` keeps ONE warm browser alive across
+calls, and an established, trusted session makes Cloudflare far less likely to
+re-challenge. Set it up once (needs a PSA/Collectors account):
 1. Point `PSA_USER_DATA_DIR` at a **dedicated** folder (Playwright's own profile;
    NOT your everyday Chrome profile — a running Chrome locks its profile).
 2. `python -m services.card_server.helpers.grading.psa --login` — a real window
@@ -119,14 +147,14 @@ re-fetch; re-adding a cert re-downloads.
 
 ## ⚠️ Future work — these features are DEFERRED and MUST be built
 
-1. **Graded → raw mapper (the "comprehensive converter").** Resolve a TCGplayer
-   `card_id` for a graded card so raw-vs-graded pricing (e.g. NM price vs PSA 8
-   price) can work. Today `card_id` is left `NULL`; there is **no** auto-matcher
-   and **no** manual card-picker yet. When built, this converter is the single
-   place that populates `graded_skus.card_id` — any interim linking hook must be
-   isolated and removable so this replaces it cleanly. Must handle: English cards
-   with a TCGplayer equivalent, same-card different-language, and cards that exist
-   in neither (leave unlinked).
+1. **Graded → raw mapper (the "comprehensive converter").** Auto-resolve a
+   TCGplayer `card_id` for a graded card so raw-vs-graded pricing (e.g. NM price
+   vs PSA 8 price) can work. Today `card_id` is set only via the **interim manual
+   id input** on the add form (the isolated, removable `_resolve_card_link` hook)
+   or left `NULL` — there is **no auto-matcher** yet. When built, the converter
+   becomes the single place that populates `card_id` and replaces the interim
+   hook. Must handle: English cards with a TCGplayer equivalent, same-card
+   different-language, and cards that exist in neither (leave unlinked).
 
 2. **Slab images — largely DONE** (see "Slab images" above): front + back are
    downloaded and stored at add time, and the front is displayed. Remaining:
