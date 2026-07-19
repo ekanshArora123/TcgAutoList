@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  fetchGradedSlabDetail, setGradedSlabTag, cardImageUrl, gradedImageUrl,
+  fetchGradedSlabDetail, setGradedSlabTag, setGradedCardLink, cardImageUrl, gradedImageUrl,
   type GradedSlabDetail,
 } from "../api";
 import CardImage from "../components/CardImage";
@@ -23,6 +23,11 @@ export default function GradedDetailPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // TCGplayer-id editor state (seeded from the current link on every load).
+  const [tcgInput, setTcgInput] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!certId) return;
     setLoading(true);
@@ -32,6 +37,10 @@ export default function GradedDetailPage() {
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [certId]);
+
+  useEffect(() => {
+    if (detail) setTcgInput(detail.identity.card_id ?? "");
+  }, [detail]);
 
   if (loading) return <div className="loading">Loading...</div>;
   if (notFound || !detail) return <div className="loading">Slab not found</div>;
@@ -48,6 +57,17 @@ export default function GradedDetailPage() {
       )
       .catch((e) => setError(e instanceof Error ? e.message : "Failed"))
       .finally(() => setBusy(false));
+  };
+
+  const linkDirty = tcgInput.trim() !== (identity.card_id ?? "");
+  const saveLink = () => {
+    if (!certId || linkBusy || !linkDirty) return;
+    setLinkBusy(true);
+    setLinkError(null);
+    setGradedCardLink(certId, tcgInput.trim())
+      .then(setDetail)
+      .catch((e) => setLinkError(e instanceof Error ? e.message : "Failed"))
+      .finally(() => setLinkBusy(false));
   };
 
   const chips = [
@@ -152,21 +172,43 @@ export default function GradedDetailPage() {
             Price history across grades will graph here.
           </div>
 
-          {identity.card_id ? (
-            <div className="card-detail-qty-actions">
-              <Link
-                to={`/card/${identity.card_id}?finish=${encodeURIComponent(identity.finish)}&specialty_one=${encodeURIComponent(identity.specialty_one)}`}
+          {/* TCGplayer link editor: set/add or edit the raw-card id for this
+              graded card (applies to every grade). Blank unlinks. */}
+          <div className="graded-link-editor">
+            <label className="graded-link-label">TCGplayer ID</label>
+            <div className="graded-link-row">
+              <input
+                className="search-input"
+                placeholder="e.g. 42445 (blank to unlink)"
+                value={tcgInput}
+                disabled={linkBusy}
+                onChange={(e) => setTcgInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && saveLink()}
+              />
+              <button
+                type="button"
                 className="qty-save-btn"
+                onClick={saveLink}
+                disabled={!linkDirty || linkBusy}
               >
-                View raw card
-              </Link>
-              {identity.raw_estimated_price != null && (
-                <span style={{ color: "#8b949e", fontSize: 12 }}>Raw ≈ {fmt(identity.raw_estimated_price)}</span>
-              )}
+                {linkBusy ? "Saving…" : "Save"}
+              </button>
             </div>
-          ) : (
-            <div className="card-detail-empty">Not linked to a raw card yet.</div>
-          )}
+            {linkError && <span className="qty-save-error">{linkError}</span>}
+            {identity.card_id && (
+              <div className="card-detail-qty-actions">
+                <Link
+                  to={`/card/${identity.card_id}?finish=${encodeURIComponent(identity.finish)}&specialty_one=${encodeURIComponent(identity.specialty_one)}`}
+                  className="qty-save-btn"
+                >
+                  View raw card
+                </Link>
+                {identity.raw_estimated_price != null && (
+                  <span style={{ color: "#8b949e", fontSize: 12 }}>Raw ≈ {fmt(identity.raw_estimated_price)}</span>
+                )}
+              </div>
+            )}
+          </div>
         </aside>
       </div>
     </div>

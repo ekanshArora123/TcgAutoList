@@ -261,6 +261,32 @@ def set_graded_slab_tag(graded_inventory_id):
     )
 
 
+@app.route("/api/graded/slab/<cert_id>/link", methods=["PATCH"])
+def set_graded_slab_link(cert_id):
+    """Set/clear the TCGplayer id for the graded card this cert belongs to.
+
+    Body: { card_id }. Blank unlinks. A non-blank id is validated (must resolve to
+    a real card/image) and applied to every grade of this card. Returns the
+    refreshed slab detail. 404 if the cert isn't owned; 400 on an unusable id.
+    """
+    body = request.get_json(silent=True) or {}
+    card_id = str(body.get("card_id") or "").strip() or None
+
+    try:
+        result = asyncio.run(collection.set_graded_link_by_cert(cert_id, card_id))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RateLimited:
+        return jsonify({"error": "TCGplayer rate limit reached — try again later."}), 429
+    except Exception as e:  # network / parse error resolving the id
+        return jsonify({"error": f"link failed: {e}"}), 502
+
+    if result is None:
+        return "", 404
+    detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
+    return jsonify(detail)
+
+
 @app.route("/api/graded/companies")
 def graded_companies():
     """Filter dropdown values for the graded view (companies + statuses)."""

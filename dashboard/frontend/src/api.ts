@@ -505,6 +505,27 @@ export function fetchGradedSlabDetail(certId: string): Promise<GradedSlabDetail>
   return fetchJson(`${BASE}/graded/slab/${encodeURIComponent(certId)}`);
 }
 
+// Set/clear the TCGplayer id for the graded card a cert belongs to (applies to
+// every grade of that card). Blank cardId unlinks. Returns the refreshed detail.
+export async function setGradedCardLink(certId: string, cardId: string): Promise<GradedSlabDetail> {
+  const res = await fetch(`${BASE}/graded/slab/${encodeURIComponent(certId)}/link`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ card_id: cardId }),
+  });
+  if (!res.ok) {
+    let msg = `Link failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export interface GradedSlabTagResult {
   graded_inventory_id: number;
   tags: string[];

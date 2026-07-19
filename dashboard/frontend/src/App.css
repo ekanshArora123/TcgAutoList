@@ -970,6 +970,27 @@ body {
 /* Highlight the focused slab's grade row in the context table. */
 .card-table tr.row-current td { background: #17233b; }
 
+.graded-link-editor {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #21262d;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.graded-link-label {
+  font-size: 12px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.graded-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.graded-link-row .search-input { flex: 1; min-width: 0; }
+
 .graded-graph-placeholder {
   margin-top: 12px;
   padding: 24px 12px;

@@ -62,8 +62,11 @@ cards, in any language, including cards TCGplayer doesn't carry.
 
 The link to a TCGplayer `cards` row (`graded_skus.card_id`) is **optional and
 nullable** — it drives the (future) raw-vs-graded price comparison and the raw
-fallback image. It's set at add time **only if you enter a TCGplayer id** in the
-add form (the interim manual link); otherwise it stays `NULL`. Linking is robust:
+fallback image. It's set **manually** two ways — at add time (a TCGplayer id field
+on the add form) or later from the **slab detail page's TCGplayer-ID editor**
+(`set_graded_link_by_cert`, which applies the link to the whole spec group since
+the raw card is the same across grades); otherwise it stays `NULL`. Both go
+through the same `_resolve_card_link` validation. Linking is robust:
 a provided id is pegged — with a minimal stub `cards` row built from the grader's
 own fields — whenever it has a real image on TCGplayer's CDN, *even if the
 search-API metadata lookup returns nothing*, so the image still displays; a
@@ -174,12 +177,13 @@ re-fetch; re-adding a cert re-downloads.
 
 1. **Graded → raw mapper (the "comprehensive converter").** Auto-resolve a
    TCGplayer `card_id` for a graded card so raw-vs-graded pricing (e.g. NM price
-   vs PSA 8 price) can work. Today `card_id` is set only via the **interim manual
-   id input** on the add form (the isolated, removable `_resolve_card_link` hook)
-   or left `NULL` — there is **no auto-matcher** yet. When built, the converter
-   becomes the single place that populates `card_id` and replaces the interim
-   hook. Must handle: English cards with a TCGplayer equivalent, same-card
-   different-language, and cards that exist in neither (leave unlinked).
+   vs PSA 8 price) can work. Today `card_id` is set only **manually** — the id
+   field on the add form or the slab detail page's TCGplayer-ID editor (both via
+   the isolated, removable `_resolve_card_link` hook) — or left `NULL`; there is
+   **no auto-matcher** yet. When built, the converter becomes the single place that
+   populates `card_id` and replaces the interim hook + manual editors. Must handle:
+   English cards with a TCGplayer equivalent, same-card different-language, and
+   cards that exist in neither (leave unlinked).
 
 2. **Slab images — largely DONE** (see "Slab images" above): front + back are
    downloaded and stored at add time; both are now displayed (the tile shows the

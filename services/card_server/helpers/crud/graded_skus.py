@@ -94,6 +94,17 @@ class GradedSkusHelper:
         )
         return self.get_by_id(graded_sku_id)
 
+    def get_by_spec(self, grading_company: str, grader_spec_id: str) -> list[dict]:
+        """All graded SKUs sharing a (company, grader spec) — i.e. every grade of
+        one card within a company. The spec identifies the card, so its TCGplayer
+        link is the same across these; a link edit updates the whole group."""
+        rows = self.db.execute(
+            "SELECT * FROM graded_skus WHERE grading_company = ? AND grader_spec_id = ? "
+            "ORDER BY grade DESC",
+            (grading_company, grader_spec_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_by_card_id(self, card_id: str) -> list[dict]:
         rows = self.db.execute(
             "SELECT * FROM graded_skus WHERE card_id = ? ORDER BY grading_company, grade DESC",

@@ -383,5 +383,48 @@ class CollectionService:
         """Isolated seam for the future graded->raw converter to set the TCGplayer link."""
         return self.graded_skus.link_card(graded_sku_id, card_id)
 
+    async def set_graded_link_by_cert(
+        self, cert_id: str, card_id: Optional[str]
+    ) -> Optional[dict]:
+        """Manually set/clear the TCGplayer link for the graded card a cert belongs
+        to. Interim manual editor for `graded_skus.card_id` (the deferred graded->raw
+        mapper will automate this) — reachable from the slab detail page.
+
+        The link identifies the *raw card*, which is the same across every grade of
+        one card, so it's applied to the whole spec group (all graded_skus sharing
+        this company + grader spec), keeping grades consistent. A blank id unlinks.
+        A non-blank id is validated + resolved through the same `_resolve_card_link`
+        path the add flow uses (creates the `cards` row so the FK holds and the
+        image/price show); an unusable id raises ValueError. Returns
+        {"card_id": <resolved or None>}, or None if the cert isn't owned."""
+        slab = self.graded_inventory.get_by_cert(cert_id)
+        if not slab:
+            return None
+        sku = self.graded_skus.get_by_id(slab["graded_sku_id"])
+        if not sku:
+            return None
+
+        # Every grade of this card within the company (falls back to just this sku
+        # when there's no grader spec).
+        if sku.get("grader_spec_id"):
+            group = self.graded_skus.get_by_spec(sku["grading_company"], sku["grader_spec_id"])
+        else:
+            group = [sku]
+
+        resolved: Optional[str] = None
+        if card_id and str(card_id).strip():
+            # Reuse the add-time resolver; the sku's grader fields feed its stub
+            # fallback (card_subject/card_set/card_number).
+            resolved = await self._resolve_card_link(str(card_id).strip(), sku)
+            if resolved is None:
+                raise ValueError(
+                    f"TCGplayer id {str(card_id).strip()} couldn't be linked "
+                    "(no card or image found)."
+                )
+
+        for g in group:
+            self.graded_skus.link_card(g["graded_sku_id"], resolved)
+        return {"card_id": resolved}
+
     def supported_grading_companies(self) -> list[str]:
         return grading_registry.supported_companies()

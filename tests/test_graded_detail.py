@@ -9,6 +9,7 @@ Run: pytest -q
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 
@@ -138,3 +139,61 @@ def test_set_graded_slab_tag_toggles_to_crack(db):
     cs.set_graded_slab_tag(gid, "to_crack", False)
     detail = ReportingService(db).graded_slab_detail("AAA")
     assert detail["slab"]["to_crack"] is False
+
+
+# ─── TCGplayer-id link editor ────────────────────────────────
+
+
+def test_set_link_applies_to_whole_spec_group(db, monkeypatch):
+    """Setting the TCGplayer id from one grade's cert links every grade of the
+    card (all skus sharing the company + grader spec)."""
+    CardsHelper(db).upsert({"id": "999", "card_name": "Charizard"})
+    inv = GradedInventoryHelper(db)
+    sku10 = _sku(db, grade=10)
+    sku9 = _sku(db, grade=9)
+    inv.create({"graded_sku_id": sku10["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+    inv.create({"graded_sku_id": sku9["graded_sku_id"], "cert_id": "CCC", "qty": 1})
+
+    cs = CollectionService(db)
+    # Skip the network resolver; pretend "999" resolved cleanly.
+    async def fake_resolve(card_id, info):
+        return "999"
+    monkeypatch.setattr(cs, "_resolve_card_link", fake_resolve)
+
+    result = asyncio.run(cs.set_graded_link_by_cert("AAA", "999"))
+    assert result == {"card_id": "999"}
+    # Both grades now carry the link.
+    assert GradedSkusHelper(db).get_by_id(sku10["graded_sku_id"])["card_id"] == "999"
+    assert GradedSkusHelper(db).get_by_id(sku9["graded_sku_id"])["card_id"] == "999"
+    # Surfaced on the detail page identity.
+    assert ReportingService(db).graded_slab_detail("CCC")["identity"]["card_id"] == "999"
+
+
+def test_blank_id_unlinks(db, monkeypatch):
+    CardsHelper(db).upsert({"id": "999", "card_name": "Charizard"})
+    inv = GradedInventoryHelper(db)
+    sku = _sku(db, grade=10, card_id="999")
+    inv.create({"graded_sku_id": sku["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+
+    cs = CollectionService(db)
+    result = asyncio.run(cs.set_graded_link_by_cert("AAA", ""))
+    assert result == {"card_id": None}
+    assert GradedSkusHelper(db).get_by_id(sku["graded_sku_id"])["card_id"] is None
+
+
+def test_unusable_id_raises(db, monkeypatch):
+    inv = GradedInventoryHelper(db)
+    sku = _sku(db, grade=10)
+    inv.create({"graded_sku_id": sku["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+
+    cs = CollectionService(db)
+    async def fake_resolve(card_id, info):
+        return None  # couldn't resolve (bad id, no image)
+    monkeypatch.setattr(cs, "_resolve_card_link", fake_resolve)
+
+    with pytest.raises(ValueError):
+        asyncio.run(cs.set_graded_link_by_cert("AAA", "badid"))
+
+
+def test_set_link_unknown_cert_returns_none(db):
+    assert asyncio.run(CollectionService(db).set_graded_link_by_cert("nope", "999")) is None
