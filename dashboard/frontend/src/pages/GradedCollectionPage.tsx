@@ -130,6 +130,14 @@ function GradedTile({ card }: { card: GradedCardItem }) {
   // "ERR" rather than a number.
   const gradeText = card.grade > 0 ? String(card.grade) : "ERR";
   const toCrack = (card.tags || "").split(",").map((t) => t.trim()).includes("to_crack");
+  // Condensed extra details (omit blanks) — one small line under the set.
+  const meta = [
+    card.card_year,
+    card.card_variety,
+    card.card_language,
+    card.population != null ? `Pop ${card.population}` : null,
+    card.cert_id ? `Cert ${card.cert_id}` : null,
+  ].filter(Boolean);
 
   const inner = (
     <>
@@ -156,6 +164,7 @@ function GradedTile({ card }: { card: GradedCardItem }) {
           {card.card_number ? <span className="card-number"> #{card.card_number}</span> : ""}
         </div>
         <div className="card-tile-set">{card.set_name || "Unknown Set"}</div>
+        {meta.length > 0 && <div className="graded-tile-meta">{meta.join(" · ")}</div>}
         <div className="graded-tile-status-row">
           <span className={`card-tile-price ${card.estimated_price == null ? "no-price" : ""}`}>
             {card.estimated_price != null ? fmt(card.estimated_price) : "—"}
