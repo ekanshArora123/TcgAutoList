@@ -244,6 +244,18 @@ class CollectionService:
     def delete_graded_inventory_item(self, graded_inventory_id: int) -> bool:
         return self.graded_inventory.delete(graded_inventory_id)
 
+    def set_graded_slab_tag(
+        self, graded_inventory_id: int, tag: str, present: bool
+    ) -> Optional[dict]:
+        """Add or remove a tag on one graded slab (e.g. the 'to_crack' mark).
+
+        Slab-level, cert-specific — acts only on this one physical slab, never the
+        grade class or other slabs. Tags reuse the shared comma-separated column
+        (see helpers.crud.tags), so any future slab tag flows through here too."""
+        if present:
+            return self.graded_inventory.add_tag(graded_inventory_id, tag)
+        return self.graded_inventory.remove_tag(graded_inventory_id, tag)
+
     async def add_graded_by_cert(
         self, cert_id: str, grading_company: str = "PSA", card_id: Optional[str] = None
     ) -> Optional[dict]:

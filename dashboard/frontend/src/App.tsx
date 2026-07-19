@@ -4,6 +4,7 @@ import CollectionPage from "./pages/CollectionPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import CardDetailPage from "./pages/CardDetailPage";
 import GradedCollectionPage from "./pages/GradedCollectionPage";
+import GradedDetailPage from "./pages/GradedDetailPage";
 import "./App.css";
 
 function App() {
@@ -31,6 +32,7 @@ function App() {
           <Route path="/" element={<CollectionGridPage />} />
           <Route path="/info" element={<CollectionPage />} />
           <Route path="/graded" element={<GradedCollectionPage />} />
+          <Route path="/graded/slab/:certId" element={<GradedDetailPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/card/:cardId" element={<CardDetailPage />} />
         </Routes>

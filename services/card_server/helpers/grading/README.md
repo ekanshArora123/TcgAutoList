@@ -28,6 +28,28 @@ Identity keys:
 Frontend: graded cards get their own **"Graded" tab**, not mixed into the raw
 collection grid (keeps the raw browse untouched).
 
+### Detail page — two identity tiers (entered by cert)
+
+A graded card has two identity tiers, and the detail page renders both. Route:
+`/graded/slab/:certId` (a tile links here); backend `reporting.graded_slab_detail`.
+
+- **Grade class** (`graded_skus`): the standardized-per-grade info — qty owned,
+  population, price. The page groups **every grade of one card within a company by
+  `grader_spec_id`** (PSA's spec is per card-variety, shared across grades), so a
+  PSA 9 and PSA 10 of the same card appear as separate rows on one page.
+  **Cross-company grouping (PSA vs CGC of the same card) is deferred** — it needs
+  the graded→raw mapper (future work #1); until then each company groups on its own
+  spec. Price-over-time is a reserved column, filled once graded pricing exists.
+- **Slab** (`graded_inventory`): the cert-specific tier — front + back image,
+  status, and the **`to_crack`** mark. Only this tier is per-slab editable; the
+  entered cert is highlighted. Slab qty is inherently the count of owned certs, so
+  there's no qty box (unlike the raw page) — you manage it by adding/removing certs.
+
+**"To crack"** (a slab marked for cracking out + regrading) is a plain **reused
+tag** on `graded_inventory.tags` (`to_crack`), not a status or queue — toggled via
+`PATCH /api/graded/slab/<id>/tag`. Tag add/remove for both the raw and graded
+chains shares one helper, `helpers/crud/tags.py`.
+
 ## Design: identity is decoupled from the TCGplayer link
 
 A graded card's **identity comes from the grading company** (PSA's public cert
@@ -157,9 +179,10 @@ re-fetch; re-adding a cert re-downloads.
    different-language, and cards that exist in neither (leave unlinked).
 
 2. **Slab images — largely DONE** (see "Slab images" above): front + back are
-   downloaded and stored at add time, and the front is displayed. Remaining:
-   display the back in the UI; a backfill for graded cards added before this
-   existed (re-adding the cert re-fetches); and refresh if PSA's images change.
+   downloaded and stored at add time; both are now displayed (the tile shows the
+   front, the slab detail page shows front + back). Remaining: a backfill for
+   graded cards added before this existed (re-adding the cert re-fetches); and
+   refresh if PSA's images change.
 
 3. **Population report.** The scrape supports it (login-gated spec page), but it's
    **not wired on by default** — `population` / `population_higher` come back

@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Optional
 
+from . import tags as tags_helper
 from .graded_skus import GradedSkusHelper
 
 # Canonical "owned graded slab with its current price" join (graded analog of
@@ -169,6 +170,26 @@ class GradedInventoryHelper:
         )
         self.graded_skus.recalculate_qty(existing["graded_sku_id"])
         return self.get_by_id(input["graded_inventory_id"])
+
+    def add_tag(self, graded_inventory_id: int, tag: str) -> Optional[dict]:
+        item = self.get_by_id(graded_inventory_id)
+        if not item:
+            return None
+        self.db.execute(
+            "UPDATE graded_inventory SET tags = ? WHERE graded_inventory_id = ?",
+            (tags_helper.add_tag(item.get("tags"), tag), graded_inventory_id),
+        )
+        return self.get_by_id(graded_inventory_id)
+
+    def remove_tag(self, graded_inventory_id: int, tag: str) -> Optional[dict]:
+        item = self.get_by_id(graded_inventory_id)
+        if not item:
+            return None
+        self.db.execute(
+            "UPDATE graded_inventory SET tags = ? WHERE graded_inventory_id = ?",
+            (tags_helper.remove_tag(item.get("tags"), tag), graded_inventory_id),
+        )
+        return self.get_by_id(graded_inventory_id)
 
     def delete(self, graded_inventory_id: int) -> bool:
         item = self.get_by_id(graded_inventory_id)

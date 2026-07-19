@@ -22,6 +22,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from services.card_server.db import init_database
+from services.card_server.helpers.crud.tags import parse_tags
 from services.card_server.helpers.tcgplayer.transport import RateLimited
 from services.card_server.services.collection_service import CollectionService
 from services.card_server.services.reporting_service import ReportingService
@@ -225,6 +226,39 @@ def add_graded():
     if result is None:
         return jsonify({"error": f"cert {cert_id} not found at {company}"}), 404
     return jsonify(result), 201
+
+
+@app.route("/api/graded/slab/<cert_id>")
+def graded_slab_detail(cert_id):
+    """Graded card detail page, entered by cert number: the grade-class rollup
+    (all grades of this card within its company) + every owned slab. 404 if the
+    cert isn't owned."""
+    detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
+    if detail is None:
+        return "", 404
+    return jsonify(detail)
+
+
+@app.route("/api/graded/slab/<int:graded_inventory_id>/tag", methods=["PATCH"])
+def set_graded_slab_tag(graded_inventory_id):
+    """Add or remove a tag on one slab (e.g. the 'to_crack' mark).
+
+    Body: { tag: str, present: bool }. Cert-specific — touches only this slab.
+    Returns the slab's updated tags so the client can patch its row in place.
+    """
+    body = request.get_json(silent=True) or {}
+    tag = str(body.get("tag") or "").strip()
+    if not tag:
+        return jsonify({"error": "tag is required"}), 400
+    present = bool(body.get("present"))
+
+    updated = collection.set_graded_slab_tag(graded_inventory_id, tag, present)
+    if updated is None:
+        return "", 404
+    tags = parse_tags(updated.get("tags"))
+    return jsonify(
+        {"graded_inventory_id": graded_inventory_id, "tags": tags, "to_crack": "to_crack" in tags}
+    )
 
 
 @app.route("/api/graded/companies")

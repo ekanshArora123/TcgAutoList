@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Optional
 
+from . import tags as tags_helper
 from .skus import SkusHelper
 
 # Canonical "owned card with its current price" join. The price row is the one
@@ -244,14 +245,9 @@ class InventoryHelper:
         item = self.get_by_id(inventory_id)
         if not item:
             return None
-
-        tags = [t.strip() for t in item["tags"].split(",")] if item.get("tags") else []
-        if tag in tags:
-            return item
-
-        tags.append(tag)
         self.db.execute(
-            "UPDATE inventory SET tags = ? WHERE inventory_id = ?", (",".join(tags), inventory_id)
+            "UPDATE inventory SET tags = ? WHERE inventory_id = ?",
+            (tags_helper.add_tag(item.get("tags"), tag), inventory_id),
         )
         return self.get_by_id(inventory_id)
 
@@ -259,13 +255,9 @@ class InventoryHelper:
         item = self.get_by_id(inventory_id)
         if not item:
             return None
-        if not item.get("tags"):
-            return item
-
-        tags = [t.strip() for t in item["tags"].split(",") if t.strip() != tag]
-        new_tags = ",".join(tags) if tags else None
         self.db.execute(
-            "UPDATE inventory SET tags = ? WHERE inventory_id = ?", (new_tags, inventory_id)
+            "UPDATE inventory SET tags = ? WHERE inventory_id = ?",
+            (tags_helper.remove_tag(item.get("tags"), tag), inventory_id),
         )
         return self.get_by_id(inventory_id)
 

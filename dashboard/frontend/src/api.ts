@@ -448,6 +448,93 @@ export function fetchGradedCardDetail(
   return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
 }
 
+// ── Graded card detail page (entered by cert number) ──
+
+// One grade class (a graded_sku): a grade of this card, with owned qty +
+// population + price. Price-over-time will attach here later.
+export interface GradedGradeRow {
+  graded_sku_id: number;
+  grade: number;
+  grade_label: string | null;
+  population: number | null;
+  population_higher: number | null;
+  qty: number;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+}
+
+// One physical slab (a cert): the tier that owns images + the to_crack mark.
+export interface GradedSlab {
+  graded_inventory_id: number;
+  cert_id: string | null;
+  grade: number;
+  grade_label: string | null;
+  grading_company: string;
+  status: string;
+  tags: string[];
+  to_crack: boolean;
+  card_id: string | null;
+}
+
+export interface GradedSlabDetail {
+  identity: {
+    card_name: string | null;
+    set_name: string | null;
+    card_number: string | null;
+    card_year: string | null;
+    card_variety: string | null;
+    card_language: string | null;
+    finish: string;
+    specialty_one: string;
+    grading_company: string;
+    grader_spec_id: string | null;
+    rarity: string | null;
+    era: string | null;
+    // Optional TCGplayer link (drives the raw-card link + fallback image).
+    card_id: string | null;
+    raw_has_image: boolean;
+    raw_estimated_price: number | null;
+  };
+  grades: GradedGradeRow[];
+  slabs: GradedSlab[];
+  selected_cert: string;
+}
+
+export function fetchGradedSlabDetail(certId: string): Promise<GradedSlabDetail> {
+  return fetchJson(`${BASE}/graded/slab/${encodeURIComponent(certId)}`);
+}
+
+export interface GradedSlabTagResult {
+  graded_inventory_id: number;
+  tags: string[];
+  to_crack: boolean;
+}
+
+// Add/remove a tag on one slab (e.g. "to_crack"). Cert-specific — touches only
+// this slab. Returns the slab's updated tags.
+export async function setGradedSlabTag(
+  gradedInventoryId: number,
+  tag: string,
+  present: boolean,
+): Promise<GradedSlabTagResult> {
+  const res = await fetch(`${BASE}/graded/slab/${gradedInventoryId}/tag`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag, present }),
+  });
+  if (!res.ok) {
+    let msg = `Update failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 // Add a graded slab by cert number (POST — the dashboard's first write call).
 // card_id is the optional, manually-entered TCGplayer id.
 export async function addGradedByCert(

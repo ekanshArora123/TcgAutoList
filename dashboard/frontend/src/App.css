@@ -885,3 +885,94 @@ body {
 .graded-info { display: flex; flex-direction: column; gap: 2px; }
 .graded-info .adv-row { display: flex; justify-content: space-between; font-size: 12px; color: #333; }
 .graded-info .adv-row span:first-child { color: #888; }
+
+/* Whole graded tile is a link to its slab detail page. */
+.graded-tile-link { text-decoration: none; cursor: pointer; }
+.graded-tile-link:hover { border-color: #ff6b6b; box-shadow: 0 0 0 2px rgba(224, 49, 49, 0.25); }
+
+/* ── Graded detail page ── */
+.graded-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .graded-detail-grid { grid-template-columns: 1fr; }
+}
+
+.graded-grade-pill {
+  display: inline-block;
+  min-width: 26px;
+  text-align: center;
+  padding: 1px 6px;
+  border: 1px solid #e03131;
+  border-radius: 5px;
+  color: #ff6b6b;
+  font-weight: 700;
+  font-size: 12px;
+}
+.graded-soon { color: #6e7681; font-size: 11px; font-style: italic; }
+
+.slab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.slab-card {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  background: #0d1117;
+}
+.slab-card-selected { border-color: #1f6feb; box-shadow: 0 0 0 1px #1f6feb; }
+.slab-card-crack { border-color: #e09131; }
+
+.slab-card-images { display: flex; gap: 8px; }
+.slab-face {
+  width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.slab-face > img,
+.slab-face > .card-tile-no-image {
+  width: 92px;
+  aspect-ratio: 63 / 88;
+  object-fit: cover;
+  border-radius: 5px;
+  background: #161b22;
+}
+.slab-face .card-tile-no-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6e7681;
+  font-size: 10px;
+  text-align: center;
+  padding: 4px;
+}
+.slab-face-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.slab-card-info { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.slab-card-info .adv-row { display: flex; justify-content: space-between; }
+.slab-card-info .adv-row span:first-child { color: #8b949e; }
+.slab-crack-flag { color: #e09131; font-size: 12px; font-weight: 600; }
+
+.slab-crack-btn {
+  margin-top: 4px;
+  align-self: flex-start;
+  background: #21262d;
+  border: 1px solid #e09131;
+  color: #e09131;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.slab-crack-btn:hover:not(:disabled) { background: #2d2213; }
+.slab-crack-btn.active { background: #e09131; color: #0d1117; }
+.slab-crack-btn:disabled { opacity: 0.6; cursor: default; }

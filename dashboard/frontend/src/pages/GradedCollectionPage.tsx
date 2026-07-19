@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import {
   fetchGradedCollection, fetchGradedFilters, addGradedByCert, cardImageUrl, gradedImageUrl,
   type GradedCardItem, type GradedResponse, type GradedFilters,
@@ -129,8 +130,18 @@ function GradedTile({ card }: { card: GradedCardItem }) {
   // The grade/name header is a stand-in for a missing picture — hide it once an
   // image (slab front, or the raw-card fallback) is actually showing.
   const [hasImage, setHasImage] = useState(false);
+  // The whole tile links to the slab detail page (keyed by cert). Cert-less
+  // manual adds have no detail route, so they render as a plain, unlinked tile.
+  const Wrapper = ({ children }: { children: React.ReactNode }) =>
+    card.cert_id ? (
+      <Link to={`/graded/slab/${encodeURIComponent(card.cert_id)}`} className="graded-tile graded-tile-link">
+        {children}
+      </Link>
+    ) : (
+      <div className="graded-tile">{children}</div>
+    );
   return (
-    <div className="graded-tile">
+    <Wrapper>
       {!hasImage && (
         <div className="graded-tile-top">
           <div className="graded-badge">
@@ -172,6 +183,6 @@ function GradedTile({ card }: { card: GradedCardItem }) {
           <div className="adv-row"><span>Est. Price</span><span>{fmt(card.estimated_price)}</span></div>
         )}
       </div>
-    </div>
+    </Wrapper>
   );
 }
