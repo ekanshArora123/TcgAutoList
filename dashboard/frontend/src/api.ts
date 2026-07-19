@@ -267,6 +267,32 @@ export function fetchCardDetail(cardId: string, variant: CardVariant): Promise<C
   return fetchJson(`${BASE}/card/${cardId}?${qs}`);
 }
 
+// Set owned (untagged) quantities per condition for one card variant. Absolute
+// set, not a delta; conditions not yet owned are created. Returns the refreshed
+// CardDetail (same shape as fetchCardDetail) so the caller can replace its state.
+export async function setCardQuantities(
+  cardId: string,
+  variant: CardVariant,
+  quantities: Record<string, number>,
+): Promise<CardDetail> {
+  const res = await fetch(`${BASE}/card/${cardId}/quantities`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...variant, quantities }),
+  });
+  if (!res.ok) {
+    let msg = `Save failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 // Per-card sales graph: one daily point per (condition, date).
 export interface SalesPoint {
   date: string;
