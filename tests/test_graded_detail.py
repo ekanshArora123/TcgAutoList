@@ -75,18 +75,17 @@ def test_slab_detail_groups_grades_by_spec(db):
 
     detail = ReportingService(db).graded_slab_detail("BBB")
     assert detail is not None
-    assert detail["selected_cert"] == "BBB"
+    # The page focuses on the entered cert.
+    assert detail["slab"]["cert_id"] == "BBB"
+    assert detail["slab"]["grade"] == 10.0
     assert detail["identity"]["card_name"] == "CHARIZARD"
     assert detail["identity"]["grading_company"] == "PSA"
 
-    # Both grades present, ordered best -> worst, with owned qty per grade.
+    # Spec context: both grades present, ordered best -> worst, qty per grade.
     grades = {g["grade"]: g for g in detail["grades"]}
     assert [g["grade"] for g in detail["grades"]] == [10.0, 9.0]
-    assert grades[10.0]["qty"] == 2
+    assert grades[10.0]["qty"] == 2  # two owned certs at grade 10
     assert grades[9.0]["qty"] == 1
-
-    # All three slabs across both grades are listed.
-    assert {s["cert_id"] for s in detail["slabs"]} == {"AAA", "BBB", "CCC"}
 
 
 def test_slab_detail_separates_different_spec(db):
@@ -98,8 +97,8 @@ def test_slab_detail_separates_different_spec(db):
     inv.create({"graded_sku_id": pikachu["graded_sku_id"], "cert_id": "ZZZ", "qty": 1})
 
     detail = ReportingService(db).graded_slab_detail("AAA")
-    assert {s["cert_id"] for s in detail["slabs"]} == {"AAA"}
-    assert len(detail["grades"]) == 1
+    assert detail["slab"]["cert_id"] == "AAA"
+    assert len(detail["grades"]) == 1  # pikachu (different spec) not folded in
 
 
 def test_slab_detail_null_spec_is_single_sku_group(db):
@@ -133,9 +132,9 @@ def test_set_graded_slab_tag_toggles_to_crack(db):
 
     cs.set_graded_slab_tag(gid, "to_crack", True)
     detail = ReportingService(db).graded_slab_detail("AAA")
-    assert detail["slabs"][0]["to_crack"] is True
-    assert "to_crack" in detail["slabs"][0]["tags"]
+    assert detail["slab"]["to_crack"] is True
+    assert "to_crack" in detail["slab"]["tags"]
 
     cs.set_graded_slab_tag(gid, "to_crack", False)
     detail = ReportingService(db).graded_slab_detail("AAA")
-    assert detail["slabs"][0]["to_crack"] is False
+    assert detail["slab"]["to_crack"] is False

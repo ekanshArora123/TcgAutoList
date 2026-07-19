@@ -28,22 +28,25 @@ Identity keys:
 Frontend: graded cards get their own **"Graded" tab**, not mixed into the raw
 collection grid (keeps the raw browse untouched).
 
-### Detail page — two identity tiers (entered by cert)
+### Detail page — one slab, with its grade class as context
 
-A graded card has two identity tiers, and the detail page renders both. Route:
-`/graded/slab/:certId` (a tile links here); backend `reporting.graded_slab_detail`.
+The page's **subject is one physical slab** (the cert in the URL); the spec-level
+grade class sits beside it as read-only context. Route: `/graded/slab/:certId` (a
+tile links here); backend `reporting.graded_slab_detail` returns `slab` + `grades`.
+The cert determines its spec (one lookup), so the spec is *not* a URL param — the
+response just carries both tiers.
 
-- **Grade class** (`graded_skus`): the standardized-per-grade info — qty owned,
-  population, price. The page groups **every grade of one card within a company by
-  `grader_spec_id`** (PSA's spec is per card-variety, shared across grades), so a
-  PSA 9 and PSA 10 of the same card appear as separate rows on one page.
+- **Slab** (`graded_inventory`, the left panel): the focused cert — large front +
+  back image, status, and the **`to_crack`** action. The only editable tier.
+- **Grade class** (`graded_skus`, the right panel): every grade of this card —
+  qty owned, population, price — shown **read-only** (you change graded qty by
+  adding/removing slabs, never a qty box). The page groups **grades of one card
+  within a company by `grader_spec_id`** (PSA's spec is per card-variety, shared
+  across grades), so PSA 9 and PSA 10 of the same card appear as sibling rows.
   **Cross-company grouping (PSA vs CGC of the same card) is deferred** — it needs
   the graded→raw mapper (future work #1); until then each company groups on its own
-  spec. Price-over-time is a reserved column, filled once graded pricing exists.
-- **Slab** (`graded_inventory`): the cert-specific tier — front + back image,
-  status, and the **`to_crack`** mark. Only this tier is per-slab editable; the
-  entered cert is highlighted. Slab qty is inherently the count of owned certs, so
-  there's no qty box (unlike the raw page) — you manage it by adding/removing certs.
+  spec. Price-over-time is a reserved area, filled once graded pricing exists.
+  Each owned cert is its own page (same spec context); you reach each from its tile.
 
 **"To crack"** (a slab marked for cracking out + regrading) is a plain **reused
 tag** on `graded_inventory.tags` (`to_crack`), not a status or queue — toggled via

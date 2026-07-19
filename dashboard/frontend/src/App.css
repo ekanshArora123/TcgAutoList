@@ -912,67 +912,71 @@ body {
   font-weight: 700;
   font-size: 12px;
 }
-.graded-soon { color: #6e7681; font-size: 11px; font-style: italic; }
-
-.slab-list {
+/* Focused slab (left panel): big front + back + the crack action. */
+.slab-focus-crack { border-color: #e09131; }
+.slab-focus-images {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
-.slab-card {
-  display: flex;
-  gap: 14px;
-  padding: 12px;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  background: #0d1117;
-}
-.slab-card-selected { border-color: #1f6feb; box-shadow: 0 0 0 1px #1f6feb; }
-.slab-card-crack { border-color: #e09131; }
-
-.slab-card-images { display: flex; gap: 8px; }
-.slab-face {
-  width: 92px;
+.slab-focus-face {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
 }
-.slab-face > img,
-.slab-face > .card-tile-no-image {
-  width: 92px;
+.slab-focus-face > img,
+.slab-focus-face > .card-tile-no-image {
+  width: 100%;
   aspect-ratio: 63 / 88;
-  object-fit: cover;
-  border-radius: 5px;
-  background: #161b22;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #0d1117;
+  border: 1px solid #30363d;
 }
-.slab-face .card-tile-no-image {
+.slab-focus-face .card-tile-no-image {
   display: flex;
   align-items: center;
   justify-content: center;
   color: #6e7681;
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
-  padding: 4px;
+  padding: 6px;
 }
-.slab-face-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
-
-.slab-card-info { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.slab-card-info .adv-row { display: flex; justify-content: space-between; }
-.slab-card-info .adv-row span:first-child { color: #8b949e; }
-.slab-crack-flag { color: #e09131; font-size: 12px; font-weight: 600; }
+.slab-focus-face figcaption {
+  font-size: 11px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.slab-crack-flag { color: #e09131; font-size: 12px; font-weight: 600; margin-top: 4px; }
 
 .slab-crack-btn {
-  margin-top: 4px;
   align-self: flex-start;
   background: #21262d;
   border: 1px solid #e09131;
   color: #e09131;
-  font-size: 12px;
-  padding: 4px 10px;
+  font-size: 13px;
+  padding: 5px 14px;
   border-radius: 5px;
   cursor: pointer;
 }
 .slab-crack-btn:hover:not(:disabled) { background: #2d2213; }
 .slab-crack-btn.active { background: #e09131; color: #0d1117; }
 .slab-crack-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Highlight the focused slab's grade row in the context table. */
+.card-table tr.row-current td { background: #17233b; }
+
+.graded-graph-placeholder {
+  margin-top: 12px;
+  padding: 24px 12px;
+  border: 1px dashed #30363d;
+  border-radius: 8px;
+  text-align: center;
+  color: #6e7681;
+  font-size: 12px;
+  font-style: italic;
+}

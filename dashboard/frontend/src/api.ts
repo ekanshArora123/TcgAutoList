@@ -463,7 +463,8 @@ export interface GradedGradeRow {
   confidence_percent: number | null;
 }
 
-// One physical slab (a cert): the tier that owns images + the to_crack mark.
+// The one physical slab (cert) the page focuses on: the tier that owns images +
+// the to_crack mark.
 export interface GradedSlab {
   graded_inventory_id: number;
   cert_id: string | null;
@@ -473,7 +474,6 @@ export interface GradedSlab {
   status: string;
   tags: string[];
   to_crack: boolean;
-  card_id: string | null;
 }
 
 export interface GradedSlabDetail {
@@ -495,9 +495,10 @@ export interface GradedSlabDetail {
     raw_has_image: boolean;
     raw_estimated_price: number | null;
   };
+  // The focused cert (page subject).
+  slab: GradedSlab;
+  // Spec-level context: every grade of this card (read-only display).
   grades: GradedGradeRow[];
-  slabs: GradedSlab[];
-  selected_cert: string;
 }
 
 export function fetchGradedSlabDetail(certId: string): Promise<GradedSlabDetail> {

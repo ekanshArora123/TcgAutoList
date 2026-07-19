@@ -797,16 +797,16 @@ class ReportingService:
     def graded_slab_detail(
         self, cert_id: str, image_card_ids: Optional[list[str]] = None
     ) -> Optional[dict[str, Any]]:
-        """The graded card detail page, entered by cert number.
+        """The graded card detail page, for one physical slab (a cert number).
 
-        A graded card has two identity tiers, and this returns both:
-          - the **grade class** (`graded_skus`): every grade of this card grouped
-            by (grading_company, grader_spec_id) — so all owned grades of one card
-            within a company appear together (cross-company grouping waits on the
-            deferred graded->raw mapper). Carries qty/population/price per grade.
-          - the individual **slabs** (`graded_inventory`): every owned cert in that
-            group, each with its status and tags (incl. the 'to_crack' mark).
-        `selected_cert` echoes the entered cert so the UI can highlight it.
+        The page's subject is the one cert; alongside it we return the spec-level
+        context so the two tiers sit together:
+          - **slab** (this `graded_inventory` row): the cert-specific data the page
+            focuses on — status + tags (incl. the 'to_crack' mark) + its grade.
+          - **grades** (the `graded_skus` grade class): every grade of this card,
+            grouped by (grading_company, grader_spec_id) — owned qty, population,
+            price per grade — shown as read-only context (cross-company grouping
+            waits on the deferred graded->raw mapper).
 
         Returns None if the cert isn't owned. Falls back to a single-sku group when
         the sku has no grader_spec_id (a manual/legacy add)."""
@@ -846,36 +846,20 @@ class ReportingService:
             group_params,
         ).fetchall()
         grades = [dict(r) for r in grade_rows]
-        sku_ids = [g["graded_sku_id"] for g in grades]
 
-        placeholders = ",".join("?" for _ in sku_ids)
-        slab_rows = self.db.execute(
-            f"""
-            SELECT i.graded_inventory_id, i.cert_id, i.qty, i.tags, i.status,
-                   i.ebay_listing_id, s.grade, s.grade_label, s.grading_company, s.card_id
-            FROM graded_inventory i
-            JOIN graded_skus s ON i.graded_sku_id = s.graded_sku_id
-            WHERE s.graded_sku_id IN ({placeholders})
-            ORDER BY s.grade DESC, i.created_at ASC
-            """,
-            sku_ids,
-        ).fetchall()
-        slabs = []
-        for r in slab_rows:
-            tag_list = parse_tags(r["tags"])
-            slabs.append(
-                {
-                    "graded_inventory_id": r["graded_inventory_id"],
-                    "cert_id": r["cert_id"],
-                    "grade": r["grade"],
-                    "grade_label": r["grade_label"],
-                    "grading_company": r["grading_company"],
-                    "status": r["status"],
-                    "tags": tag_list,
-                    "to_crack": GRADED_TO_CRACK_TAG in tag_list,
-                    "card_id": r["card_id"],
-                }
-            )
+        # The focused slab: cert-specific data straight from the entered cert's row
+        # (no extra query — get_by_cert already loaded it above).
+        tag_list = parse_tags(slab["tags"])
+        focused_slab = {
+            "graded_inventory_id": slab["graded_inventory_id"],
+            "cert_id": slab["cert_id"],
+            "grade": sku["grade"],
+            "grade_label": sku["grade_label"],
+            "grading_company": company,
+            "status": slab["status"],
+            "tags": tag_list,
+            "to_crack": GRADED_TO_CRACK_TAG in tag_list,
+        }
 
         card_id = sku["card_id"]
         card = self.cards.get_by_id(card_id) if card_id else None
@@ -904,9 +888,8 @@ class ReportingService:
                     else None
                 ),
             },
+            "slab": focused_slab,
             "grades": grades,
-            "slabs": slabs,
-            "selected_cert": str(cert_id),
         }
 
     def graded_filter_options(self) -> dict[str, list[str]]:
