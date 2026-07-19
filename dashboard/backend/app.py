@@ -127,6 +127,47 @@ def card_detail(card_id):
     return jsonify(detail)
 
 
+@app.route("/api/card/<card_id>/quantities", methods=["PATCH"])
+def set_card_quantities(card_id):
+    """Set owned (untagged) quantities per condition for one card variant.
+
+    Body: { finish?, specialty_one?, specialty_two?, quantities: {CONDITION: qty} }.
+    Absolute set (not a delta) per condition; a condition not yet owned is created.
+    Returns the refreshed card detail (same shape as GET) so the client can replace
+    its state in one round-trip.
+    """
+    body = request.get_json(silent=True) or {}
+    quantities = body.get("quantities")
+    if not isinstance(quantities, dict) or not quantities:
+        return jsonify({"error": "quantities (a {condition: qty} object) is required"}), 400
+
+    parsed: dict[str, int] = {}
+    for condition, value in quantities.items():
+        try:
+            parsed[str(condition)] = max(int(value), 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": f"invalid quantity for {condition!r}"}), 400
+
+    finish = body.get("finish") or "Regular"
+    specialty_one = body.get("specialty_one") or "None"
+    specialty_two = body.get("specialty_two") or "None"
+
+    result = collection.set_condition_quantities(
+        card_id, parsed, finish=finish, specialty_one=specialty_one, specialty_two=specialty_two
+    )
+    if result is None:
+        return "", 404
+
+    detail = reporting.card_detail(
+        card_id,
+        finish=finish,
+        specialty_one=specialty_one,
+        specialty_two=specialty_two,
+        image_card_ids=list(_image_card_ids()),
+    )
+    return jsonify(detail)
+
+
 @app.route("/api/card/<card_id>/sales")
 def card_sales(card_id):
     """Daily sales rollup (one series per condition) for the per-card graph."""

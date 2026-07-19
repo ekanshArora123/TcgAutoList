@@ -153,6 +153,61 @@ class CollectionService:
             }
         )
 
+    def set_condition_qty(
+        self,
+        card_id: str,
+        condition: str,
+        qty: int,
+        finish: str = "Regular",
+        specialty_one: str = "None",
+        specialty_two: str = "None",
+    ) -> Optional[int]:
+        """Set the owned (untagged) quantity of one variant+condition to `qty`.
+
+        Resolves — creating if needed — the SKU for this exact
+        (card_id, condition, finish, specialties), then drives the count through
+        `inventory.set_untagged_qty`. Because it get_or_creates the SKU, it can add
+        a condition that isn't owned yet (qty 0 → N), not just edit existing ones.
+        Returns the new owned quantity, or None if the card_id is unknown.
+
+        The composable seam for editing owned counts by condition — the detail-page
+        editor and any future add/bulk-edit flow share this instead of duplicating
+        SKU resolution + inventory math.
+        """
+        if not self.cards.get_by_id(card_id):
+            return None
+        sku = self.skus.get_or_create(
+            {
+                "card_id": card_id,
+                "condition": condition,
+                "finish": finish or "Regular",
+                "specialty_one": specialty_one or "None",
+                "specialty_two": specialty_two or "None",
+                "qty": 0,
+            }
+        )
+        return self.inventory.set_untagged_qty(sku["sku_id"], qty)
+
+    def set_condition_quantities(
+        self,
+        card_id: str,
+        quantities: dict[str, int],
+        finish: str = "Regular",
+        specialty_one: str = "None",
+        specialty_two: str = "None",
+    ) -> Optional[dict[str, int]]:
+        """Batch form of `set_condition_qty`: apply a {condition: qty} map for one
+        variant in a single call. Returns {condition: new_qty}, or None if the
+        card_id is unknown."""
+        if not self.cards.get_by_id(card_id):
+            return None
+        return {
+            condition: self.set_condition_qty(
+                card_id, condition, qty, finish, specialty_one, specialty_two
+            )
+            for condition, qty in quantities.items()
+        }
+
     def get_inventory_detail(self, inventory_id: int) -> Optional[dict]:
         return self.inventory.get_detail_by_id(inventory_id)
 

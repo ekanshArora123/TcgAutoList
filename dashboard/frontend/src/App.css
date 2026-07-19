@@ -689,6 +689,60 @@ body {
   font-size: 13px;
 }
 
+/* Owned-by-condition qty editor */
+.qty-input {
+  width: 56px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e1e4e8;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  text-align: right;
+}
+
+.qty-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.qty-input:disabled {
+  opacity: 0.6;
+}
+
+.card-detail-qty-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.qty-save-btn {
+  background: #1f6feb;
+  border: 1px solid #1f6feb;
+  color: #fff;
+  font-size: 13px;
+  padding: 5px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.qty-save-btn:hover:not(:disabled) {
+  background: #388bfd;
+}
+
+.qty-save-btn:disabled {
+  background: #21262d;
+  border-color: #30363d;
+  color: #8b949e;
+  cursor: default;
+}
+
+.qty-save-error {
+  color: #f85149;
+  font-size: 12px;
+}
+
 /* Graph fills the middle and stands up as the focal area. */
 .card-detail-graph {
   display: flex;
