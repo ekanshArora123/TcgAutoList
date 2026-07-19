@@ -838,57 +838,68 @@ body {
 .graded-add-error { color: #ff6b6b; font-size: 12px; }
 
 /* White box, red outline. Dark text since the background is light. */
+/* Graded tile — same dark bg + light font as the raw card tile, image-first with
+   the grade overlaid as a badge and a compact info box. */
 .graded-tile {
-  background: #ffffff;
-  color: #1a1a1a;
-  border: 2px solid #e03131;
-  border-radius: 10px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.graded-tile-top { display: flex; gap: 12px; align-items: center; }
-.graded-badge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-width: 58px;
-  padding: 4px 8px;
-  border: 2px solid #e03131;
+  background: #161b22;
+  color: #e1e4e8;
+  border: 1px solid #30363d;
   border-radius: 8px;
-  color: #e03131;
-}
-.graded-company { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
-.graded-grade-num { font-size: 34px; font-weight: 800; line-height: 1; }
-.graded-name-block { flex: 1; min-width: 0; }
-.graded-name {
-  font-weight: 700;
-  font-size: 15px;
-  color: #1a1a1a;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.graded-sub { font-size: 12px; color: #666; }
-.graded-tile-image {
-  background: #f4f4f4;
-  border-radius: 6px;
   overflow: hidden;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  transition: border-color 0.15s;
 }
-.graded-tile-image img { width: 100%; height: auto; display: block; }
-.graded-tile-image .card-tile-no-image { background: #f0f0f0; color: #999; min-height: 120px; }
-.graded-info { display: flex; flex-direction: column; gap: 2px; }
-.graded-info .adv-row { display: flex; justify-content: space-between; font-size: 12px; color: #333; }
-.graded-info .adv-row span:first-child { color: #888; }
-
-/* Whole graded tile is a link to its slab detail page. */
 .graded-tile-link { text-decoration: none; cursor: pointer; }
-.graded-tile-link:hover { border-color: #ff6b6b; box-shadow: 0 0 0 2px rgba(224, 49, 49, 0.25); }
+.graded-tile:hover { border-color: #e03131; }
+
+/* Bigger image: fills the tile width at the slab's natural aspect. */
+.graded-tile-image {
+  aspect-ratio: auto;
+  min-height: 0;
+}
+.graded-tile-image img { width: 100%; height: auto; object-fit: contain; }
+.graded-tile-image .card-tile-no-image { min-height: 240px; }
+
+/* Grade badge overlaid on the image (always visible, even over the picture). */
+.graded-grade-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  padding: 3px 8px;
+  background: rgba(13, 17, 23, 0.82);
+  border: 1px solid #e03131;
+  border-radius: 6px;
+  color: #ff6b6b;
+}
+.graded-grade-badge .ggb-company { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }
+.graded-grade-badge .ggb-grade { font-size: 20px; font-weight: 800; }
+
+.graded-tile-crack {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #e09131;
+  color: #0d1117;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.graded-tile-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 2px;
+}
 
 /* ── Graded detail page ── */
 .graded-detail-grid {
