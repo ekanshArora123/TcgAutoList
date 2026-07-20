@@ -1064,6 +1064,46 @@ body {
 }
 .graded-link-row .search-input { flex: 1; min-width: 0; }
 
+/* Manual price editor on the graded detail page. */
+.graded-price-editor {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #21262d;
+}
+.graded-price-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e1e4e8;
+  margin-bottom: 8px;
+}
+.graded-price-note { font-size: 11px; font-weight: 400; color: #6e7681; }
+.graded-price-fields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.graded-price-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: #8b949e;
+}
+.graded-price-field input {
+  width: 74px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e1e4e8;
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+.graded-price-field input:focus { outline: none; border-color: #58a6ff; }
+
 .graded-graph-placeholder {
   margin-top: 12px;
   padding: 24px 12px;

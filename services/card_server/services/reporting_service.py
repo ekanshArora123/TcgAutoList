@@ -933,6 +933,9 @@ class ReportingService:
                    s.population, s.population_higher,
                    COALESCE(SUM(i.qty), 0) AS qty,
                    MAX(p.estimated_price) AS estimated_price,
+                   MAX(p.estimated_low_price) AS estimated_low_price,
+                   MAX(p.estimated_high_price) AS estimated_high_price,
+                   MAX(p.estimated_liquid_value) AS estimated_liquid_value,
                    MAX(p.confidence_percent) AS confidence_percent
             FROM graded_skus s
             LEFT JOIN graded_inventory i ON i.graded_sku_id = s.graded_sku_id

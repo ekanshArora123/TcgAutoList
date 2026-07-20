@@ -494,6 +494,9 @@ export interface GradedGradeRow {
   population_higher: number | null;
   qty: number;
   estimated_price: number | null;
+  estimated_low_price: number | null;
+  estimated_high_price: number | null;
+  estimated_liquid_value: number | null;
   confidence_percent: number | null;
 }
 
@@ -549,6 +552,38 @@ export async function setGradedCardLink(certId: string, cardId: string): Promise
   });
   if (!res.ok) {
     let msg = `Link failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+// Set the manual price for the graded card a cert belongs to. Applies to every
+// cert of the same card+grade+company (price is stored per grade class). Any
+// omitted field is cleared. Returns the refreshed detail.
+export interface GradedPriceInput {
+  estimated_price?: string;
+  estimated_low_price?: string;
+  estimated_high_price?: string;
+  estimated_liquid_value?: string;
+}
+
+export async function setGradedSlabPrice(
+  certId: string,
+  price: GradedPriceInput,
+): Promise<GradedSlabDetail> {
+  const res = await fetch(`${BASE}/graded/slab/${encodeURIComponent(certId)}/price`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(price),
+  });
+  if (!res.ok) {
+    let msg = `Save failed (${res.status})`;
     try {
       const body = await res.json();
       if (body?.error) msg = body.error;

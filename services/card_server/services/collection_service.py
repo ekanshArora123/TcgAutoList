@@ -299,6 +299,36 @@ class CollectionService:
     def delete_graded_inventory_item(self, graded_inventory_id: int) -> bool:
         return self.graded_inventory.delete(graded_inventory_id)
 
+    def set_graded_price_by_cert(
+        self, cert_id: str, price: dict[str, Any]
+    ) -> Optional[dict]:
+        """Set the manual price for the graded card a cert belongs to.
+
+        Graded pricing has no external feed, so this is a manual estimate. Prices
+        live on graded_prices keyed by graded_sku_id (card + company + grade), so a
+        single write is inherently shared by every cert of that same card+grade+
+        company — one price per grade, no per-cert duplication. `price` may carry
+        estimated_price / estimated_low_price / estimated_high_price /
+        estimated_liquid_value (any omitted -> cleared). Stored under today's date,
+        flagged manually_checked. Returns the stored price row, or None if the cert
+        isn't owned."""
+        slab = self.graded_inventory.get_by_cert(cert_id)
+        if not slab:
+            return None
+        return self.graded_prices.upsert(
+            {
+                "graded_sku_id": slab["graded_sku_id"],
+                "calculation_date": date.today().isoformat(),
+                "estimated_price": price.get("estimated_price"),
+                "estimated_low_price": price.get("estimated_low_price"),
+                "estimated_high_price": price.get("estimated_high_price"),
+                "estimated_liquid_value": price.get("estimated_liquid_value"),
+                "manually_checked": True,
+                "manual_check_necessary": False,
+                "algorithm_version": "manual",
+            }
+        )
+
     def set_graded_slab_tag(
         self, graded_inventory_id: int, tag: str, present: bool
     ) -> Optional[dict]:

@@ -199,6 +199,47 @@ def test_set_link_unknown_cert_returns_none(db):
     assert asyncio.run(CollectionService(db).set_graded_link_by_cert("nope", "999")) is None
 
 
+# ─── manual graded pricing ───────────────────────────────────
+
+
+def test_set_graded_price_shared_across_certs(db):
+    inv = GradedInventoryHelper(db)
+    sku10 = _sku(db, grade=10)
+    # Two certs of the same card+grade+company.
+    inv.create({"graded_sku_id": sku10["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+    inv.create({"graded_sku_id": sku10["graded_sku_id"], "cert_id": "BBB", "qty": 1})
+
+    CollectionService(db).set_graded_price_by_cert(
+        "AAA",
+        {"estimated_price": 500, "estimated_low_price": 450,
+         "estimated_high_price": 600, "estimated_liquid_value": 400},
+    )
+    # The price is per grade class, so it shows for BOTH certs' pages.
+    for cert in ("AAA", "BBB"):
+        d = ReportingService(db).graded_slab_detail(cert)
+        g = next(g for g in d["grades"] if g["grade"] == 10.0)
+        assert g["estimated_price"] == 500
+        assert g["estimated_low_price"] == 450
+        assert g["estimated_high_price"] == 600
+        assert g["estimated_liquid_value"] == 400
+
+
+def test_set_graded_price_clears_omitted_fields(db):
+    inv = GradedInventoryHelper(db)
+    sku = _sku(db, grade=10)
+    inv.create({"graded_sku_id": sku["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+    cs = CollectionService(db)
+    cs.set_graded_price_by_cert("AAA", {"estimated_price": 100, "estimated_low_price": 90})
+    cs.set_graded_price_by_cert("AAA", {"estimated_price": 120})  # low omitted -> cleared
+    g = next(g for g in ReportingService(db).graded_slab_detail("AAA")["grades"] if g["grade"] == 10.0)
+    assert g["estimated_price"] == 120
+    assert g["estimated_low_price"] is None
+
+
+def test_set_graded_price_unknown_cert(db):
+    assert CollectionService(db).set_graded_price_by_cert("nope", {"estimated_price": 1}) is None
+
+
 # ─── browse_graded: search / filter / sort ───────────────────
 
 

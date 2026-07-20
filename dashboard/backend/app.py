@@ -287,6 +287,43 @@ def graded_slab_detail(cert_id):
     return jsonify(detail)
 
 
+@app.route("/api/graded/slab/<cert_id>/price", methods=["PATCH"])
+def set_graded_slab_price(cert_id):
+    """Set the manual price for the graded card this cert belongs to.
+
+    Body: { estimated_price?, estimated_low_price?, estimated_high_price?,
+    estimated_liquid_value? } — blank/absent fields are cleared. The price is
+    stored per grade class, so it applies to every cert of the same card+grade+
+    company. Returns the refreshed slab detail. 404 if the cert isn't owned.
+    """
+    body = request.get_json(silent=True) or {}
+
+    def num(key):
+        v = body.get(key)
+        if v in (None, ""):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"invalid number for {key}")
+
+    try:
+        price = {
+            "estimated_price": num("estimated_price"),
+            "estimated_low_price": num("estimated_low_price"),
+            "estimated_high_price": num("estimated_high_price"),
+            "estimated_liquid_value": num("estimated_liquid_value"),
+        }
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    result = collection.set_graded_price_by_cert(cert_id, price)
+    if result is None:
+        return "", 404
+    detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
+    return jsonify(detail)
+
+
 @app.route("/api/graded/slab/<int:graded_inventory_id>/tag", methods=["PATCH"])
 def set_graded_slab_tag(graded_inventory_id):
     """Add or remove a tag on one slab (e.g. the 'to_crack' mark).
