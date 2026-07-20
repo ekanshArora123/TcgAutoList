@@ -482,6 +482,72 @@ export function fetchGradedCardDetail(
   return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
 }
 
+// ── Graded analytics ──
+
+export interface GradedAnalyticsSummary {
+  total_slabs: number;
+  total_value: number | null;
+  total_liquid_value: number | null;
+  avg_price: number | null;
+  avg_grade: number | null;
+  to_crack_count: number;
+}
+
+export interface GradedBreakdownRow {
+  label: string; // grade (ERR-aware string) or company name
+  quantity: number;
+  total_value: number | null;
+  avg_price: number | null;
+}
+
+export interface GradedPricePoint {
+  cert_id: string | null;
+  grade: number;
+  grading_company: string;
+  population: number | null; // future bubble-size axis
+  price: number;
+  card_name: string;
+}
+
+export interface TopGradedSlab {
+  graded_inventory_id: number;
+  cert_id: string | null;
+  grade: number;
+  grade_label: string | null;
+  grading_company: string;
+  card_year: string | null;
+  estimated_price: number | null;
+  estimated_liquid_value: number | null;
+  card_name: string;
+  set_name: string | null;
+}
+
+// crack: "" (all) | "yes" (to crack) | "no" (not to crack) — the shared graded filter.
+function gradedAnalyticsQs(crack: string, extra?: Record<string, string>): string {
+  const qs = new URLSearchParams(extra);
+  if (crack) qs.set("crack", crack);
+  return qs.toString();
+}
+
+export function fetchGradedAnalyticsSummary(crack = ""): Promise<GradedAnalyticsSummary> {
+  return fetchJson(`${BASE}/graded/analytics/summary?${gradedAnalyticsQs(crack)}`);
+}
+
+export function fetchGradedBreakdown(
+  dimension: "grade" | "company",
+  crack = "",
+): Promise<GradedBreakdownRow[]> {
+  return fetchJson(`${BASE}/graded/analytics/breakdown/${dimension}?${gradedAnalyticsQs(crack)}`);
+}
+
+export function fetchGradedPricePoints(crack = ""): Promise<GradedPricePoint[]> {
+  return fetchJson(`${BASE}/graded/analytics/price-points?${gradedAnalyticsQs(crack)}`);
+}
+
+export function fetchTopGradedSlabs(n = 25, crack = ""): Promise<TopGradedSlab[]> {
+  return fetchJson(`${BASE}/graded/analytics/top-slabs?${gradedAnalyticsQs(crack, { n: String(n) })}`);
+}
+
 // ── Graded card detail page (entered by cert number) ──
 
 // One grade class (a graded_sku): a grade of this card, with owned qty +

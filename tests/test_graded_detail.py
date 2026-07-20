@@ -252,6 +252,67 @@ def test_set_graded_price_unknown_cert(db):
     assert CollectionService(db).set_graded_price_by_cert("nope", {"estimated_price": 1}) is None
 
 
+# ─── graded analytics + combined histogram ───────────────────
+
+
+def _seed_priced(db):
+    """Two priced slabs of one card: PSA 10 ($500) and PSA 9 ($200, to_crack)."""
+    inv = GradedInventoryHelper(db)
+    cs = CollectionService(db)
+    s10 = _sku(db, grade=10)
+    s9 = _sku(db, grade=9)
+    inv.create({"graded_sku_id": s10["graded_sku_id"], "cert_id": "C10", "qty": 1})
+    inv.create({"graded_sku_id": s9["graded_sku_id"], "cert_id": "C9", "qty": 1, "tags": "to_crack"})
+    cs.set_graded_price_by_cert("C10", {"estimated_price": 500})
+    cs.set_graded_price_by_cert("C9", {"estimated_price": 200})
+
+
+def test_graded_analytics_summary(db):
+    _seed_priced(db)
+    s = ReportingService(db).graded_analytics_summary()
+    assert s["total_slabs"] == 2
+    assert s["total_value"] == 700
+    assert s["avg_grade"] == 9.5
+    assert s["to_crack_count"] == 1
+
+
+def test_graded_breakdown_by_grade_and_company(db):
+    _seed_priced(db)
+    rpt = ReportingService(db)
+    by_grade = {r["label"]: r for r in rpt.graded_breakdown("grade")}
+    assert by_grade["10"]["total_value"] == 500
+    assert by_grade["9"]["total_value"] == 200
+    by_company = rpt.graded_breakdown("company")
+    assert by_company[0]["label"] == "PSA"
+    assert by_company[0]["total_value"] == 700
+    with pytest.raises(ValueError):
+        rpt.graded_breakdown("nope")
+
+
+def test_graded_price_points_crack_filter(db):
+    _seed_priced(db)
+    rpt = ReportingService(db)
+    assert {(p["cert_id"], p["price"]) for p in rpt.graded_price_points()} == {("C10", 500.0), ("C9", 200.0)}
+    assert {p["cert_id"] for p in rpt.graded_price_points({"crack": "yes"})} == {"C9"}
+    assert {p["cert_id"] for p in rpt.graded_price_points({"crack": "no"})} == {"C10"}
+
+
+def test_top_graded_slabs_desc(db):
+    _seed_priced(db)
+    assert [t["cert_id"] for t in ReportingService(db).top_graded_slabs(10)] == ["C10", "C9"]
+
+
+def test_combined_histogram_pools_graded(db):
+    _seed_priced(db)  # graded only; no raw seeded
+    rpt = ReportingService(db)
+    assert sum(b["count"] for b in rpt.price_histogram([0, 100, 1000], kind="raw")) == 0
+    assert sum(b["count"] for b in rpt.price_histogram([0, 100, 1000], kind="graded")) == 2
+    assert sum(b["count"] for b in rpt.price_histogram([0, 100, 1000], kind="all")) == 2
+    # crack filter reaches the graded prices in the histogram too.
+    gc = rpt.price_histogram([0, 100, 1000], kind="graded", graded_filters={"crack": "yes"})
+    assert sum(b["count"] for b in gc) == 1
+
+
 # ─── browse_graded: search / filter / sort ───────────────────
 
 

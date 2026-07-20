@@ -235,6 +235,39 @@ body {
 }
 
 /* Analytics */
+.analytics-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.analytics-section-title {
+  font-size: 16px;
+  color: #f0f6fc;
+  margin: 8px 0 12px;
+  padding-top: 8px;
+  border-top: 1px solid #21262d;
+}
+.chart-tooltip {
+  background: #161b22;
+  border: 1px solid #30363d;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.chart-tooltip-title { color: #e1e4e8; font-weight: 600; margin-bottom: 4px; }
+.seg-btn {
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.seg-btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
