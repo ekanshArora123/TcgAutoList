@@ -291,10 +291,11 @@ def graded_slab_detail(cert_id):
 def set_graded_slab_price(cert_id):
     """Set the manual price for the graded card this cert belongs to.
 
-    Body: { estimated_price?, estimated_low_price?, estimated_high_price?,
-    estimated_liquid_value? } — blank/absent fields are cleared. The price is
-    stored per grade class, so it applies to every cert of the same card+grade+
-    company. Returns the refreshed slab detail. 404 if the cert isn't owned.
+    Body: { estimated_price?, estimated_low_price?, estimated_high_price? } —
+    blank/absent fields are cleared. Liquid value is derived server-side from the
+    shared macro, not accepted here. The price is stored per grade class, so it
+    applies to every cert of the same card+grade+company. Returns the refreshed
+    slab detail. 404 if the cert isn't owned.
     """
     body = request.get_json(silent=True) or {}
 
@@ -312,7 +313,6 @@ def set_graded_slab_price(cert_id):
             "estimated_price": num("estimated_price"),
             "estimated_low_price": num("estimated_low_price"),
             "estimated_high_price": num("estimated_high_price"),
-            "estimated_liquid_value": num("estimated_liquid_value"),
         }
     except ValueError as e:
         return jsonify({"error": str(e)}), 400

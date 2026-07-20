@@ -18,6 +18,7 @@ from ..helpers.crud.inventory import InventoryHelper
 from ..helpers.crud.prices import PricesHelper
 from ..helpers.crud.skus import SkusHelper
 from ..helpers.grading import registry as grading_registry
+from ..helpers.pricing.algorithm import compute_liquid_value
 from ..helpers.tcgplayer.fetch_card_info import fetch_card_info
 
 
@@ -308,21 +309,26 @@ class CollectionService:
         live on graded_prices keyed by graded_sku_id (card + company + grade), so a
         single write is inherently shared by every cert of that same card+grade+
         company — one price per grade, no per-cert duplication. `price` may carry
-        estimated_price / estimated_low_price / estimated_high_price /
-        estimated_liquid_value (any omitted -> cleared). Stored under today's date,
+        estimated_price / estimated_low_price / estimated_high_price (any omitted
+        -> cleared). Liquid value is NOT taken from the caller — it's derived from
+        estimated_price via the shared `compute_liquid_value` macro (the same
+        price->liquid the raw pricing uses; its constants live in pricing/config),
+        so graded liquid never diverges from raw. Stored under today's date,
         flagged manually_checked. Returns the stored price row, or None if the cert
         isn't owned."""
         slab = self.graded_inventory.get_by_cert(cert_id)
         if not slab:
             return None
+        estimated_price = price.get("estimated_price")
+        liquid = compute_liquid_value(estimated_price) if estimated_price is not None else None
         return self.graded_prices.upsert(
             {
                 "graded_sku_id": slab["graded_sku_id"],
                 "calculation_date": date.today().isoformat(),
-                "estimated_price": price.get("estimated_price"),
+                "estimated_price": estimated_price,
                 "estimated_low_price": price.get("estimated_low_price"),
                 "estimated_high_price": price.get("estimated_high_price"),
-                "estimated_liquid_value": price.get("estimated_liquid_value"),
+                "estimated_liquid_value": liquid,
                 "manually_checked": True,
                 "manual_check_necessary": False,
                 "algorithm_version": "manual",

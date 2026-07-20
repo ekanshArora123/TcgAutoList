@@ -566,11 +566,11 @@ export async function setGradedCardLink(certId: string, cardId: string): Promise
 // Set the manual price for the graded card a cert belongs to. Applies to every
 // cert of the same card+grade+company (price is stored per grade class). Any
 // omitted field is cleared. Returns the refreshed detail.
+// Liquid value is derived server-side (shared macro), not submitted.
 export interface GradedPriceInput {
   estimated_price?: string;
   estimated_low_price?: string;
   estimated_high_price?: string;
-  estimated_liquid_value?: string;
 }
 
 export async function setGradedSlabPrice(

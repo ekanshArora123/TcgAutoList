@@ -5,6 +5,7 @@ import {
   cardImageUrl, gradedImageUrl, type GradedSlabDetail,
 } from "../api";
 import CardImage from "../components/CardImage";
+import { computeLiquidValue } from "../pricing";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 // Awkward/unavailable grades arrive as the -1 sentinel (see psa.py) → show ERR.
@@ -55,7 +56,6 @@ export default function GradedDetailPage() {
       estimated_price: s(g?.estimated_price),
       estimated_low_price: s(g?.estimated_low_price),
       estimated_high_price: s(g?.estimated_high_price),
-      estimated_liquid_value: s(g?.estimated_liquid_value),
     });
     setPriceError(null);
   }, [detail]);
@@ -99,6 +99,13 @@ export default function GradedDetailPage() {
   };
   const focusedGrade = grades.find((g) => g.grade === slab.grade);
   const ownedOfGrade = focusedGrade?.qty ?? 0;
+  // Live liquid preview from the Value input via the shared macro (the server
+  // derives + stores the authoritative value on save).
+  const priceNum = Number(priceInputs.estimated_price);
+  const liquidPreview =
+    priceInputs.estimated_price && Number.isFinite(priceNum) && priceNum >= 0
+      ? computeLiquidValue(priceNum)
+      : null;
 
   const chips = [
     identity.finish !== "Regular" ? identity.finish : null,
@@ -213,7 +220,6 @@ export default function GradedDetailPage() {
                 ["estimated_price", "Value"],
                 ["estimated_low_price", "Low"],
                 ["estimated_high_price", "High"],
-                ["estimated_liquid_value", "Liquid"],
               ] as const).map(([key, label]) => (
                 <label key={key} className="graded-price-field">
                   <span>{label}</span>
@@ -229,6 +235,11 @@ export default function GradedDetailPage() {
                   />
                 </label>
               ))}
+              {/* Liquid is derived from Value (shared macro), not entered. */}
+              <div className="graded-price-field">
+                <span title="Value after fees + shipping (auto)">Liquid</span>
+                <output className="graded-price-derived">{fmt(liquidPreview)}</output>
+              </div>
             </div>
             <div className="card-detail-qty-actions">
               <button type="button" className="qty-save-btn" onClick={savePrice} disabled={priceBusy}>

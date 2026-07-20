@@ -1103,6 +1103,14 @@ body {
   border-radius: 5px;
 }
 .graded-price-field input:focus { outline: none; border-color: #58a6ff; }
+.graded-price-derived {
+  width: 74px;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: #3fb950;
+  border: 1px dashed #30363d;
+  border-radius: 5px;
+}
 
 .graded-graph-placeholder {
   margin-top: 12px;
