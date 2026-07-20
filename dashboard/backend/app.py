@@ -237,8 +237,15 @@ def collection_grid():
 
 @app.route("/api/graded")
 def graded_grid():
-    """Owned graded slabs — the graded collection view."""
-    return jsonify(reporting.browse_graded(request.args.to_dict()))
+    """Owned graded slabs — the graded collection view (search/filter/sort)."""
+    filters = request.args.to_dict()
+    # Repeatable params collapse to their first value in to_dict(); pull the full
+    # list for the multi-select keys.
+    for plural in ("grades", "tags"):
+        values = request.args.getlist(plural)
+        if values:
+            filters[plural] = values
+    return jsonify(reporting.browse_graded(filters))
 
 
 @app.route("/api/graded", methods=["POST"])

@@ -428,6 +428,8 @@ export interface GradedResponse {
 export interface GradedFilters {
   grading_companies: string[];
   statuses: string[];
+  grades: string[];
+  tags: string[];
 }
 
 export interface GradedCardDetail {
@@ -452,9 +454,15 @@ export interface GradedCardDetail {
   raw_estimated_price: number | null;
 }
 
-export function fetchGradedCollection(params: Record<string, string>): Promise<GradedResponse> {
-  const qs = new URLSearchParams(params).toString();
-  return fetchJson(`${BASE}/graded?${qs}`);
+export function fetchGradedCollection(
+  params: Record<string, string | string[]>,
+): Promise<GradedResponse> {
+  const qs = new URLSearchParams();
+  for (const [key, val] of Object.entries(params)) {
+    if (Array.isArray(val)) val.forEach((v) => v && qs.append(key, v));
+    else if (val) qs.set(key, val);
+  }
+  return fetchJson(`${BASE}/graded?${qs.toString()}`);
 }
 
 export function fetchGradedFilters(): Promise<GradedFilters> {

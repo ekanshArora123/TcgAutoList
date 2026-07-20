@@ -5,18 +5,35 @@ import {
   type GradedCardItem, type GradedResponse, type GradedFilters,
 } from "../api";
 import CardImage from "../components/CardImage";
+import MultiSelect from "../components/MultiSelect";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
+
+// Sort keys must match reporting_service._GRADED_SORT_COLUMNS.
+const GRADED_SORT_OPTIONS = [
+  { value: "grade", label: "Grade" },
+  { value: "card_name", label: "Name" },
+  { value: "grading_company", label: "Company" },
+  { value: "estimated_price", label: "Price" },
+];
 
 // The graded collection view. Parallel to CollectionGridPage but reads the
 // graded endpoints; the raw collection page is untouched.
 export default function GradedCollectionPage() {
   const [data, setData] = useState<GradedResponse | null>(null);
   const [filters, setFilters] = useState<GradedFilters | null>(null);
-  const [company, setCompany] = useState("");
-  const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+
+  // Search / filter / sort
+  const [searchInput, setSearchInput] = useState("");
+  const [q, setQ] = useState("");
+  const [company, setCompany] = useState("");
+  const [status, setStatus] = useState("");
+  const [grades, setGrades] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [sort, setSort] = useState("grade");
+  const [order, setOrder] = useState("desc");
 
   // Add-by-cert form
   const [certInput, setCertInput] = useState("");
@@ -27,15 +44,25 @@ export default function GradedCollectionPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const params: Record<string, string> = { page: String(page), per_page: "48" };
+    const params: Record<string, string | string[]> = {
+      page: String(page), per_page: "48", sort, order,
+    };
+    if (q) params.q = q;
     if (company) params.grading_company = company;
     if (status) params.status = status;
+    if (grades.length) params.grades = grades;
+    if (tags.length) params.tags = tags;
     setData(await fetchGradedCollection(params));
     setLoading(false);
-  }, [company, status, page]);
+  }, [q, company, status, grades, tags, sort, order, page]);
 
   useEffect(() => { fetchGradedFilters().then(setFilters); }, []);
   useEffect(() => { load(); }, [load]);
+  // Debounce the search box into the applied query.
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(searchInput); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -83,8 +110,15 @@ export default function GradedCollectionPage() {
         {addError && <span className="graded-add-error">{addError}</span>}
       </form>
 
+      {/* Search + filters */}
       <div className="filters-bar">
         <span style={{ fontSize: 18, fontWeight: 600 }}>Graded Slabs</span>
+        <input
+          className="search-input"
+          placeholder="Search card name..."
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
         {filters && (
           <>
             <select className="filter-select" value={company} onChange={(e) => { setCompany(e.target.value); setPage(1); }}>
@@ -95,15 +129,43 @@ export default function GradedCollectionPage() {
               <option value="">All Statuses</option>
               {filters.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
+            <div style={{ width: 140 }}>
+              <MultiSelect label="Grades" options={filters.grades ?? []} selected={grades} onChange={(v) => { setGrades(v); setPage(1); }} />
+            </div>
+            {(filters.tags ?? []).length > 0 && (
+              <div style={{ width: 140 }}>
+                <MultiSelect label="Tags" options={filters.tags} selected={tags} onChange={(v) => { setTags(v); setPage(1); }} />
+              </div>
+            )}
           </>
         )}
+      </div>
+
+      {/* Sort + result count */}
+      <div className="filters-bar">
+        <span style={{ fontSize: 12, color: "#8b949e" }}>Sort:</span>
+        <select className="filter-select" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
+          {GRADED_SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <button
+          className="price-range-btn"
+          style={{ background: "#161b22", color: "#8b949e" }}
+          onClick={() => { setOrder(order === "asc" ? "desc" : "asc"); setPage(1); }}
+        >
+          {order === "asc" ? "▲ Asc" : "▼ Desc"}
+        </button>
+        <span style={{ flex: 1 }} />
         {data && <span style={{ color: "#8b949e", fontSize: 12 }}>{data.total} slab(s)</span>}
       </div>
 
       {loading ? (
         <div className="loading">Loading...</div>
       ) : !data || data.items.length === 0 ? (
-        <div className="loading">No graded slabs yet. Add one by cert number above.</div>
+        <div className="loading">
+          {q || company || status || grades.length || tags.length
+            ? "No graded slabs match these filters."
+            : "No graded slabs yet. Add one by cert number above."}
+        </div>
       ) : (
         <div className="card-grid">
           {data.items.map((c) => <GradedTile key={c.graded_inventory_id} card={c} />)}

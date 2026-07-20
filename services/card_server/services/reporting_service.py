@@ -167,6 +167,97 @@ def _resolve_sort(sort: Optional[str], order: Optional[str]) -> tuple[str, str]:
     return sort_col, order_dir
 
 
+# ── Graded browse: its own filter/sort vocabulary (parallel to the raw ones
+# above). Columns use the GRADED_INV_FROM aliases: i=graded_inventory,
+# g=graded_skus, c=cards (LEFT JOIN, optional link), p=graded_prices. Adding a
+# new graded filter/sort is a one-line change here. ──
+
+# Sort keys the graded API exposes -> qualified columns (whitelist).
+_GRADED_SORT_COLUMNS = {
+    "grade": "g.grade",
+    "card_name": "COALESCE(g.card_subject, c.card_name)",
+    "set_name": "COALESCE(g.card_set, c.set_name)",
+    "grading_company": "g.grading_company",
+    "estimated_price": "p.estimated_price",
+    "status": "i.status",
+    "card_year": "g.card_year",
+}
+
+
+def _format_grade(g: Any) -> str:
+    """Grade -> filter-option/display string: -1 sentinel -> 'ERR', whole numbers
+    without a trailing .0 (10.0 -> '10'), halves kept (9.5 -> '9.5')."""
+    if g is None:
+        return ""
+    g = float(g)
+    if g < 0:
+        return "ERR"
+    return str(int(g)) if g.is_integer() else str(g)
+
+
+def _parse_grade_filter(v: Any) -> Optional[float]:
+    """Inverse of _format_grade for an incoming grade filter value."""
+    s = str(v).strip()
+    if not s:
+        return None
+    if s.upper() == "ERR":
+        return -1.0
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _build_graded_filters(f: dict[str, Any]) -> tuple[list[str], list[Any]]:
+    """Translate a graded filters dict into parametrized WHERE conditions. Every
+    key is optional. Shared by the graded browse (and future graded reads)."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    def add(cond: str, value: Any) -> None:
+        conditions.append(cond)
+        params.append(value)
+
+    def as_list(raw: Any) -> list[Any]:
+        return [v for v in (raw if isinstance(raw, (list, tuple)) else [raw]) if v not in (None, "")]
+
+    if f.get("q"):
+        add("COALESCE(g.card_subject, c.card_name) LIKE ?", f"%{f['q']}%")
+    if f.get("card_id"):
+        add("g.card_id = ?", f["card_id"])
+    if f.get("grading_company"):
+        add("g.grading_company = ?", f["grading_company"])
+    if f.get("status"):
+        add("i.status = ?", f["status"])
+    if f.get("grade") not in (None, ""):
+        gv = _parse_grade_filter(f["grade"])
+        if gv is not None:
+            add("g.grade = ?", gv)
+    # Multi-select grades (IN).
+    if f.get("grades"):
+        vals = [gv for gv in (_parse_grade_filter(v) for v in as_list(f["grades"])) if gv is not None]
+        if vals:
+            conditions.append(f"g.grade IN ({','.join('?' * len(vals))})")
+            params.extend(vals)
+    # Multi-select tags: slabs carrying ANY selected tag (comma-separated column).
+    if f.get("tags"):
+        tvals = [str(t).strip() for t in as_list(f["tags"])]
+        if tvals:
+            conditions.append("(" + " OR ".join("i.tags LIKE ?" for _ in tvals) + ")")
+            params.extend(f"%{t}%" for t in tvals)
+    if f.get("tags_contain"):
+        add("i.tags LIKE ?", f"%{f['tags_contain']}%")
+
+    return conditions, params
+
+
+def _resolve_graded_sort(sort: Optional[str], order: Optional[str]) -> tuple[str, str]:
+    sort_col = _GRADED_SORT_COLUMNS.get((sort or "").strip(), "g.grade")
+    order_dir = (order or "").strip().upper()
+    order_dir = order_dir if order_dir in ("ASC", "DESC") else "DESC"
+    return sort_col, order_dir
+
+
 def _paginate(page: Any, per_page: Any, default_per_page: int) -> tuple[int, int, int]:
     page = max(int(page or 1), 1)
     per_page = min(int(per_page or default_per_page), 200)
@@ -703,21 +794,14 @@ class ReportingService:
     def browse_graded(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Paginated list of owned graded slabs (the graded collection view).
 
-        Reuses the shared pagination helpers (_paginate/_page_result). Filters:
-        card_id, grading_company, status.
+        Reuses the shared pagination helpers (_paginate/_page_result) and the
+        graded filter/sort vocabulary (_build_graded_filters/_resolve_graded_sort).
+        Filters: q (name search), card_id, grading_company, status, grade,
+        grades (multi), tags (multi). Sort: any _GRADED_SORT_COLUMNS key.
         """
-        conditions: list[str] = []
-        params: list[Any] = []
-        if filters.get("card_id"):
-            conditions.append("g.card_id = ?")
-            params.append(filters["card_id"])
-        if filters.get("grading_company"):
-            conditions.append("g.grading_company = ?")
-            params.append(filters["grading_company"])
-        if filters.get("status"):
-            conditions.append("i.status = ?")
-            params.append(filters["status"])
+        conditions, params = _build_graded_filters(filters)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sort_col, order_dir = _resolve_graded_sort(filters.get("sort"), filters.get("order"))
         page, per_page, offset = _paginate(filters.get("page"), filters.get("per_page"), 48)
 
         total = self.db.execute(
@@ -737,7 +821,7 @@ class ReportingService:
                    c.rarity, c.era,
                    p.estimated_price, p.confidence_percent, p.calculation_date
             {GRADED_INV_FROM} {where}
-            ORDER BY g.grade DESC, i.created_at ASC LIMIT ? OFFSET ?
+            ORDER BY {sort_col} {order_dir}, i.created_at ASC LIMIT ? OFFSET ?
             """,
             params + [per_page, offset],
         ).fetchall()
@@ -897,9 +981,21 @@ class ReportingService:
         statuses = self.db.execute(
             "SELECT DISTINCT status FROM graded_inventory WHERE status IS NOT NULL ORDER BY status"
         ).fetchall()
+        grade_rows = self.db.execute(
+            "SELECT DISTINCT grade FROM graded_skus WHERE grade IS NOT NULL ORDER BY grade DESC"
+        ).fetchall()
+        # Distinct individual tags across owned slabs (the comma-separated column).
+        tag_rows = self.db.execute(
+            "SELECT tags FROM graded_inventory WHERE tags IS NOT NULL AND TRIM(tags) != ''"
+        ).fetchall()
+        tagset: set[str] = set()
+        for r in tag_rows:
+            tagset.update(parse_tags(r["tags"]))
         return {
             "grading_companies": self.graded_skus.get_all_companies(),
             "statuses": [r["status"] for r in statuses],
+            "grades": [_format_grade(r["grade"]) for r in grade_rows],
+            "tags": sorted(tagset),
         }
 
 

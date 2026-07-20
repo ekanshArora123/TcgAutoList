@@ -197,3 +197,56 @@ def test_unusable_id_raises(db, monkeypatch):
 
 def test_set_link_unknown_cert_returns_none(db):
     assert asyncio.run(CollectionService(db).set_graded_link_by_cert("nope", "999")) is None
+
+
+# ─── browse_graded: search / filter / sort ───────────────────
+
+
+def _seed_browse(db):
+    gs = GradedSkusHelper(db)
+    gi = GradedInventoryHelper(db)
+    chz10 = gs.get_or_create({"grading_company": "PSA", "grade": 10, "grader_spec_id": "S1", "card_subject": "CHARIZARD"})
+    chz9 = gs.get_or_create({"grading_company": "PSA", "grade": 9, "grader_spec_id": "S1", "card_subject": "CHARIZARD"})
+    pika8 = gs.get_or_create({"grading_company": "CGC", "grade": 8, "grader_spec_id": "S2", "card_subject": "PIKACHU"})
+    gi.create({"graded_sku_id": chz10["graded_sku_id"], "cert_id": "C10", "qty": 1})
+    gi.create({"graded_sku_id": chz9["graded_sku_id"], "cert_id": "C9", "qty": 1, "tags": "to_crack"})
+    gi.create({"graded_sku_id": pika8["graded_sku_id"], "cert_id": "P8", "qty": 1})
+
+
+def test_browse_search_by_name(db):
+    _seed_browse(db)
+    r = ReportingService(db).browse_graded({"q": "pika"})
+    assert {i["cert_id"] for i in r["items"]} == {"P8"}
+
+
+def test_browse_filter_by_grades(db):
+    _seed_browse(db)
+    r = ReportingService(db).browse_graded({"grades": ["10", "8"]})
+    assert {i["grade"] for i in r["items"]} == {10.0, 8.0}
+
+
+def test_browse_filter_by_tag(db):
+    _seed_browse(db)
+    r = ReportingService(db).browse_graded({"tags": ["to_crack"]})
+    assert {i["cert_id"] for i in r["items"]} == {"C9"}
+
+
+def test_browse_sort_by_name_asc(db):
+    _seed_browse(db)
+    names = [i["card_name"] for i in ReportingService(db).browse_graded({"sort": "card_name", "order": "asc"})["items"]]
+    assert names == sorted(names)
+    assert names[0] == "CHARIZARD"
+
+
+def test_browse_sort_by_grade_desc(db):
+    _seed_browse(db)
+    grades = [i["grade"] for i in ReportingService(db).browse_graded({"sort": "grade", "order": "desc"})["items"]]
+    assert grades == sorted(grades, reverse=True)
+
+
+def test_graded_filter_options_grades_and_tags(db):
+    _seed_browse(db)
+    opts = ReportingService(db).graded_filter_options()
+    assert opts["grades"] == ["10", "9", "8"]  # distinct, descending
+    assert opts["tags"] == ["to_crack"]
+    assert set(opts["grading_companies"]) == {"PSA", "CGC"}
