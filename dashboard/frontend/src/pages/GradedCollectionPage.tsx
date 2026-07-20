@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import {
   fetchGradedCollection, fetchGradedFilters, addGradedByCert, cardImageUrl, gradedImageUrl,
   type GradedCardItem, type GradedResponse, type GradedFilters,
@@ -120,34 +121,27 @@ export default function GradedCollectionPage() {
   );
 }
 
-// White box, red outline: big grade number on the left, PSA card name in the
-// middle, card info underneath. Reuses the shared CardImage.
+// Matches the raw card tile (dark bg, light font): a big slab image with the
+// grade overlaid as a badge, then a compact info box (name, set, price/status).
+// Fuller per-slab detail lives on the slab detail page. Reuses the shared
+// CardImage + the raw .card-tile-* styles.
 function GradedTile({ card }: { card: GradedCardItem }) {
   // Awkward/unavailable grades come through as the -1 sentinel (see psa.py); show
-  // "ERR" rather than a number. The exact PSA text stays in the Grade info row.
+  // "ERR" rather than a number.
   const gradeText = card.grade > 0 ? String(card.grade) : "ERR";
-  // The grade/name header is a stand-in for a missing picture — hide it once an
-  // image (slab front, or the raw-card fallback) is actually showing.
-  const [hasImage, setHasImage] = useState(false);
-  return (
-    <div className="graded-tile">
-      {!hasImage && (
-        <div className="graded-tile-top">
-          <div className="graded-badge">
-            <span className="graded-company">{card.grading_company}</span>
-            <span className="graded-grade-num">{gradeText}</span>
-          </div>
-          <div className="graded-name-block">
-            <div className="graded-name" title={card.card_name}>{card.card_name}</div>
-            <div className="graded-sub">
-              {card.card_set || card.set_name || "Unknown Set"}
-              {card.card_number ? ` · #${card.card_number}` : ""}
-            </div>
-          </div>
-        </div>
-      )}
+  const toCrack = (card.tags || "").split(",").map((t) => t.trim()).includes("to_crack");
+  // Condensed extra details (omit blanks) — one small line under the set.
+  const meta = [
+    card.card_year,
+    card.card_variety,
+    card.card_language,
+    card.population != null ? `Pop ${card.population}` : null,
+    card.cert_id ? `Cert ${card.cert_id}` : null,
+  ].filter(Boolean);
 
-      <div className="graded-tile-image">
+  const inner = (
+    <>
+      <div className="card-tile-image graded-tile-image">
         {/* PSA slab front first; fall back to the linked raw card image, then a
             placeholder. (Only the front is shown; the back is stored for later.) */}
         <CardImage
@@ -156,22 +150,38 @@ function GradedTile({ card }: { card: GradedCardItem }) {
             card.card_id ? cardImageUrl(card.card_id) : null,
           ]}
           alt={card.card_name}
-          onShown={setHasImage}
         />
+        <div className="graded-grade-badge">
+          <span className="ggb-company">{card.grading_company}</span>
+          <span className="ggb-grade">{gradeText}</span>
+        </div>
+        {toCrack && <span className="graded-tile-crack">Crack</span>}
       </div>
 
-      <div className="graded-info">
-        {card.card_variety && <div className="adv-row"><span>Variety</span><span>{card.card_variety}</span></div>}
-        {card.card_language && <div className="adv-row"><span>Language</span><span>{card.card_language}</span></div>}
-        {card.card_year && <div className="adv-row"><span>Year</span><span>{card.card_year}</span></div>}
-        <div className="adv-row"><span>Grade</span><span>{card.grade_label || (card.grade > 0 ? `${card.grading_company} ${card.grade}` : "ERR")}</span></div>
-        {card.population != null && <div className="adv-row"><span>Population</span><span>{card.population}</span></div>}
-        {card.cert_id && <div className="adv-row"><span>Cert #</span><span>{card.cert_id}</span></div>}
-        <div className="adv-row"><span>Status</span><span className={`status-badge status-${card.status}`}>{card.status}</span></div>
-        {card.estimated_price != null && (
-          <div className="adv-row"><span>Est. Price</span><span>{fmt(card.estimated_price)}</span></div>
-        )}
+      <div className="card-tile-info">
+        <div className="card-tile-name" title={card.card_name}>
+          {card.card_name}
+          {card.card_number ? <span className="card-number"> #{card.card_number}</span> : ""}
+        </div>
+        <div className="card-tile-set">{card.set_name || "Unknown Set"}</div>
+        {meta.length > 0 && <div className="graded-tile-meta">{meta.join(" · ")}</div>}
+        <div className="graded-tile-status-row">
+          <span className={`card-tile-price ${card.estimated_price == null ? "no-price" : ""}`}>
+            {card.estimated_price != null ? fmt(card.estimated_price) : "—"}
+          </span>
+          <span className={`status-badge status-${card.status}`}>{card.status}</span>
+        </div>
       </div>
-    </div>
+    </>
+  );
+
+  // The whole tile links to the slab detail page (keyed by cert). Cert-less
+  // manual adds have no detail route, so they render as a plain, unlinked tile.
+  return card.cert_id ? (
+    <Link to={`/graded/slab/${encodeURIComponent(card.cert_id)}`} className="graded-tile graded-tile-link">
+      {inner}
+    </Link>
+  ) : (
+    <div className="graded-tile">{inner}</div>
   );
 }

@@ -689,6 +689,60 @@ body {
   font-size: 13px;
 }
 
+/* Owned-by-condition qty editor */
+.qty-input {
+  width: 56px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e1e4e8;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  text-align: right;
+}
+
+.qty-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.qty-input:disabled {
+  opacity: 0.6;
+}
+
+.card-detail-qty-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.qty-save-btn {
+  background: #1f6feb;
+  border: 1px solid #1f6feb;
+  color: #fff;
+  font-size: 13px;
+  padding: 5px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.qty-save-btn:hover:not(:disabled) {
+  background: #388bfd;
+}
+
+.qty-save-btn:disabled {
+  background: #21262d;
+  border-color: #30363d;
+  color: #8b949e;
+  cursor: default;
+}
+
+.qty-save-error {
+  color: #f85149;
+  font-size: 12px;
+}
+
 /* Graph fills the middle and stands up as the focal area. */
 .card-detail-graph {
   display: flex;
@@ -838,50 +892,185 @@ body {
 .graded-add-error { color: #ff6b6b; font-size: 12px; }
 
 /* White box, red outline. Dark text since the background is light. */
+/* Graded tile — same dark bg + light font as the raw card tile, image-first with
+   the grade overlaid as a badge and a compact info box. */
 .graded-tile {
-  background: #ffffff;
-  color: #1a1a1a;
-  border: 2px solid #e03131;
-  border-radius: 10px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.graded-tile-top { display: flex; gap: 12px; align-items: center; }
-.graded-badge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-width: 58px;
-  padding: 4px 8px;
-  border: 2px solid #e03131;
+  background: #161b22;
+  color: #e1e4e8;
+  border: 1px solid #30363d;
   border-radius: 8px;
-  color: #e03131;
-}
-.graded-company { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
-.graded-grade-num { font-size: 34px; font-weight: 800; line-height: 1; }
-.graded-name-block { flex: 1; min-width: 0; }
-.graded-name {
-  font-weight: 700;
-  font-size: 15px;
-  color: #1a1a1a;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s;
 }
-.graded-sub { font-size: 12px; color: #666; }
+.graded-tile-link { text-decoration: none; cursor: pointer; }
+.graded-tile:hover { border-color: #e03131; }
+
+/* Bigger image: fills the tile width at the slab's natural aspect. */
 .graded-tile-image {
-  background: #f4f4f4;
+  aspect-ratio: auto;
+  min-height: 0;
+}
+.graded-tile-image img { width: 100%; height: auto; object-fit: contain; }
+.graded-tile-image .card-tile-no-image { min-height: 240px; }
+
+/* Grade badge overlaid on the image (always visible, even over the picture). */
+.graded-grade-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  padding: 3px 8px;
+  background: rgba(13, 17, 23, 0.82);
+  border: 1px solid #e03131;
   border-radius: 6px;
-  overflow: hidden;
+  color: #ff6b6b;
+}
+.graded-grade-badge .ggb-company { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; }
+.graded-grade-badge .ggb-grade { font-size: 20px; font-weight: 800; }
+
+.graded-tile-crack {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: #e09131;
+  color: #0d1117;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.graded-tile-meta {
+  font-size: 10px;
+  line-height: 1.35;
+  color: #6e7681;
+  margin-top: 1px;
+  word-break: break-word;
+}
+
+.graded-tile-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+/* ── Graded detail page ── */
+.graded-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .graded-detail-grid { grid-template-columns: 1fr; }
+}
+
+.graded-grade-pill {
+  display: inline-block;
+  min-width: 26px;
+  text-align: center;
+  padding: 1px 6px;
+  border: 1px solid #e03131;
+  border-radius: 5px;
+  color: #ff6b6b;
+  font-weight: 700;
+  font-size: 12px;
+}
+/* Focused slab (left panel): big front + back + the crack action. */
+.slab-focus-crack { border-color: #e09131; }
+.slab-focus-images {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.slab-focus-face {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.slab-focus-face > img,
+.slab-focus-face > .card-tile-no-image {
+  width: 100%;
+  aspect-ratio: 63 / 88;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+}
+.slab-focus-face .card-tile-no-image {
   display: flex;
   align-items: center;
   justify-content: center;
+  color: #6e7681;
+  font-size: 11px;
+  text-align: center;
+  padding: 6px;
 }
-.graded-tile-image img { width: 100%; height: auto; display: block; }
-.graded-tile-image .card-tile-no-image { background: #f0f0f0; color: #999; min-height: 120px; }
-.graded-info { display: flex; flex-direction: column; gap: 2px; }
-.graded-info .adv-row { display: flex; justify-content: space-between; font-size: 12px; color: #333; }
-.graded-info .adv-row span:first-child { color: #888; }
+.slab-focus-face figcaption {
+  font-size: 11px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.slab-crack-flag { color: #e09131; font-size: 12px; font-weight: 600; margin-top: 4px; }
+
+.slab-crack-btn {
+  align-self: flex-start;
+  background: #21262d;
+  border: 1px solid #e09131;
+  color: #e09131;
+  font-size: 13px;
+  padding: 5px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.slab-crack-btn:hover:not(:disabled) { background: #2d2213; }
+.slab-crack-btn.active { background: #e09131; color: #0d1117; }
+.slab-crack-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Highlight the focused slab's grade row in the context table. */
+.card-table tr.row-current td { background: #17233b; }
+
+.graded-link-editor {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #21262d;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.graded-link-label {
+  font-size: 12px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.graded-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.graded-link-row .search-input { flex: 1; min-width: 0; }
+
+.graded-graph-placeholder {
+  margin-top: 12px;
+  padding: 24px 12px;
+  border: 1px dashed #30363d;
+  border-radius: 8px;
+  text-align: center;
+  color: #6e7681;
+  font-size: 12px;
+  font-style: italic;
+}

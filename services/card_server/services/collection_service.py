@@ -153,6 +153,61 @@ class CollectionService:
             }
         )
 
+    def set_condition_qty(
+        self,
+        card_id: str,
+        condition: str,
+        qty: int,
+        finish: str = "Regular",
+        specialty_one: str = "None",
+        specialty_two: str = "None",
+    ) -> Optional[int]:
+        """Set the owned (untagged) quantity of one variant+condition to `qty`.
+
+        Resolves — creating if needed — the SKU for this exact
+        (card_id, condition, finish, specialties), then drives the count through
+        `inventory.set_untagged_qty`. Because it get_or_creates the SKU, it can add
+        a condition that isn't owned yet (qty 0 → N), not just edit existing ones.
+        Returns the new owned quantity, or None if the card_id is unknown.
+
+        The composable seam for editing owned counts by condition — the detail-page
+        editor and any future add/bulk-edit flow share this instead of duplicating
+        SKU resolution + inventory math.
+        """
+        if not self.cards.get_by_id(card_id):
+            return None
+        sku = self.skus.get_or_create(
+            {
+                "card_id": card_id,
+                "condition": condition,
+                "finish": finish or "Regular",
+                "specialty_one": specialty_one or "None",
+                "specialty_two": specialty_two or "None",
+                "qty": 0,
+            }
+        )
+        return self.inventory.set_untagged_qty(sku["sku_id"], qty)
+
+    def set_condition_quantities(
+        self,
+        card_id: str,
+        quantities: dict[str, int],
+        finish: str = "Regular",
+        specialty_one: str = "None",
+        specialty_two: str = "None",
+    ) -> Optional[dict[str, int]]:
+        """Batch form of `set_condition_qty`: apply a {condition: qty} map for one
+        variant in a single call. Returns {condition: new_qty}, or None if the
+        card_id is unknown."""
+        if not self.cards.get_by_id(card_id):
+            return None
+        return {
+            condition: self.set_condition_qty(
+                card_id, condition, qty, finish, specialty_one, specialty_two
+            )
+            for condition, qty in quantities.items()
+        }
+
     def get_inventory_detail(self, inventory_id: int) -> Optional[dict]:
         return self.inventory.get_detail_by_id(inventory_id)
 
@@ -243,6 +298,18 @@ class CollectionService:
 
     def delete_graded_inventory_item(self, graded_inventory_id: int) -> bool:
         return self.graded_inventory.delete(graded_inventory_id)
+
+    def set_graded_slab_tag(
+        self, graded_inventory_id: int, tag: str, present: bool
+    ) -> Optional[dict]:
+        """Add or remove a tag on one graded slab (e.g. the 'to_crack' mark).
+
+        Slab-level, cert-specific — acts only on this one physical slab, never the
+        grade class or other slabs. Tags reuse the shared comma-separated column
+        (see helpers.crud.tags), so any future slab tag flows through here too."""
+        if present:
+            return self.graded_inventory.add_tag(graded_inventory_id, tag)
+        return self.graded_inventory.remove_tag(graded_inventory_id, tag)
 
     async def add_graded_by_cert(
         self, cert_id: str, grading_company: str = "PSA", card_id: Optional[str] = None
@@ -370,6 +437,49 @@ class CollectionService:
     def link_graded_to_card(self, graded_sku_id: int, card_id: Optional[str]) -> Optional[dict]:
         """Isolated seam for the future graded->raw converter to set the TCGplayer link."""
         return self.graded_skus.link_card(graded_sku_id, card_id)
+
+    async def set_graded_link_by_cert(
+        self, cert_id: str, card_id: Optional[str]
+    ) -> Optional[dict]:
+        """Manually set/clear the TCGplayer link for the graded card a cert belongs
+        to. Interim manual editor for `graded_skus.card_id` (the deferred graded->raw
+        mapper will automate this) — reachable from the slab detail page.
+
+        The link identifies the *raw card*, which is the same across every grade of
+        one card, so it's applied to the whole spec group (all graded_skus sharing
+        this company + grader spec), keeping grades consistent. A blank id unlinks.
+        A non-blank id is validated + resolved through the same `_resolve_card_link`
+        path the add flow uses (creates the `cards` row so the FK holds and the
+        image/price show); an unusable id raises ValueError. Returns
+        {"card_id": <resolved or None>}, or None if the cert isn't owned."""
+        slab = self.graded_inventory.get_by_cert(cert_id)
+        if not slab:
+            return None
+        sku = self.graded_skus.get_by_id(slab["graded_sku_id"])
+        if not sku:
+            return None
+
+        # Every grade of this card within the company (falls back to just this sku
+        # when there's no grader spec).
+        if sku.get("grader_spec_id"):
+            group = self.graded_skus.get_by_spec(sku["grading_company"], sku["grader_spec_id"])
+        else:
+            group = [sku]
+
+        resolved: Optional[str] = None
+        if card_id and str(card_id).strip():
+            # Reuse the add-time resolver; the sku's grader fields feed its stub
+            # fallback (card_subject/card_set/card_number).
+            resolved = await self._resolve_card_link(str(card_id).strip(), sku)
+            if resolved is None:
+                raise ValueError(
+                    f"TCGplayer id {str(card_id).strip()} couldn't be linked "
+                    "(no card or image found)."
+                )
+
+        for g in group:
+            self.graded_skus.link_card(g["graded_sku_id"], resolved)
+        return {"card_id": resolved}
 
     def supported_grading_companies(self) -> list[str]:
         return grading_registry.supported_companies()

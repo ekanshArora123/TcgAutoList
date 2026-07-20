@@ -267,6 +267,32 @@ export function fetchCardDetail(cardId: string, variant: CardVariant): Promise<C
   return fetchJson(`${BASE}/card/${cardId}?${qs}`);
 }
 
+// Set owned (untagged) quantities per condition for one card variant. Absolute
+// set, not a delta; conditions not yet owned are created. Returns the refreshed
+// CardDetail (same shape as fetchCardDetail) so the caller can replace its state.
+export async function setCardQuantities(
+  cardId: string,
+  variant: CardVariant,
+  quantities: Record<string, number>,
+): Promise<CardDetail> {
+  const res = await fetch(`${BASE}/card/${cardId}/quantities`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...variant, quantities }),
+  });
+  if (!res.ok) {
+    let msg = `Save failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 // Per-card sales graph: one daily point per (condition, date).
 export interface SalesPoint {
   date: string;
@@ -446,6 +472,115 @@ export function fetchGradedCardDetail(
     grade: String(key.grade),
   }).toString();
   return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
+}
+
+// ── Graded card detail page (entered by cert number) ──
+
+// One grade class (a graded_sku): a grade of this card, with owned qty +
+// population + price. Price-over-time will attach here later.
+export interface GradedGradeRow {
+  graded_sku_id: number;
+  grade: number;
+  grade_label: string | null;
+  population: number | null;
+  population_higher: number | null;
+  qty: number;
+  estimated_price: number | null;
+  confidence_percent: number | null;
+}
+
+// The one physical slab (cert) the page focuses on: the tier that owns images +
+// the to_crack mark.
+export interface GradedSlab {
+  graded_inventory_id: number;
+  cert_id: string | null;
+  grade: number;
+  grade_label: string | null;
+  grading_company: string;
+  status: string;
+  tags: string[];
+  to_crack: boolean;
+}
+
+export interface GradedSlabDetail {
+  identity: {
+    card_name: string | null;
+    set_name: string | null;
+    card_number: string | null;
+    card_year: string | null;
+    card_variety: string | null;
+    card_language: string | null;
+    finish: string;
+    specialty_one: string;
+    grading_company: string;
+    grader_spec_id: string | null;
+    rarity: string | null;
+    era: string | null;
+    // Optional TCGplayer link (drives the raw-card link + fallback image).
+    card_id: string | null;
+    raw_has_image: boolean;
+    raw_estimated_price: number | null;
+  };
+  // The focused cert (page subject).
+  slab: GradedSlab;
+  // Spec-level context: every grade of this card (read-only display).
+  grades: GradedGradeRow[];
+}
+
+export function fetchGradedSlabDetail(certId: string): Promise<GradedSlabDetail> {
+  return fetchJson(`${BASE}/graded/slab/${encodeURIComponent(certId)}`);
+}
+
+// Set/clear the TCGplayer id for the graded card a cert belongs to (applies to
+// every grade of that card). Blank cardId unlinks. Returns the refreshed detail.
+export async function setGradedCardLink(certId: string, cardId: string): Promise<GradedSlabDetail> {
+  const res = await fetch(`${BASE}/graded/slab/${encodeURIComponent(certId)}/link`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ card_id: cardId }),
+  });
+  if (!res.ok) {
+    let msg = `Link failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+export interface GradedSlabTagResult {
+  graded_inventory_id: number;
+  tags: string[];
+  to_crack: boolean;
+}
+
+// Add/remove a tag on one slab (e.g. "to_crack"). Cert-specific — touches only
+// this slab. Returns the slab's updated tags.
+export async function setGradedSlabTag(
+  gradedInventoryId: number,
+  tag: string,
+  present: boolean,
+): Promise<GradedSlabTagResult> {
+  const res = await fetch(`${BASE}/graded/slab/${gradedInventoryId}/tag`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag, present }),
+  });
+  if (!res.ok) {
+    let msg = `Update failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
 }
 
 // Add a graded slab by cert number (POST — the dashboard's first write call).

@@ -22,6 +22,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 from services.card_server.db import init_database
+from services.card_server.helpers.crud.tags import parse_tags
 from services.card_server.helpers.tcgplayer.transport import RateLimited
 from services.card_server.services.collection_service import CollectionService
 from services.card_server.services.reporting_service import ReportingService
@@ -127,6 +128,47 @@ def card_detail(card_id):
     return jsonify(detail)
 
 
+@app.route("/api/card/<card_id>/quantities", methods=["PATCH"])
+def set_card_quantities(card_id):
+    """Set owned (untagged) quantities per condition for one card variant.
+
+    Body: { finish?, specialty_one?, specialty_two?, quantities: {CONDITION: qty} }.
+    Absolute set (not a delta) per condition; a condition not yet owned is created.
+    Returns the refreshed card detail (same shape as GET) so the client can replace
+    its state in one round-trip.
+    """
+    body = request.get_json(silent=True) or {}
+    quantities = body.get("quantities")
+    if not isinstance(quantities, dict) or not quantities:
+        return jsonify({"error": "quantities (a {condition: qty} object) is required"}), 400
+
+    parsed: dict[str, int] = {}
+    for condition, value in quantities.items():
+        try:
+            parsed[str(condition)] = max(int(value), 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": f"invalid quantity for {condition!r}"}), 400
+
+    finish = body.get("finish") or "Regular"
+    specialty_one = body.get("specialty_one") or "None"
+    specialty_two = body.get("specialty_two") or "None"
+
+    result = collection.set_condition_quantities(
+        card_id, parsed, finish=finish, specialty_one=specialty_one, specialty_two=specialty_two
+    )
+    if result is None:
+        return "", 404
+
+    detail = reporting.card_detail(
+        card_id,
+        finish=finish,
+        specialty_one=specialty_one,
+        specialty_two=specialty_two,
+        image_card_ids=list(_image_card_ids()),
+    )
+    return jsonify(detail)
+
+
 @app.route("/api/card/<card_id>/sales")
 def card_sales(card_id):
     """Daily sales rollup (one series per condition) for the per-card graph."""
@@ -225,6 +267,65 @@ def add_graded():
     if result is None:
         return jsonify({"error": f"cert {cert_id} not found at {company}"}), 404
     return jsonify(result), 201
+
+
+@app.route("/api/graded/slab/<cert_id>")
+def graded_slab_detail(cert_id):
+    """Graded card detail page, entered by cert number: the grade-class rollup
+    (all grades of this card within its company) + every owned slab. 404 if the
+    cert isn't owned."""
+    detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
+    if detail is None:
+        return "", 404
+    return jsonify(detail)
+
+
+@app.route("/api/graded/slab/<int:graded_inventory_id>/tag", methods=["PATCH"])
+def set_graded_slab_tag(graded_inventory_id):
+    """Add or remove a tag on one slab (e.g. the 'to_crack' mark).
+
+    Body: { tag: str, present: bool }. Cert-specific — touches only this slab.
+    Returns the slab's updated tags so the client can patch its row in place.
+    """
+    body = request.get_json(silent=True) or {}
+    tag = str(body.get("tag") or "").strip()
+    if not tag:
+        return jsonify({"error": "tag is required"}), 400
+    present = bool(body.get("present"))
+
+    updated = collection.set_graded_slab_tag(graded_inventory_id, tag, present)
+    if updated is None:
+        return "", 404
+    tags = parse_tags(updated.get("tags"))
+    return jsonify(
+        {"graded_inventory_id": graded_inventory_id, "tags": tags, "to_crack": "to_crack" in tags}
+    )
+
+
+@app.route("/api/graded/slab/<cert_id>/link", methods=["PATCH"])
+def set_graded_slab_link(cert_id):
+    """Set/clear the TCGplayer id for the graded card this cert belongs to.
+
+    Body: { card_id }. Blank unlinks. A non-blank id is validated (must resolve to
+    a real card/image) and applied to every grade of this card. Returns the
+    refreshed slab detail. 404 if the cert isn't owned; 400 on an unusable id.
+    """
+    body = request.get_json(silent=True) or {}
+    card_id = str(body.get("card_id") or "").strip() or None
+
+    try:
+        result = asyncio.run(collection.set_graded_link_by_cert(cert_id, card_id))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RateLimited:
+        return jsonify({"error": "TCGplayer rate limit reached — try again later."}), 429
+    except Exception as e:  # network / parse error resolving the id
+        return jsonify({"error": f"link failed: {e}"}), 502
+
+    if result is None:
+        return "", 404
+    detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
+    return jsonify(detail)
 
 
 @app.route("/api/graded/companies")

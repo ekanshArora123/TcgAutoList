@@ -23,6 +23,12 @@ from ..helpers.crud.graded_inventory import GRADED_INV_FROM, GradedInventoryHelp
 from ..helpers.crud.graded_skus import GradedSkusHelper
 from ..helpers.crud.inventory import INV_SKU_CARD_PRICE_FROM, InventoryHelper
 from ..helpers.crud.skus import SkusHelper
+from ..helpers.crud.tags import parse_tags
+
+# Slab tag that marks a cert for cracking (removal from the slab + regrade). A
+# plain reused tag on graded_inventory.tags — no dedicated status/queue. The
+# frontend uses the same literal.
+GRADED_TO_CRACK_TAG = "to_crack"
 
 # Collection browse additionally surfaces the latest market snapshot per SKU.
 _MARKET_JOIN = """
@@ -786,6 +792,104 @@ class ReportingService:
             "estimated_price": row["estimated_price"] if row else None,
             "confidence_percent": row["confidence_percent"] if row else None,
             "raw_estimated_price": self._raw_top_price(card_id, finish, specialty_one),
+        }
+
+    def graded_slab_detail(
+        self, cert_id: str, image_card_ids: Optional[list[str]] = None
+    ) -> Optional[dict[str, Any]]:
+        """The graded card detail page, for one physical slab (a cert number).
+
+        The page's subject is the one cert; alongside it we return the spec-level
+        context so the two tiers sit together:
+          - **slab** (this `graded_inventory` row): the cert-specific data the page
+            focuses on — status + tags (incl. the 'to_crack' mark) + its grade.
+          - **grades** (the `graded_skus` grade class): every grade of this card,
+            grouped by (grading_company, grader_spec_id) — owned qty, population,
+            price per grade — shown as read-only context (cross-company grouping
+            waits on the deferred graded->raw mapper).
+
+        Returns None if the cert isn't owned. Falls back to a single-sku group when
+        the sku has no grader_spec_id (a manual/legacy add)."""
+        slab = self.graded_inventory.get_by_cert(cert_id)
+        if not slab:
+            return None
+        sku = self.graded_skus.get_by_id(slab["graded_sku_id"])
+        if not sku:
+            return None
+
+        company = sku["grading_company"]
+        spec = sku["grader_spec_id"]
+        # Group all grades of this card within the company by grader spec; when the
+        # spec is missing, the page is just this one sku.
+        if spec:
+            group_where = "s.grading_company = ? AND s.grader_spec_id = ?"
+            group_params: list[Any] = [company, spec]
+        else:
+            group_where = "s.graded_sku_id = ?"
+            group_params = [sku["graded_sku_id"]]
+
+        grade_rows = self.db.execute(
+            f"""
+            SELECT s.graded_sku_id, s.grade, s.grade_label,
+                   s.population, s.population_higher,
+                   COALESCE(SUM(i.qty), 0) AS qty,
+                   MAX(p.estimated_price) AS estimated_price,
+                   MAX(p.confidence_percent) AS confidence_percent
+            FROM graded_skus s
+            LEFT JOIN graded_inventory i ON i.graded_sku_id = s.graded_sku_id
+            LEFT JOIN graded_prices p
+              ON p.graded_sku_id = s.graded_sku_id AND p.calculation_date = s.latest_calc_date
+            WHERE {group_where}
+            GROUP BY s.graded_sku_id
+            ORDER BY s.grade DESC
+            """,
+            group_params,
+        ).fetchall()
+        grades = [dict(r) for r in grade_rows]
+
+        # The focused slab: cert-specific data straight from the entered cert's row
+        # (no extra query — get_by_cert already loaded it above).
+        tag_list = parse_tags(slab["tags"])
+        focused_slab = {
+            "graded_inventory_id": slab["graded_inventory_id"],
+            "cert_id": slab["cert_id"],
+            "grade": sku["grade"],
+            "grade_label": sku["grade_label"],
+            "grading_company": company,
+            "status": slab["status"],
+            "tags": tag_list,
+            "to_crack": GRADED_TO_CRACK_TAG in tag_list,
+        }
+
+        card_id = sku["card_id"]
+        card = self.cards.get_by_id(card_id) if card_id else None
+        image_set = set(_digit_ids(image_card_ids))
+        return {
+            "identity": {
+                # Grader-derived (always present), raw `cards` only as fallback.
+                "card_name": sku["card_subject"] or (card["card_name"] if card else None),
+                "set_name": sku["card_set"] or (card["set_name"] if card else None),
+                "card_number": sku["card_number"] or (card["card_number"] if card else None),
+                "card_year": sku["card_year"],
+                "card_variety": sku["card_variety"],
+                "card_language": sku["card_language"],
+                "finish": sku["finish"],
+                "specialty_one": sku["specialty_one"],
+                "grading_company": company,
+                "grader_spec_id": spec,
+                "rarity": card["rarity"] if card else None,
+                "era": card["era"] if card else None,
+                # Optional TCGplayer link (deferred mapper populates it broadly).
+                "card_id": card_id,
+                "raw_has_image": bool(card_id) and str(card_id) in image_set,
+                "raw_estimated_price": (
+                    self._raw_top_price(card_id, sku["finish"], sku["specialty_one"])
+                    if card_id
+                    else None
+                ),
+            },
+            "slab": focused_slab,
+            "grades": grades,
         }
 
     def graded_filter_options(self) -> dict[str, list[str]]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Optional
 
+from . import tags as tags_helper
 from .skus import SkusHelper
 
 # Canonical "owned card with its current price" join. The price row is the one
@@ -31,6 +32,19 @@ _UPDATABLE = (
     "sku_id", "pricing_sku_id", "qty", "tags", "status",
     "front_photo_path", "back_photo_path", "ebay_listing_id", "listed_at",
 )
+
+
+def _commit_rank(row: dict[str, Any]) -> int:
+    """0 = a plain, uncommitted copy (safe to shave/grow); 1 = a copy with listing
+    progress (listed/sold status, photos, or an eBay id) worth preserving. Used to
+    decide which untagged rows a quantity change should touch first."""
+    committed = (
+        (row.get("status") or "unlisted") not in ("unlisted", "skipped")
+        or row.get("front_photo_path")
+        or row.get("back_photo_path")
+        or row.get("ebay_listing_id")
+    )
+    return 1 if committed else 0
 
 
 class InventoryHelper:
@@ -202,6 +216,80 @@ class InventoryHelper:
 
         return self.get_by_id(input["inventory_id"])
 
+    def set_untagged_qty(self, sku_id: int, target_qty: int) -> int:
+        """Set the total UNTAGGED owned quantity for a SKU to `target_qty`.
+
+        The single reusable primitive for "how many (plain) copies of this exact
+        variant+condition do I own" — any caller that has resolved a SKU (this
+        detail page today; future add/bulk-edit flows tomorrow) drives owned
+        counts through here instead of hand-rolling inventory math.
+
+        Tagged rows (special physical cards: creases, marks, …) are never touched
+        — they're excluded from the owned rollup and get their own treatment.
+        Adjusts the untagged rows to reach the target, then re-syncs the SKU
+        aggregate qty. Idempotent when already at target. Returns the new untagged
+        total (== clamped target).
+
+        - target < current: remove the difference, taking from the least-committed
+          rows first (plain unlisted rows before listed/photographed/sold ones,
+          newest before oldest) so listing progress is preserved; rows that hit 0
+          are deleted.
+        - target > current: add the difference onto an existing plain untagged row
+          if one exists, else create a fresh unlisted row.
+        """
+        target = max(int(target_qty), 0)
+        rows = self.db.execute(
+            "SELECT * FROM inventory WHERE sku_id = ? AND (tags IS NULL OR TRIM(tags) = '')",
+            (sku_id,),
+        ).fetchall()
+        rows = [dict(r) for r in rows]
+        current = sum(r["qty"] or 0 for r in rows)
+        if target == current:
+            return current
+
+        self.db.execute("BEGIN")
+        try:
+            if target < current:
+                to_remove = current - target
+                # Least-committed first (rank 0), newest first within a rank, so a
+                # plain surplus is shaved before touching a listed/photographed copy.
+                for r in sorted(rows, key=lambda r: (_commit_rank(r), -r["inventory_id"])):
+                    if to_remove <= 0:
+                        break
+                    take = min(r["qty"] or 0, to_remove)
+                    to_remove -= take
+                    remaining = (r["qty"] or 0) - take
+                    if remaining <= 0:
+                        self.db.execute(
+                            "DELETE FROM inventory WHERE inventory_id = ?", (r["inventory_id"],)
+                        )
+                    else:
+                        self.db.execute(
+                            "UPDATE inventory SET qty = ? WHERE inventory_id = ?",
+                            (remaining, r["inventory_id"]),
+                        )
+            else:
+                to_add = target - current
+                # Grow a plain untagged row if one exists; otherwise start a fresh
+                # unlisted row (don't inflate a listed/photographed copy).
+                base = next((r for r in rows if _commit_rank(r) == 0), None)
+                if base is not None:
+                    self.db.execute(
+                        "UPDATE inventory SET qty = ? WHERE inventory_id = ?",
+                        ((base["qty"] or 0) + to_add, base["inventory_id"]),
+                    )
+                else:
+                    self.db.execute(
+                        "INSERT INTO inventory (sku_id, qty, status) VALUES (?, ?, 'unlisted')",
+                        (sku_id, to_add),
+                    )
+            self.skus.recalculate_qty(sku_id)
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        return target
+
     def mark_as_listed(self, inventory_id: int, ebay_listing_id: str) -> Optional[dict]:
         self.db.execute(
             "UPDATE inventory SET status = 'listed', ebay_listing_id = :ebay_listing_id, "
@@ -244,14 +332,9 @@ class InventoryHelper:
         item = self.get_by_id(inventory_id)
         if not item:
             return None
-
-        tags = [t.strip() for t in item["tags"].split(",")] if item.get("tags") else []
-        if tag in tags:
-            return item
-
-        tags.append(tag)
         self.db.execute(
-            "UPDATE inventory SET tags = ? WHERE inventory_id = ?", (",".join(tags), inventory_id)
+            "UPDATE inventory SET tags = ? WHERE inventory_id = ?",
+            (tags_helper.add_tag(item.get("tags"), tag), inventory_id),
         )
         return self.get_by_id(inventory_id)
 
@@ -259,13 +342,9 @@ class InventoryHelper:
         item = self.get_by_id(inventory_id)
         if not item:
             return None
-        if not item.get("tags"):
-            return item
-
-        tags = [t.strip() for t in item["tags"].split(",") if t.strip() != tag]
-        new_tags = ",".join(tags) if tags else None
         self.db.execute(
-            "UPDATE inventory SET tags = ? WHERE inventory_id = ?", (new_tags, inventory_id)
+            "UPDATE inventory SET tags = ? WHERE inventory_id = ?",
+            (tags_helper.remove_tag(item.get("tags"), tag), inventory_id),
         )
         return self.get_by_id(inventory_id)
 
