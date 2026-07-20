@@ -231,6 +231,32 @@ def test_browse_filter_by_tag(db):
     assert {i["cert_id"] for i in r["items"]} == {"C9"}
 
 
+def test_browse_filter_no_tags(db):
+    _seed_browse(db)
+    # Only C9 is tagged (to_crack); "No tags" returns the other two.
+    r = ReportingService(db).browse_graded({"tags": ["No tags"]})
+    assert {i["cert_id"] for i in r["items"]} == {"C10", "P8"}
+
+
+def test_browse_filter_no_tags_or_crack(db):
+    _seed_browse(db)
+    # Untagged OR crack = everything here.
+    r = ReportingService(db).browse_graded({"tags": ["No tags", "to_crack"]})
+    assert {i["cert_id"] for i in r["items"]} == {"C10", "C9", "P8"}
+
+
+def test_no_tags_option_only_when_tags_exist(db):
+    # No slabs tagged yet -> no "No tags" pseudo-option.
+    gs = GradedSkusHelper(db)
+    gi = GradedInventoryHelper(db)
+    s = gs.get_or_create({"grading_company": "PSA", "grade": 10, "grader_spec_id": "S1", "card_subject": "X"})
+    gi.create({"graded_sku_id": s["graded_sku_id"], "cert_id": "X10", "qty": 1})
+    assert ReportingService(db).graded_filter_options()["tags"] == []
+    # Once something is tagged, "No tags" leads the list.
+    gi.create({"graded_sku_id": s["graded_sku_id"], "cert_id": "X11", "qty": 1, "tags": "to_crack"})
+    assert ReportingService(db).graded_filter_options()["tags"] == ["No tags", "to_crack"]
+
+
 def test_browse_sort_by_name_asc(db):
     _seed_browse(db)
     names = [i["card_name"] for i in ReportingService(db).browse_graded({"sort": "card_name", "order": "asc"})["items"]]
@@ -248,5 +274,5 @@ def test_graded_filter_options_grades_and_tags(db):
     _seed_browse(db)
     opts = ReportingService(db).graded_filter_options()
     assert opts["grades"] == ["10", "9", "8"]  # distinct, descending
-    assert opts["tags"] == ["to_crack"]
+    assert opts["tags"] == ["No tags", "to_crack"]  # pseudo-option leads
     assert set(opts["grading_companies"]) == {"PSA", "CGC"}

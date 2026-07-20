@@ -30,6 +30,11 @@ from ..helpers.crud.tags import parse_tags
 # frontend uses the same literal.
 GRADED_TO_CRACK_TAG = "to_crack"
 
+# Pseudo tag-filter option for slabs carrying no tag at all. Not a real tag —
+# a reserved value in the graded `tags` filter (and its dropdown) that matches
+# untagged slabs, so it ORs alongside real tags like any other predicate.
+GRADED_NO_TAG_OPTION = "No tags"
+
 # Collection browse additionally surfaces the latest market snapshot per SKU.
 _MARKET_JOIN = """
     LEFT JOIN market_snapshots ms ON s.card_id = ms.card_id
@@ -240,11 +245,21 @@ def _build_graded_filters(f: dict[str, Any]) -> tuple[list[str], list[Any]]:
             conditions.append(f"g.grade IN ({','.join('?' * len(vals))})")
             params.extend(vals)
     # Multi-select tags: slabs carrying ANY selected tag (comma-separated column).
+    # The reserved "No tags" option matches untagged slabs, ORing in like any tag.
     if f.get("tags"):
-        tvals = [str(t).strip() for t in as_list(f["tags"])]
-        if tvals:
-            conditions.append("(" + " OR ".join("i.tags LIKE ?" for _ in tvals) + ")")
-            params.extend(f"%{t}%" for t in tvals)
+        clauses: list[str] = []
+        tag_params: list[Any] = []
+        for t in (str(t).strip() for t in as_list(f["tags"])):
+            if not t:
+                continue
+            if t == GRADED_NO_TAG_OPTION:
+                clauses.append("(i.tags IS NULL OR TRIM(i.tags) = '')")
+            else:
+                clauses.append("i.tags LIKE ?")
+                tag_params.append(f"%{t}%")
+        if clauses:
+            conditions.append("(" + " OR ".join(clauses) + ")")
+            params.extend(tag_params)
     if f.get("tags_contain"):
         add("i.tags LIKE ?", f"%{f['tags_contain']}%")
 
@@ -991,11 +1006,16 @@ class ReportingService:
         tagset: set[str] = set()
         for r in tag_rows:
             tagset.update(parse_tags(r["tags"]))
+        # Offer the "No tags" pseudo-option (first) only when some slab is tagged —
+        # otherwise every slab is untagged and the filter is moot.
+        tags = sorted(tagset)
+        if tags:
+            tags = [GRADED_NO_TAG_OPTION] + tags
         return {
             "grading_companies": self.graded_skus.get_all_companies(),
             "statuses": [r["status"] for r in statuses],
             "grades": [_format_grade(r["grade"]) for r in grade_rows],
-            "tags": sorted(tagset),
+            "tags": tags,
         }
 
 
