@@ -5,10 +5,10 @@ import {
   PieChart, Pie, Cell,
 } from "recharts";
 import {
-  fetchSummary, fetchPriceHistogram, fetchConfidenceDistribution,
+  fetchSummary, fetchCombinedSummary, fetchPriceHistogram, fetchConfidenceDistribution,
   fetchEraBreakdown, fetchConditionBreakdown, fetchRarityBreakdown,
   fetchTopCards, fetchSetBreakdown, fetchFilters,
-  type Summary, type HistogramBin, type ConfidenceBucket,
+  type Summary, type CombinedSummary, type HistogramBin, type ConfidenceBucket,
   type EraBreakdown, type ConditionBreakdown, type RarityBreakdown,
   type TopCard, type SetBreakdown, type Filters,
 } from "../api";
@@ -51,6 +51,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export default function AnalyticsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [combined, setCombined] = useState<CombinedSummary | null>(null);
   const [histogram, setHistogram] = useState<HistogramBin[]>([]);
   const [confidence, setConfidence] = useState<ConfidenceBucket[]>([]);
   const [eras, setEras] = useState<EraBreakdown[]>([]);
@@ -106,6 +107,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     fetchSummary().then(setSummary);
+    fetchCombinedSummary().then(setCombined);
     fetchFilters().then(setFilterOpts);
     fetchConfidenceDistribution().then(setConfidence);
     fetchEraBreakdown().then(setEras);
@@ -143,8 +145,34 @@ export default function AnalyticsPage() {
         )}
       </div>
 
-      {/* Summary cards (raw) */}
-      {kind !== "graded" && (
+      {/* Combined totals (All mode) — cross-kind dimensions only. */}
+      {kind === "all" && (
+        <div className="summary-grid">
+          <div className="stat-card">
+            <div className="stat-label">Total Cards</div>
+            <div className="stat-value">{combined ? combined.total_cards.toLocaleString() : "-"}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Total Value</div>
+            <div className="stat-value price">{fmtK(combined?.total_value)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Liquid Value</div>
+            <div className="stat-value price">{fmtK(combined?.total_liquid_value)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Avg Price</div>
+            <div className="stat-value price">{fmt(combined?.avg_price)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Max Price</div>
+            <div className="stat-value price">{fmt(combined?.max_price)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Summary cards (raw) — only in Raw mode; unchanged. */}
+      {kind === "raw" && (
       <div className="summary-grid">
         <div className="stat-card">
           <div className="stat-label">Total Cards</div>

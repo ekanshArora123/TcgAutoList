@@ -141,6 +141,20 @@ export function fetchSummary(): Promise<Summary> {
   return fetchJson(`${BASE}/analytics/summary`);
 }
 
+// Pooled raw + graded headline stats (analytics "All" view). Only the
+// cross-kind dimensions — no unique-cards / confidence / manual-review.
+export interface CombinedSummary {
+  total_cards: number;
+  total_value: number | null;
+  total_liquid_value: number | null;
+  avg_price: number | null;
+  max_price: number | null;
+}
+
+export function fetchCombinedSummary(): Promise<CombinedSummary> {
+  return fetchJson(`${BASE}/analytics/summary/combined`);
+}
+
 export function fetchPriceHistogram(
   breaks: number[],
   filters: Record<string, string | string[]> = {},

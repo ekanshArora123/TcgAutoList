@@ -442,6 +442,12 @@ def analytics_summary():
     return jsonify(reporting.analytics_summary())
 
 
+@app.route("/api/analytics/summary/combined")
+def analytics_summary_combined():
+    """Pooled raw + graded headline stats (the analytics 'All' view)."""
+    return jsonify(reporting.combined_analytics_summary())
+
+
 @app.route("/api/analytics/price-histogram")
 def price_histogram():
     """Price distribution histogram with custom breakpoints.

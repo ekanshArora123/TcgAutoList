@@ -302,6 +302,34 @@ def test_top_graded_slabs_desc(db):
     assert [t["cert_id"] for t in ReportingService(db).top_graded_slabs(10)] == ["C10", "C9"]
 
 
+def test_combined_analytics_summary_pools_both(db):
+    from services.card_server.helpers.crud.inventory import InventoryHelper
+    from services.card_server.helpers.crud.prices import PricesHelper
+    from services.card_server.helpers.crud.skus import SkusHelper
+    from services.card_server.helpers.pricing.algorithm import compute_liquid_value
+
+    CardsHelper(db).upsert({"id": "111", "card_name": "Charizard"})
+    sku = SkusHelper(db).get_or_create({"card_id": "111", "condition": "NM", "finish": "Holo"})
+    InventoryHelper(db).create({"sku_id": sku["sku_id"], "qty": 1})
+    PricesHelper(db).upsert({
+        "sku_id": sku["sku_id"], "calculation_date": "2999-01-01",
+        "estimated_price": 100.0, "estimated_liquid_value": 80.0,
+        "confidence_percent": 90, "manual_check_necessary": False, "manually_checked": True,
+        "algorithm_version": "v2", "estimated_low_price": 90.0, "estimated_high_price": 110.0,
+        "estimated_low_price_liquid": 70.0, "estimated_high_price_liquid": 90.0,
+    })
+    _seed_priced(db)  # graded: $500 + $200
+
+    s = ReportingService(db).combined_analytics_summary()
+    assert s["total_cards"] == 3  # 1 raw + 2 graded
+    assert s["total_value"] == 800  # 100 + 500 + 200
+    assert s["max_price"] == 500
+    assert round(s["avg_price"], 4) == round(800 / 3, 4)  # pooled avg, not naive add
+    assert s["total_liquid_value"] == 80 + compute_liquid_value(500) + compute_liquid_value(200)
+    # raw-only stats are intentionally absent
+    assert "avg_confidence" not in s and "unique_cards" not in s
+
+
 def test_combined_histogram_pools_graded(db):
     _seed_priced(db)  # graded only; no raw seeded
     rpt = ReportingService(db)

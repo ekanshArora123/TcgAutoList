@@ -697,6 +697,36 @@ class ReportingService:
             "avg_confidence": avg_confidence,
         }
 
+    def combined_analytics_summary(self) -> dict[str, Any]:
+        """Pooled raw + graded headline stats for the analytics 'All' view — only
+        the dimensions that make sense across both kinds (count, value, liquid,
+        avg/max price). Raw-only stats (unique cards, confidence, manual review)
+        are intentionally omitted. avg/max are computed over the pooled prices, not
+        naively added."""
+        stats_select = (
+            "SELECT COUNT(*) AS rows,"
+            " SUM(p.estimated_price * i.qty) AS value,"
+            " SUM(p.estimated_liquid_value * i.qty) AS liquid,"
+            " SUM(p.estimated_price) AS psum, COUNT(p.estimated_price) AS pcount,"
+            " MAX(p.estimated_price) AS pmax"
+        )
+        raw = self.db.execute(stats_select + INV_SKU_CARD_PRICE_FROM).fetchone()
+        graded = self.db.execute(stats_select + GRADED_INV_FROM).fetchone()
+
+        def _sum(a: Any, b: Any) -> Any:
+            return None if a is None and b is None else (a or 0) + (b or 0)
+
+        pcount = (raw["pcount"] or 0) + (graded["pcount"] or 0)
+        psum = (raw["psum"] or 0) + (graded["psum"] or 0)
+        maxes = [m for m in (raw["pmax"], graded["pmax"]) if m is not None]
+        return {
+            "total_cards": (raw["rows"] or 0) + (graded["rows"] or 0),
+            "total_value": _sum(raw["value"], graded["value"]),
+            "total_liquid_value": _sum(raw["liquid"], graded["liquid"]),
+            "avg_price": (psum / pcount) if pcount else None,
+            "max_price": max(maxes) if maxes else None,
+        }
+
     def price_histogram(
         self,
         breaks: list[float],
