@@ -34,6 +34,9 @@ export default function GradedCollectionPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [sort, setSort] = useState("grade");
   const [order, setOrder] = useState("desc");
+  const [perPage, setPerPage] = useState(48);
+  // Cards per row; "auto" keeps the responsive default (fit as many as fit).
+  const [columns, setColumns] = useState("auto");
 
   // Add-by-cert form
   const [certInput, setCertInput] = useState("");
@@ -45,7 +48,7 @@ export default function GradedCollectionPage() {
   const load = useCallback(async () => {
     setLoading(true);
     const params: Record<string, string | string[]> = {
-      page: String(page), per_page: "48", sort, order,
+      page: String(page), per_page: String(perPage), sort, order,
     };
     if (q) params.q = q;
     if (company) params.grading_company = company;
@@ -54,7 +57,7 @@ export default function GradedCollectionPage() {
     if (tags.length) params.tags = tags;
     setData(await fetchGradedCollection(params));
     setLoading(false);
-  }, [q, company, status, grades, tags, sort, order, page]);
+  }, [q, company, status, grades, tags, sort, order, page, perPage]);
 
   useEffect(() => { fetchGradedFilters().then(setFilters); }, []);
   useEffect(() => { load(); }, [load]);
@@ -154,6 +157,16 @@ export default function GradedCollectionPage() {
         >
           {order === "asc" ? "▲ Asc" : "▼ Desc"}
         </button>
+
+        <span style={{ color: "#30363d", margin: "0 4px" }}>|</span>
+        <select className="filter-select" value={String(perPage)} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}>
+          {[24, 48, 96, 144].map((n) => <option key={n} value={n}>{n} per page</option>)}
+        </select>
+        <select className="filter-select" value={columns} onChange={(e) => setColumns(e.target.value)}>
+          <option value="auto">Auto columns</option>
+          {[3, 4, 5, 6, 8].map((n) => <option key={n} value={String(n)}>{n} per row</option>)}
+        </select>
+
         <span style={{ flex: 1 }} />
         {data && <span style={{ color: "#8b949e", fontSize: 12 }}>{data.total} slab(s)</span>}
       </div>
@@ -167,7 +180,10 @@ export default function GradedCollectionPage() {
             : "No graded slabs yet. Add one by cert number above."}
         </div>
       ) : (
-        <div className="card-grid">
+        <div
+          className="card-grid"
+          style={columns !== "auto" ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
+        >
           {data.items.map((c) => <GradedTile key={c.graded_inventory_id} card={c} />)}
         </div>
       )}
