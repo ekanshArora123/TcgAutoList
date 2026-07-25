@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  fetchGradedSlabDetail, setGradedSlabTag, setGradedCardLink, cardImageUrl, gradedImageUrl,
-  type GradedSlabDetail,
+  fetchGradedSlabDetail, setGradedSlabTag, setGradedCardLink, setGradedSlabPrice,
+  cardImageUrl, gradedImageUrl, type GradedSlabDetail,
 } from "../api";
 import CardImage from "../components/CardImage";
+import { computeLiquidValue } from "../pricing";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 // Awkward/unavailable grades arrive as the -1 sentinel (see psa.py) → show ERR.
@@ -42,6 +43,23 @@ export default function GradedDetailPage() {
     if (detail) setTcgInput(detail.identity.card_id ?? "");
   }, [detail]);
 
+  // Price editor state, seeded from the focused grade's current manual price.
+  const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
+  const [priceBusy, setPriceBusy] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!detail) return;
+    const g = detail.grades.find((row) => row.grade === detail.slab.grade);
+    const s = (n: number | null | undefined) => (n != null ? String(n) : "");
+    setPriceInputs({
+      estimated_price: s(g?.estimated_price),
+      estimated_low_price: s(g?.estimated_low_price),
+      estimated_high_price: s(g?.estimated_high_price),
+    });
+    setPriceError(null);
+  }, [detail]);
+
   if (loading) return <div className="loading">Loading...</div>;
   if (notFound || !detail) return <div className="loading">Slab not found</div>;
 
@@ -69,6 +87,25 @@ export default function GradedDetailPage() {
       .catch((e) => setLinkError(e instanceof Error ? e.message : "Failed"))
       .finally(() => setLinkBusy(false));
   };
+
+  const savePrice = () => {
+    if (!certId || priceBusy) return;
+    setPriceBusy(true);
+    setPriceError(null);
+    setGradedSlabPrice(certId, priceInputs)
+      .then(setDetail)
+      .catch((e) => setPriceError(e instanceof Error ? e.message : "Failed"))
+      .finally(() => setPriceBusy(false));
+  };
+  const focusedGrade = grades.find((g) => g.grade === slab.grade);
+  const ownedOfGrade = focusedGrade?.qty ?? 0;
+  // Live liquid preview from the Value input via the shared macro (the server
+  // derives + stores the authoritative value on save).
+  const priceNum = Number(priceInputs.estimated_price);
+  const liquidPreview =
+    priceInputs.estimated_price && Number.isFinite(priceNum) && priceNum >= 0
+      ? computeLiquidValue(priceNum)
+      : null;
 
   const chips = [
     identity.finish !== "Regular" ? identity.finish : null,
@@ -167,6 +204,50 @@ export default function GradedDetailPage() {
               ))}
             </tbody>
           </table>
+
+          {/* Manual price editor for the focused grade class. Graded cards have no
+              price feed, so this is entered by hand; it's stored per grade, so it
+              applies to every owned cert of this card + grade + company. */}
+          <div className="graded-price-editor">
+            <div className="graded-price-head">
+              <span>Set price — {identity.grading_company} {gradeText(slab.grade)}</span>
+              <span className="graded-price-note">
+                applies to all {ownedOfGrade} owned of this grade
+              </span>
+            </div>
+            <div className="graded-price-fields">
+              {([
+                ["estimated_price", "Value"],
+                ["estimated_low_price", "Low"],
+                ["estimated_high_price", "High"],
+              ] as const).map(([key, label]) => (
+                <label key={key} className="graded-price-field">
+                  <span>{label}</span>
+                  <input
+                    type="number"
+                    step="any"
+                    min={0}
+                    placeholder="$"
+                    value={priceInputs[key] ?? ""}
+                    disabled={priceBusy}
+                    onChange={(e) => setPriceInputs((p) => ({ ...p, [key]: e.target.value }))}
+                    onKeyDown={(e) => e.key === "Enter" && savePrice()}
+                  />
+                </label>
+              ))}
+              {/* Liquid is derived from Value (shared macro), not entered. */}
+              <div className="graded-price-field">
+                <span title="Value after fees + shipping (auto)">Liquid</span>
+                <output className="graded-price-derived">{fmt(liquidPreview)}</output>
+              </div>
+            </div>
+            <div className="card-detail-qty-actions">
+              <button type="button" className="qty-save-btn" onClick={savePrice} disabled={priceBusy}>
+                {priceBusy ? "Saving…" : "Save price"}
+              </button>
+              {priceError && <span className="qty-save-error">{priceError}</span>}
+            </div>
+          </div>
 
           <div className="graded-graph-placeholder">
             Price history across grades will graph here.

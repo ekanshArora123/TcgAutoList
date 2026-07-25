@@ -141,6 +141,20 @@ export function fetchSummary(): Promise<Summary> {
   return fetchJson(`${BASE}/analytics/summary`);
 }
 
+// Pooled raw + graded headline stats (analytics "All" view). Only the
+// cross-kind dimensions — no unique-cards / confidence / manual-review.
+export interface CombinedSummary {
+  total_cards: number;
+  total_value: number | null;
+  total_liquid_value: number | null;
+  avg_price: number | null;
+  max_price: number | null;
+}
+
+export function fetchCombinedSummary(): Promise<CombinedSummary> {
+  return fetchJson(`${BASE}/analytics/summary/combined`);
+}
+
 export function fetchPriceHistogram(
   breaks: number[],
   filters: Record<string, string | string[]> = {},
@@ -428,6 +442,8 @@ export interface GradedResponse {
 export interface GradedFilters {
   grading_companies: string[];
   statuses: string[];
+  grades: string[];
+  tags: string[];
 }
 
 export interface GradedCardDetail {
@@ -452,9 +468,15 @@ export interface GradedCardDetail {
   raw_estimated_price: number | null;
 }
 
-export function fetchGradedCollection(params: Record<string, string>): Promise<GradedResponse> {
-  const qs = new URLSearchParams(params).toString();
-  return fetchJson(`${BASE}/graded?${qs}`);
+export function fetchGradedCollection(
+  params: Record<string, string | string[]>,
+): Promise<GradedResponse> {
+  const qs = new URLSearchParams();
+  for (const [key, val] of Object.entries(params)) {
+    if (Array.isArray(val)) val.forEach((v) => v && qs.append(key, v));
+    else if (val) qs.set(key, val);
+  }
+  return fetchJson(`${BASE}/graded?${qs.toString()}`);
 }
 
 export function fetchGradedFilters(): Promise<GradedFilters> {
@@ -474,6 +496,72 @@ export function fetchGradedCardDetail(
   return fetchJson(`${BASE}/graded/${cardId}?${qs}`);
 }
 
+// ── Graded analytics ──
+
+export interface GradedAnalyticsSummary {
+  total_slabs: number;
+  total_value: number | null;
+  total_liquid_value: number | null;
+  avg_price: number | null;
+  avg_grade: number | null;
+  to_crack_count: number;
+}
+
+export interface GradedBreakdownRow {
+  label: string; // grade (ERR-aware string) or company name
+  quantity: number;
+  total_value: number | null;
+  avg_price: number | null;
+}
+
+export interface GradedPricePoint {
+  cert_id: string | null;
+  grade: number;
+  grading_company: string;
+  population: number | null; // future bubble-size axis
+  price: number;
+  card_name: string;
+}
+
+export interface TopGradedSlab {
+  graded_inventory_id: number;
+  cert_id: string | null;
+  grade: number;
+  grade_label: string | null;
+  grading_company: string;
+  card_year: string | null;
+  estimated_price: number | null;
+  estimated_liquid_value: number | null;
+  card_name: string;
+  set_name: string | null;
+}
+
+// crack: "" (all) | "yes" (to crack) | "no" (not to crack) — the shared graded filter.
+function gradedAnalyticsQs(crack: string, extra?: Record<string, string>): string {
+  const qs = new URLSearchParams(extra);
+  if (crack) qs.set("crack", crack);
+  return qs.toString();
+}
+
+export function fetchGradedAnalyticsSummary(crack = ""): Promise<GradedAnalyticsSummary> {
+  return fetchJson(`${BASE}/graded/analytics/summary?${gradedAnalyticsQs(crack)}`);
+}
+
+export function fetchGradedBreakdown(
+  dimension: "grade" | "company",
+  crack = "",
+): Promise<GradedBreakdownRow[]> {
+  return fetchJson(`${BASE}/graded/analytics/breakdown/${dimension}?${gradedAnalyticsQs(crack)}`);
+}
+
+export function fetchGradedPricePoints(crack = ""): Promise<GradedPricePoint[]> {
+  return fetchJson(`${BASE}/graded/analytics/price-points?${gradedAnalyticsQs(crack)}`);
+}
+
+export function fetchTopGradedSlabs(n = 25, crack = ""): Promise<TopGradedSlab[]> {
+  return fetchJson(`${BASE}/graded/analytics/top-slabs?${gradedAnalyticsQs(crack, { n: String(n) })}`);
+}
+
 // ── Graded card detail page (entered by cert number) ──
 
 // One grade class (a graded_sku): a grade of this card, with owned qty +
@@ -486,6 +574,9 @@ export interface GradedGradeRow {
   population_higher: number | null;
   qty: number;
   estimated_price: number | null;
+  estimated_low_price: number | null;
+  estimated_high_price: number | null;
+  estimated_liquid_value: number | null;
   confidence_percent: number | null;
 }
 
@@ -541,6 +632,38 @@ export async function setGradedCardLink(certId: string, cardId: string): Promise
   });
   if (!res.ok) {
     let msg = `Link failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) msg = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+// Set the manual price for the graded card a cert belongs to. Applies to every
+// cert of the same card+grade+company (price is stored per grade class). Any
+// omitted field is cleared. Returns the refreshed detail.
+// Liquid value is derived server-side (shared macro), not submitted.
+export interface GradedPriceInput {
+  estimated_price?: string;
+  estimated_low_price?: string;
+  estimated_high_price?: string;
+}
+
+export async function setGradedSlabPrice(
+  certId: string,
+  price: GradedPriceInput,
+): Promise<GradedSlabDetail> {
+  const res = await fetch(`${BASE}/graded/slab/${encodeURIComponent(certId)}/price`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(price),
+  });
+  if (!res.ok) {
+    let msg = `Save failed (${res.status})`;
     try {
       const body = await res.json();
       if (body?.error) msg = body.error;

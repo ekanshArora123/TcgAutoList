@@ -5,13 +5,16 @@ import {
   PieChart, Pie, Cell,
 } from "recharts";
 import {
-  fetchSummary, fetchPriceHistogram, fetchConfidenceDistribution,
+  fetchSummary, fetchCombinedSummary, fetchPriceHistogram, fetchConfidenceDistribution,
   fetchEraBreakdown, fetchConditionBreakdown, fetchRarityBreakdown,
   fetchTopCards, fetchSetBreakdown, fetchFilters,
-  type Summary, type HistogramBin, type ConfidenceBucket,
+  type Summary, type CombinedSummary, type HistogramBin, type ConfidenceBucket,
   type EraBreakdown, type ConditionBreakdown, type RarityBreakdown,
   type TopCard, type SetBreakdown, type Filters,
 } from "../api";
+import GradedAnalytics from "../components/GradedAnalytics";
+
+type Kind = "raw" | "graded" | "all";
 
 const COLORS = [
   "#1f6feb", "#3fb950", "#d29922", "#f85149", "#a371f7",
@@ -48,6 +51,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export default function AnalyticsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [combined, setCombined] = useState<CombinedSummary | null>(null);
   const [histogram, setHistogram] = useState<HistogramBin[]>([]);
   const [confidence, setConfidence] = useState<ConfidenceBucket[]>([]);
   const [eras, setEras] = useState<EraBreakdown[]>([]);
@@ -75,16 +79,25 @@ export default function AnalyticsPage() {
   const [breaksInput, setBreaksInput] = useState("0, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50, 100");
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
+  // Kind = which prices/breakdowns to show; crack = graded-only slab filter.
+  const [kind, setKind] = useState<Kind>("raw");
+  const [crack, setCrack] = useState(""); // "" | "yes" | "no"
+
   const parseBreaks = (s: string): number[] => {
     const nums = s.split(",").map((b) => parseFloat(b.trim())).filter((n) => !isNaN(n));
     return [...new Set(nums)].sort((a, b) => a - b);
   };
 
   const histogramFilters = (): Record<string, string | string[]> => {
-    const f: Record<string, string | string[]> = {};
-    if (groupDim === "era" && selEras.length) f.eras = selEras;
-    if (groupDim === "set" && selSets.length) f.sets = selSets;
-    if (selConditions.length) f.conditions = selConditions;
+    const f: Record<string, string | string[]> = { kind };
+    // Raw set/era/condition filters only apply to the raw prices.
+    if (kind !== "graded") {
+      if (groupDim === "era" && selEras.length) f.eras = selEras;
+      if (groupDim === "set" && selSets.length) f.sets = selSets;
+      if (selConditions.length) f.conditions = selConditions;
+    }
+    // Crack only applies to the graded prices.
+    if (kind !== "raw" && crack) f.crack = crack;
     return f;
   };
 
@@ -94,6 +107,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     fetchSummary().then(setSummary);
+    fetchCombinedSummary().then(setCombined);
     fetchFilters().then(setFilterOpts);
     fetchConfidenceDistribution().then(setConfidence);
     fetchEraBreakdown().then(setEras);
@@ -108,13 +122,57 @@ export default function AnalyticsPage() {
   useEffect(() => {
     loadHistogram(parseBreaks(breaksInput));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupDim, selEras, selSets, selConditions]);
+  }, [groupDim, selEras, selSets, selConditions, kind, crack]);
 
   if (!summary) return <div className="loading">Loading analytics...</div>;
 
   return (
     <div>
-      {/* Summary cards */}
+      {/* Kind + crack selectors */}
+      <div className="analytics-mode-bar">
+        <span style={{ fontSize: 12, color: "#8b949e" }}>Show:</span>
+        {(["raw", "graded", "all"] as const).map((k) => (
+          <button key={k} className={`seg-btn ${kind === k ? "active" : ""}`} style={{ textTransform: "capitalize" }} onClick={() => setKind(k)}>{k}</button>
+        ))}
+        {kind !== "raw" && (
+          <>
+            <span style={{ color: "#30363d", margin: "0 4px" }}>|</span>
+            <span style={{ fontSize: 12, color: "#8b949e" }}>Crack:</span>
+            {([["", "All"], ["yes", "To crack"], ["no", "Not to crack"]] as const).map(([v, lbl]) => (
+              <button key={v} className={`seg-btn ${crack === v ? "active" : ""}`} onClick={() => setCrack(v)}>{lbl}</button>
+            ))}
+          </>
+        )}
+      </div>
+
+      {/* Combined totals (All mode) — cross-kind dimensions only. */}
+      {kind === "all" && (
+        <div className="summary-grid">
+          <div className="stat-card">
+            <div className="stat-label">Total Cards</div>
+            <div className="stat-value">{combined ? combined.total_cards.toLocaleString() : "-"}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Total Value</div>
+            <div className="stat-value price">{fmtK(combined?.total_value)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Liquid Value</div>
+            <div className="stat-value price">{fmtK(combined?.total_liquid_value)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Avg Price</div>
+            <div className="stat-value price">{fmt(combined?.avg_price)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Max Price</div>
+            <div className="stat-value price">{fmt(combined?.max_price)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Summary cards (raw) — only in Raw mode; unchanged. */}
+      {kind === "raw" && (
       <div className="summary-grid">
         <div className="stat-card">
           <div className="stat-label">Total Cards</div>
@@ -149,11 +207,12 @@ export default function AnalyticsPage() {
           <div className="stat-value price">{fmt(summary.max_price)}</div>
         </div>
       </div>
+      )}
 
       <div className="charts-grid">
-        {/* Price histogram */}
+        {/* Price histogram — the one chart that pools raw + graded. */}
         <div className="chart-card full-width">
-          <h3>Price Distribution</h3>
+          <h3>Price Distribution{kind === "all" ? " (Raw + Graded)" : kind === "graded" ? " (Graded)" : ""}</h3>
           <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
           <div className="chart-controls">
@@ -213,7 +272,8 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
             </div>
 
-            {/* Filter panel — pinned to the right of the chart. */}
+            {/* Filter panel — raw only (set/era/condition don't apply to graded). */}
+            {kind !== "graded" && (
             <div style={{ width: 230, flexShrink: 0, borderLeft: "1px solid #30363d", paddingLeft: 16, display: "flex", flexDirection: "column", gap: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#e1e4e8" }}>Filters</div>
 
@@ -256,9 +316,12 @@ export default function AnalyticsPage() {
                 >Clear all</button>
               )}
             </div>
+            )}
           </div>
         </div>
 
+        {/* Raw breakdowns — hidden in Graded mode (these dimensions don't apply). */}
+        {kind !== "graded" && (<>
         {/* Confidence distribution */}
         <div className="chart-card">
           <h3>Confidence Distribution</h3>
@@ -401,7 +464,10 @@ export default function AnalyticsPage() {
             </table>
           </div>
         </div>
+        </>)}
       </div>
+
+      {kind !== "raw" && <GradedAnalytics crack={crack} />}
     </div>
   );
 }

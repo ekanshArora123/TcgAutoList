@@ -209,5 +209,16 @@ re-fetch; re-adding a cert re-downloads.
    (`parse_grade` in `formatters.py`, the `-1` sentinel in `psa.py` / `add_graded_by_cert`,
    and the `ERR` rendering in `GradedCollectionPage`.)
 
+5. **Graded price-history graph.** The data plane is **already recording it** —
+   manual prices are stored in `graded_prices` keyed by `(graded_sku_id,
+   calculation_date)`, so each day's saved price is a dated point (same-day
+   re-edits overwrite that day; new days append), and `GradedPricesHelper.
+   get_history()` already returns the series. What's missing is **display**: a
+   read-only price-over-time chart on the slab detail page, filling the reserved
+   "Price history across grades will graph here" placeholder — one line per grade,
+   modeled on the raw per-card `SalesChart`. Moderate effort: a reporting method +
+   endpoint + chart; no schema change (daily granularity; sub-day would need a
+   timestamp key). Deferred by owner.
+
 Also deferred (owner will handle): the raw-card price estimate shown next to a
 graded card.

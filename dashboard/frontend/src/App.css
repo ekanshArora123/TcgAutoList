@@ -235,6 +235,39 @@ body {
 }
 
 /* Analytics */
+.analytics-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.analytics-section-title {
+  font-size: 16px;
+  color: #f0f6fc;
+  margin: 8px 0 12px;
+  padding-top: 8px;
+  border-top: 1px solid #21262d;
+}
+.chart-tooltip {
+  background: #161b22;
+  border: 1px solid #30363d;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.chart-tooltip-title { color: #e1e4e8; font-weight: 600; margin-bottom: 4px; }
+.seg-btn {
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.seg-btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1063,6 +1096,54 @@ body {
   align-items: center;
 }
 .graded-link-row .search-input { flex: 1; min-width: 0; }
+
+/* Manual price editor on the graded detail page. */
+.graded-price-editor {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #21262d;
+}
+.graded-price-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e1e4e8;
+  margin-bottom: 8px;
+}
+.graded-price-note { font-size: 11px; font-weight: 400; color: #6e7681; }
+.graded-price-fields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.graded-price-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: #8b949e;
+}
+.graded-price-field input {
+  width: 74px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #e1e4e8;
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: 5px;
+}
+.graded-price-field input:focus { outline: none; border-color: #58a6ff; }
+.graded-price-derived {
+  width: 74px;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: #3fb950;
+  border: 1px dashed #30363d;
+  border-radius: 5px;
+}
 
 .graded-graph-placeholder {
   margin-top: 12px;

@@ -30,6 +30,11 @@ from ..helpers.crud.tags import parse_tags
 # frontend uses the same literal.
 GRADED_TO_CRACK_TAG = "to_crack"
 
+# Pseudo tag-filter option for slabs carrying no tag at all. Not a real tag —
+# a reserved value in the graded `tags` filter (and its dropdown) that matches
+# untagged slabs, so it ORs alongside real tags like any other predicate.
+GRADED_NO_TAG_OPTION = "No tags"
+
 # Collection browse additionally surfaces the latest market snapshot per SKU.
 _MARKET_JOIN = """
     LEFT JOIN market_snapshots ms ON s.card_id = ms.card_id
@@ -165,6 +170,155 @@ def _resolve_sort(sort: Optional[str], order: Optional[str]) -> tuple[str, str]:
     order_dir = (order or "").strip().upper()
     order_dir = order_dir if order_dir in ("ASC", "DESC") else "ASC"
     return sort_col, order_dir
+
+
+# ── Graded browse: its own filter/sort vocabulary (parallel to the raw ones
+# above). Columns use the GRADED_INV_FROM aliases: i=graded_inventory,
+# g=graded_skus, c=cards (LEFT JOIN, optional link), p=graded_prices. Adding a
+# new graded filter/sort is a one-line change here. ──
+
+# Graded analytics breakdown dimensions -> grouped column (whitelist).
+_GRADED_BREAKDOWN_DIMS = {"grade": "g.grade", "company": "g.grading_company"}
+
+# Sort keys the graded API exposes -> qualified columns (whitelist).
+_GRADED_SORT_COLUMNS = {
+    "grade": "g.grade",
+    "card_name": "COALESCE(g.card_subject, c.card_name)",
+    "set_name": "COALESCE(g.card_set, c.set_name)",
+    "grading_company": "g.grading_company",
+    "estimated_price": "p.estimated_price",
+    "status": "i.status",
+    "card_year": "g.card_year",
+}
+
+
+def _format_grade(g: Any) -> str:
+    """Grade -> filter-option/display string: -1 sentinel -> 'ERR', whole numbers
+    without a trailing .0 (10.0 -> '10'), halves kept (9.5 -> '9.5')."""
+    if g is None:
+        return ""
+    g = float(g)
+    if g < 0:
+        return "ERR"
+    return str(int(g)) if g.is_integer() else str(g)
+
+
+def _parse_grade_filter(v: Any) -> Optional[float]:
+    """Inverse of _format_grade for an incoming grade filter value."""
+    s = str(v).strip()
+    if not s:
+        return None
+    if s.upper() == "ERR":
+        return -1.0
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _build_graded_filters(f: dict[str, Any]) -> tuple[list[str], list[Any]]:
+    """Translate a graded filters dict into parametrized WHERE conditions. Every
+    key is optional. Shared by the graded browse (and future graded reads)."""
+    conditions: list[str] = []
+    params: list[Any] = []
+
+    def add(cond: str, value: Any) -> None:
+        conditions.append(cond)
+        params.append(value)
+
+    def as_list(raw: Any) -> list[Any]:
+        return [v for v in (raw if isinstance(raw, (list, tuple)) else [raw]) if v not in (None, "")]
+
+    if f.get("q"):
+        add("COALESCE(g.card_subject, c.card_name) LIKE ?", f"%{f['q']}%")
+    if f.get("card_id"):
+        add("g.card_id = ?", f["card_id"])
+    if f.get("grading_company"):
+        add("g.grading_company = ?", f["grading_company"])
+    if f.get("status"):
+        add("i.status = ?", f["status"])
+    if f.get("grade") not in (None, ""):
+        gv = _parse_grade_filter(f["grade"])
+        if gv is not None:
+            add("g.grade = ?", gv)
+    # Multi-select grades (IN).
+    if f.get("grades"):
+        vals = [gv for gv in (_parse_grade_filter(v) for v in as_list(f["grades"])) if gv is not None]
+        if vals:
+            conditions.append(f"g.grade IN ({','.join('?' * len(vals))})")
+            params.extend(vals)
+    # Multi-select tags: slabs carrying ANY selected tag (comma-separated column).
+    # The reserved "No tags" option matches untagged slabs, ORing in like any tag.
+    if f.get("tags"):
+        clauses: list[str] = []
+        tag_params: list[Any] = []
+        for t in (str(t).strip() for t in as_list(f["tags"])):
+            if not t:
+                continue
+            if t == GRADED_NO_TAG_OPTION:
+                clauses.append("(i.tags IS NULL OR TRIM(i.tags) = '')")
+            else:
+                clauses.append("i.tags LIKE ?")
+                tag_params.append(f"%{t}%")
+        if clauses:
+            conditions.append("(" + " OR ".join(clauses) + ")")
+            params.extend(tag_params)
+    if f.get("tags_contain"):
+        add("i.tags LIKE ?", f"%{f['tags_contain']}%")
+    # Crack status (a dedicated 3-state on top of the to_crack tag): "yes" = to
+    # crack, "no" = not to crack, anything else = no constraint.
+    crack = f.get("crack")
+    if crack == "yes":
+        add("i.tags LIKE ?", "%to_crack%")
+    elif crack == "no":
+        conditions.append("(i.tags IS NULL OR i.tags NOT LIKE ?)")
+        params.append("%to_crack%")
+
+    return conditions, params
+
+
+def _resolve_graded_sort(sort: Optional[str], order: Optional[str]) -> tuple[str, str]:
+    sort_col = _GRADED_SORT_COLUMNS.get((sort or "").strip(), "g.grade")
+    order_dir = (order or "").strip().upper()
+    order_dir = order_dir if order_dir in ("ASC", "DESC") else "DESC"
+    return sort_col, order_dir
+
+
+def _bin_prices(prices: list[float], breaks: list[float]) -> list[dict[str, Any]]:
+    """Bucket a pooled price list into [breaks[i], breaks[i+1]) bins + a ">" cap
+    bucket. Dimension-agnostic (raw, graded, or both), so the histogram is the one
+    place raw and graded prices combine."""
+    bin_counts = [0] * (len(breaks) - 1)
+    bin_values = [0.0] * (len(breaks) - 1)
+    over_count = 0
+    over_value = 0.0
+    max_break = breaks[-1]
+
+    for price in prices:
+        if price >= max_break:
+            over_count += 1
+            over_value += price
+            continue
+        for i in range(len(breaks) - 1):
+            if breaks[i] <= price < breaks[i + 1]:
+                bin_counts[i] += 1
+                bin_values[i] += price
+                break
+
+    def fmt(v: float) -> str:
+        return f"${v:g}"
+
+    result = [
+        {
+            "range": f"{fmt(breaks[i])}-{fmt(breaks[i + 1])}",
+            "count": bin_counts[i],
+            "total_value": round(bin_values[i], 2),
+        }
+        for i in range(len(breaks) - 1)
+    ]
+    if over_count:
+        result.append({"range": f">{fmt(max_break)}", "count": over_count, "total_value": round(over_value, 2)})
+    return result
 
 
 def _paginate(page: Any, per_page: Any, default_per_page: int) -> tuple[int, int, int]:
@@ -543,69 +697,84 @@ class ReportingService:
             "avg_confidence": avg_confidence,
         }
 
+    def combined_analytics_summary(self) -> dict[str, Any]:
+        """Pooled raw + graded headline stats for the analytics 'All' view — only
+        the dimensions that make sense across both kinds (count, value, liquid,
+        avg/max price). Raw-only stats (unique cards, confidence, manual review)
+        are intentionally omitted. avg/max are computed over the pooled prices, not
+        naively added."""
+        stats_select = (
+            "SELECT COUNT(*) AS rows,"
+            " SUM(p.estimated_price * i.qty) AS value,"
+            " SUM(p.estimated_liquid_value * i.qty) AS liquid,"
+            " SUM(p.estimated_price) AS psum, COUNT(p.estimated_price) AS pcount,"
+            " MAX(p.estimated_price) AS pmax"
+        )
+        raw = self.db.execute(stats_select + INV_SKU_CARD_PRICE_FROM).fetchone()
+        graded = self.db.execute(stats_select + GRADED_INV_FROM).fetchone()
+
+        def _sum(a: Any, b: Any) -> Any:
+            return None if a is None and b is None else (a or 0) + (b or 0)
+
+        pcount = (raw["pcount"] or 0) + (graded["pcount"] or 0)
+        psum = (raw["psum"] or 0) + (graded["psum"] or 0)
+        maxes = [m for m in (raw["pmax"], graded["pmax"]) if m is not None]
+        return {
+            "total_cards": (raw["rows"] or 0) + (graded["rows"] or 0),
+            "total_value": _sum(raw["value"], graded["value"]),
+            "total_liquid_value": _sum(raw["liquid"], graded["liquid"]),
+            "avg_price": (psum / pcount) if pcount else None,
+            "max_price": max(maxes) if maxes else None,
+        }
+
     def price_histogram(
-        self, breaks: list[float], filters: Optional[dict[str, Any]] = None
+        self,
+        breaks: list[float],
+        filters: Optional[dict[str, Any]] = None,
+        kind: str = "raw",
+        graded_filters: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """Bucket current-inventory prices into [breaks[i], breaks[i+1]) bins.
 
-        The last break is the upper cap; prices >= it go into a single ">"
-        overflow bucket. Raises ValueError if fewer than 2 breaks.
+        `kind` selects which prices are pooled: "raw" (default), "graded", or
+        "all" (both together — the combined collection distribution). The last
+        break is the upper cap; prices >= it go into a single ">" overflow bucket.
+        Raises ValueError if fewer than 2 breaks.
 
-        `filters` accepts the same collection-filter vocabulary as the browse
-        views (set_name/era/condition/etc.); absent keys constrain nothing.
+        `filters` applies the raw browse vocabulary (set_name/era/condition/…) to
+        raw prices; `graded_filters` applies the graded vocabulary (crack/…) to
+        graded prices. Set/condition filters simply don't exist for graded, so the
+        two never cross.
         """
         breaks = sorted(set(breaks))
         if len(breaks) < 2:
             raise ValueError("Need at least 2 breakpoints")
 
-        conditions, params = _build_filters(filters or {})
-        conditions.insert(0, "p.estimated_price IS NOT NULL")
-        where = "WHERE " + " AND ".join(conditions)
+        prices: list[float] = []
+        if kind in ("raw", "all"):
+            conditions, params = _build_filters(filters or {})
+            conditions.insert(0, "p.estimated_price IS NOT NULL")
+            prices += [
+                r["estimated_price"]
+                for r in self.db.execute(
+                    "SELECT p.estimated_price" + INV_SKU_CARD_PRICE_FROM
+                    + " WHERE " + " AND ".join(conditions),
+                    params,
+                ).fetchall()
+            ]
+        if kind in ("graded", "all"):
+            gconds, gparams = _build_graded_filters(graded_filters or {})
+            gconds.insert(0, "p.estimated_price IS NOT NULL")
+            prices += [
+                r["estimated_price"]
+                for r in self.db.execute(
+                    "SELECT p.estimated_price" + GRADED_INV_FROM
+                    + " WHERE " + " AND ".join(gconds),
+                    gparams,
+                ).fetchall()
+            ]
 
-        rows = self.db.execute(
-            "SELECT p.estimated_price" + INV_SKU_CARD_PRICE_FROM + where,
-            params,
-        ).fetchall()
-
-        bin_counts = [0] * (len(breaks) - 1)
-        bin_values = [0.0] * (len(breaks) - 1)
-        over_max_count = 0
-        over_max_value = 0.0
-        max_break = breaks[-1]
-
-        for r in rows:
-            price = r["estimated_price"]
-            if price >= max_break:
-                over_max_count += 1
-                over_max_value += price
-                continue
-            for i in range(len(breaks) - 1):
-                if breaks[i] <= price < breaks[i + 1]:
-                    bin_counts[i] += 1
-                    bin_values[i] += price
-                    break
-
-        def fmt(v: float) -> str:
-            return f"${v:g}"
-
-        result = []
-        for i in range(len(breaks) - 1):
-            result.append(
-                {
-                    "range": f"{fmt(breaks[i])}-{fmt(breaks[i + 1])}",
-                    "count": bin_counts[i],
-                    "total_value": round(bin_values[i], 2),
-                }
-            )
-        if over_max_count:
-            result.append(
-                {
-                    "range": f">{fmt(max_break)}",
-                    "count": over_max_count,
-                    "total_value": round(over_max_value, 2),
-                }
-            )
-        return result
+        return _bin_prices(prices, breaks)
 
     def confidence_distribution(self) -> list[dict[str, Any]]:
         """Confidence-percent distribution in 10-point buckets."""
@@ -703,21 +872,14 @@ class ReportingService:
     def browse_graded(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Paginated list of owned graded slabs (the graded collection view).
 
-        Reuses the shared pagination helpers (_paginate/_page_result). Filters:
-        card_id, grading_company, status.
+        Reuses the shared pagination helpers (_paginate/_page_result) and the
+        graded filter/sort vocabulary (_build_graded_filters/_resolve_graded_sort).
+        Filters: q (name search), card_id, grading_company, status, grade,
+        grades (multi), tags (multi). Sort: any _GRADED_SORT_COLUMNS key.
         """
-        conditions: list[str] = []
-        params: list[Any] = []
-        if filters.get("card_id"):
-            conditions.append("g.card_id = ?")
-            params.append(filters["card_id"])
-        if filters.get("grading_company"):
-            conditions.append("g.grading_company = ?")
-            params.append(filters["grading_company"])
-        if filters.get("status"):
-            conditions.append("i.status = ?")
-            params.append(filters["status"])
+        conditions, params = _build_graded_filters(filters)
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sort_col, order_dir = _resolve_graded_sort(filters.get("sort"), filters.get("order"))
         page, per_page, offset = _paginate(filters.get("page"), filters.get("per_page"), 48)
 
         total = self.db.execute(
@@ -737,7 +899,7 @@ class ReportingService:
                    c.rarity, c.era,
                    p.estimated_price, p.confidence_percent, p.calculation_date
             {GRADED_INV_FROM} {where}
-            ORDER BY g.grade DESC, i.created_at ASC LIMIT ? OFFSET ?
+            ORDER BY {sort_col} {order_dir}, i.created_at ASC LIMIT ? OFFSET ?
             """,
             params + [per_page, offset],
         ).fetchall()
@@ -834,6 +996,9 @@ class ReportingService:
                    s.population, s.population_higher,
                    COALESCE(SUM(i.qty), 0) AS qty,
                    MAX(p.estimated_price) AS estimated_price,
+                   MAX(p.estimated_low_price) AS estimated_low_price,
+                   MAX(p.estimated_high_price) AS estimated_high_price,
+                   MAX(p.estimated_liquid_value) AS estimated_liquid_value,
                    MAX(p.confidence_percent) AS confidence_percent
             FROM graded_skus s
             LEFT JOIN graded_inventory i ON i.graded_sku_id = s.graded_sku_id
@@ -897,10 +1062,118 @@ class ReportingService:
         statuses = self.db.execute(
             "SELECT DISTINCT status FROM graded_inventory WHERE status IS NOT NULL ORDER BY status"
         ).fetchall()
+        grade_rows = self.db.execute(
+            "SELECT DISTINCT grade FROM graded_skus WHERE grade IS NOT NULL ORDER BY grade DESC"
+        ).fetchall()
+        # Distinct individual tags across owned slabs (the comma-separated column).
+        tag_rows = self.db.execute(
+            "SELECT tags FROM graded_inventory WHERE tags IS NOT NULL AND TRIM(tags) != ''"
+        ).fetchall()
+        tagset: set[str] = set()
+        for r in tag_rows:
+            tagset.update(parse_tags(r["tags"]))
+        # Offer the "No tags" pseudo-option (first) only when some slab is tagged —
+        # otherwise every slab is untagged and the filter is moot.
+        tags = sorted(tagset)
+        if tags:
+            tags = [GRADED_NO_TAG_OPTION] + tags
         return {
             "grading_companies": self.graded_skus.get_all_companies(),
             "statuses": [r["status"] for r in statuses],
+            "grades": [_format_grade(r["grade"]) for r in grade_rows],
+            "tags": tags,
         }
+
+    # ─── Graded analytics (parallel to the raw analytics above) ──
+    # All take a graded filters dict (the same vocabulary as the graded browse —
+    # so the crack filter, and future ones, flow through unchanged).
+
+    def _graded_where(self, filters: Optional[dict[str, Any]], price_only: bool = False) -> tuple[str, list[Any]]:
+        conds, params = _build_graded_filters(filters or {})
+        if price_only:
+            conds.insert(0, "p.estimated_price IS NOT NULL")
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        return where, params
+
+    def graded_analytics_summary(self, filters: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Headline graded stats (slab count, value, avg grade/price, to-crack)."""
+        where, params = self._graded_where(filters)
+        row = self.db.execute(
+            f"""
+            SELECT COALESCE(SUM(i.qty), 0) AS total_slabs,
+                   SUM(p.estimated_price * i.qty) AS total_value,
+                   SUM(p.estimated_liquid_value * i.qty) AS total_liquid_value,
+                   AVG(p.estimated_price) AS avg_price,
+                   AVG(CASE WHEN g.grade > 0 THEN g.grade END) AS avg_grade,
+                   SUM(CASE WHEN i.tags LIKE '%to_crack%' THEN i.qty ELSE 0 END) AS to_crack_count
+            {GRADED_INV_FROM} {where}
+            """,
+            params,
+        ).fetchone()
+        return dict(row)
+
+    def graded_breakdown(self, dimension: str, filters: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+        """Owned-slab rollup by a graded dimension ("grade" or "company"): quantity,
+        total value, avg price per group. `label` is the display key (grade -> ERR-
+        aware string; company -> name)."""
+        col = _GRADED_BREAKDOWN_DIMS.get(dimension)
+        if not col:
+            raise ValueError(f"Unknown graded breakdown dimension: {dimension}")
+        where, params = self._graded_where(filters)
+        order = "g.grade DESC" if dimension == "grade" else "total_value DESC"
+        rows = self.db.execute(
+            f"""
+            SELECT {col} AS grp,
+                   SUM(i.qty) AS quantity,
+                   SUM(p.estimated_price * i.qty) AS total_value,
+                   AVG(p.estimated_price) AS avg_price
+            {GRADED_INV_FROM} {where}
+            GROUP BY {col} ORDER BY {order}
+            """,
+            params,
+        ).fetchall()
+        return [
+            {
+                "label": _format_grade(r["grp"]) if dimension == "grade" else r["grp"],
+                "quantity": r["quantity"] or 0,
+                "total_value": r["total_value"],
+                "avg_price": r["avg_price"],
+            }
+            for r in rows
+        ]
+
+    def graded_price_points(self, filters: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+        """One point per priced slab for the grade x price scatter (population is
+        carried for the future bubble-size axis; None for now)."""
+        where, params = self._graded_where(filters, price_only=True)
+        rows = self.db.execute(
+            f"""
+            SELECT i.cert_id, g.grade, g.grading_company, g.population,
+                   p.estimated_price AS price,
+                   COALESCE(g.card_subject, c.card_name) AS card_name
+            {GRADED_INV_FROM} {where}
+            ORDER BY g.grade DESC
+            """,
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def top_graded_slabs(self, n: int = 25, filters: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+        """Most valuable owned slabs (priced), highest first."""
+        n = max(1, min(int(n), 200))
+        where, params = self._graded_where(filters, price_only=True)
+        rows = self.db.execute(
+            f"""
+            SELECT i.graded_inventory_id, i.cert_id, g.grade, g.grade_label, g.grading_company,
+                   g.card_year, p.estimated_price, p.estimated_liquid_value,
+                   COALESCE(g.card_subject, c.card_name) AS card_name,
+                   COALESCE(g.card_set, c.set_name) AS set_name
+            {GRADED_INV_FROM} {where}
+            ORDER BY p.estimated_price DESC LIMIT ?
+            """,
+            params + [n],
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def _page_result(items: list[dict], total: int, page: int, per_page: int) -> dict[str, Any]:

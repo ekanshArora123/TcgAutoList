@@ -197,3 +197,224 @@ def test_unusable_id_raises(db, monkeypatch):
 
 def test_set_link_unknown_cert_returns_none(db):
     assert asyncio.run(CollectionService(db).set_graded_link_by_cert("nope", "999")) is None
+
+
+# ─── manual graded pricing ───────────────────────────────────
+
+
+def test_set_graded_price_shared_across_certs(db):
+    inv = GradedInventoryHelper(db)
+    sku10 = _sku(db, grade=10)
+    # Two certs of the same card+grade+company.
+    inv.create({"graded_sku_id": sku10["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+    inv.create({"graded_sku_id": sku10["graded_sku_id"], "cert_id": "BBB", "qty": 1})
+
+    CollectionService(db).set_graded_price_by_cert(
+        "AAA",
+        {"estimated_price": 500, "estimated_low_price": 450, "estimated_high_price": 600},
+    )
+    # The price is per grade class, so it shows for BOTH certs' pages.
+    for cert in ("AAA", "BBB"):
+        d = ReportingService(db).graded_slab_detail(cert)
+        g = next(g for g in d["grades"] if g["grade"] == 10.0)
+        assert g["estimated_price"] == 500
+        assert g["estimated_low_price"] == 450
+        assert g["estimated_high_price"] == 600
+        # Liquid is derived from the shared macro: 500*0.85 - 5 (>$25 tier) = 420.
+        assert g["estimated_liquid_value"] == 420
+
+
+def test_set_graded_price_clears_omitted_fields(db):
+    inv = GradedInventoryHelper(db)
+    sku = _sku(db, grade=10)
+    inv.create({"graded_sku_id": sku["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+    cs = CollectionService(db)
+    cs.set_graded_price_by_cert("AAA", {"estimated_price": 100, "estimated_low_price": 90})
+    cs.set_graded_price_by_cert("AAA", {"estimated_price": 120})  # low omitted -> cleared
+    g = next(g for g in ReportingService(db).graded_slab_detail("AAA")["grades"] if g["grade"] == 10.0)
+    assert g["estimated_price"] == 120
+    assert g["estimated_low_price"] is None
+
+
+def test_graded_liquid_uses_shared_raw_macro(db):
+    from services.card_server.helpers.pricing.algorithm import compute_liquid_value
+
+    inv = GradedInventoryHelper(db)
+    sku = _sku(db, grade=10)
+    inv.create({"graded_sku_id": sku["graded_sku_id"], "cert_id": "AAA", "qty": 1})
+    CollectionService(db).set_graded_price_by_cert("AAA", {"estimated_price": 42})
+    g = next(g for g in ReportingService(db).graded_slab_detail("AAA")["grades"] if g["grade"] == 10.0)
+    # No separate graded formula — identical to the raw price->liquid macro.
+    assert g["estimated_liquid_value"] == compute_liquid_value(42)
+
+
+def test_set_graded_price_unknown_cert(db):
+    assert CollectionService(db).set_graded_price_by_cert("nope", {"estimated_price": 1}) is None
+
+
+# ─── graded analytics + combined histogram ───────────────────
+
+
+def _seed_priced(db):
+    """Two priced slabs of one card: PSA 10 ($500) and PSA 9 ($200, to_crack)."""
+    inv = GradedInventoryHelper(db)
+    cs = CollectionService(db)
+    s10 = _sku(db, grade=10)
+    s9 = _sku(db, grade=9)
+    inv.create({"graded_sku_id": s10["graded_sku_id"], "cert_id": "C10", "qty": 1})
+    inv.create({"graded_sku_id": s9["graded_sku_id"], "cert_id": "C9", "qty": 1, "tags": "to_crack"})
+    cs.set_graded_price_by_cert("C10", {"estimated_price": 500})
+    cs.set_graded_price_by_cert("C9", {"estimated_price": 200})
+
+
+def test_graded_analytics_summary(db):
+    _seed_priced(db)
+    s = ReportingService(db).graded_analytics_summary()
+    assert s["total_slabs"] == 2
+    assert s["total_value"] == 700
+    assert s["avg_grade"] == 9.5
+    assert s["to_crack_count"] == 1
+
+
+def test_graded_breakdown_by_grade_and_company(db):
+    _seed_priced(db)
+    rpt = ReportingService(db)
+    by_grade = {r["label"]: r for r in rpt.graded_breakdown("grade")}
+    assert by_grade["10"]["total_value"] == 500
+    assert by_grade["9"]["total_value"] == 200
+    by_company = rpt.graded_breakdown("company")
+    assert by_company[0]["label"] == "PSA"
+    assert by_company[0]["total_value"] == 700
+    with pytest.raises(ValueError):
+        rpt.graded_breakdown("nope")
+
+
+def test_graded_price_points_crack_filter(db):
+    _seed_priced(db)
+    rpt = ReportingService(db)
+    assert {(p["cert_id"], p["price"]) for p in rpt.graded_price_points()} == {("C10", 500.0), ("C9", 200.0)}
+    assert {p["cert_id"] for p in rpt.graded_price_points({"crack": "yes"})} == {"C9"}
+    assert {p["cert_id"] for p in rpt.graded_price_points({"crack": "no"})} == {"C10"}
+
+
+def test_top_graded_slabs_desc(db):
+    _seed_priced(db)
+    assert [t["cert_id"] for t in ReportingService(db).top_graded_slabs(10)] == ["C10", "C9"]
+
+
+def test_combined_analytics_summary_pools_both(db):
+    from services.card_server.helpers.crud.inventory import InventoryHelper
+    from services.card_server.helpers.crud.prices import PricesHelper
+    from services.card_server.helpers.crud.skus import SkusHelper
+    from services.card_server.helpers.pricing.algorithm import compute_liquid_value
+
+    CardsHelper(db).upsert({"id": "111", "card_name": "Charizard"})
+    sku = SkusHelper(db).get_or_create({"card_id": "111", "condition": "NM", "finish": "Holo"})
+    InventoryHelper(db).create({"sku_id": sku["sku_id"], "qty": 1})
+    PricesHelper(db).upsert({
+        "sku_id": sku["sku_id"], "calculation_date": "2999-01-01",
+        "estimated_price": 100.0, "estimated_liquid_value": 80.0,
+        "confidence_percent": 90, "manual_check_necessary": False, "manually_checked": True,
+        "algorithm_version": "v2", "estimated_low_price": 90.0, "estimated_high_price": 110.0,
+        "estimated_low_price_liquid": 70.0, "estimated_high_price_liquid": 90.0,
+    })
+    _seed_priced(db)  # graded: $500 + $200
+
+    s = ReportingService(db).combined_analytics_summary()
+    assert s["total_cards"] == 3  # 1 raw + 2 graded
+    assert s["total_value"] == 800  # 100 + 500 + 200
+    assert s["max_price"] == 500
+    assert round(s["avg_price"], 4) == round(800 / 3, 4)  # pooled avg, not naive add
+    assert s["total_liquid_value"] == 80 + compute_liquid_value(500) + compute_liquid_value(200)
+    # raw-only stats are intentionally absent
+    assert "avg_confidence" not in s and "unique_cards" not in s
+
+
+def test_combined_histogram_pools_graded(db):
+    _seed_priced(db)  # graded only; no raw seeded
+    rpt = ReportingService(db)
+    assert sum(b["count"] for b in rpt.price_histogram([0, 100, 1000], kind="raw")) == 0
+    assert sum(b["count"] for b in rpt.price_histogram([0, 100, 1000], kind="graded")) == 2
+    assert sum(b["count"] for b in rpt.price_histogram([0, 100, 1000], kind="all")) == 2
+    # crack filter reaches the graded prices in the histogram too.
+    gc = rpt.price_histogram([0, 100, 1000], kind="graded", graded_filters={"crack": "yes"})
+    assert sum(b["count"] for b in gc) == 1
+
+
+# ─── browse_graded: search / filter / sort ───────────────────
+
+
+def _seed_browse(db):
+    gs = GradedSkusHelper(db)
+    gi = GradedInventoryHelper(db)
+    chz10 = gs.get_or_create({"grading_company": "PSA", "grade": 10, "grader_spec_id": "S1", "card_subject": "CHARIZARD"})
+    chz9 = gs.get_or_create({"grading_company": "PSA", "grade": 9, "grader_spec_id": "S1", "card_subject": "CHARIZARD"})
+    pika8 = gs.get_or_create({"grading_company": "CGC", "grade": 8, "grader_spec_id": "S2", "card_subject": "PIKACHU"})
+    gi.create({"graded_sku_id": chz10["graded_sku_id"], "cert_id": "C10", "qty": 1})
+    gi.create({"graded_sku_id": chz9["graded_sku_id"], "cert_id": "C9", "qty": 1, "tags": "to_crack"})
+    gi.create({"graded_sku_id": pika8["graded_sku_id"], "cert_id": "P8", "qty": 1})
+
+
+def test_browse_search_by_name(db):
+    _seed_browse(db)
+    r = ReportingService(db).browse_graded({"q": "pika"})
+    assert {i["cert_id"] for i in r["items"]} == {"P8"}
+
+
+def test_browse_filter_by_grades(db):
+    _seed_browse(db)
+    r = ReportingService(db).browse_graded({"grades": ["10", "8"]})
+    assert {i["grade"] for i in r["items"]} == {10.0, 8.0}
+
+
+def test_browse_filter_by_tag(db):
+    _seed_browse(db)
+    r = ReportingService(db).browse_graded({"tags": ["to_crack"]})
+    assert {i["cert_id"] for i in r["items"]} == {"C9"}
+
+
+def test_browse_filter_no_tags(db):
+    _seed_browse(db)
+    # Only C9 is tagged (to_crack); "No tags" returns the other two.
+    r = ReportingService(db).browse_graded({"tags": ["No tags"]})
+    assert {i["cert_id"] for i in r["items"]} == {"C10", "P8"}
+
+
+def test_browse_filter_no_tags_or_crack(db):
+    _seed_browse(db)
+    # Untagged OR crack = everything here.
+    r = ReportingService(db).browse_graded({"tags": ["No tags", "to_crack"]})
+    assert {i["cert_id"] for i in r["items"]} == {"C10", "C9", "P8"}
+
+
+def test_no_tags_option_only_when_tags_exist(db):
+    # No slabs tagged yet -> no "No tags" pseudo-option.
+    gs = GradedSkusHelper(db)
+    gi = GradedInventoryHelper(db)
+    s = gs.get_or_create({"grading_company": "PSA", "grade": 10, "grader_spec_id": "S1", "card_subject": "X"})
+    gi.create({"graded_sku_id": s["graded_sku_id"], "cert_id": "X10", "qty": 1})
+    assert ReportingService(db).graded_filter_options()["tags"] == []
+    # Once something is tagged, "No tags" leads the list.
+    gi.create({"graded_sku_id": s["graded_sku_id"], "cert_id": "X11", "qty": 1, "tags": "to_crack"})
+    assert ReportingService(db).graded_filter_options()["tags"] == ["No tags", "to_crack"]
+
+
+def test_browse_sort_by_name_asc(db):
+    _seed_browse(db)
+    names = [i["card_name"] for i in ReportingService(db).browse_graded({"sort": "card_name", "order": "asc"})["items"]]
+    assert names == sorted(names)
+    assert names[0] == "CHARIZARD"
+
+
+def test_browse_sort_by_grade_desc(db):
+    _seed_browse(db)
+    grades = [i["grade"] for i in ReportingService(db).browse_graded({"sort": "grade", "order": "desc"})["items"]]
+    assert grades == sorted(grades, reverse=True)
+
+
+def test_graded_filter_options_grades_and_tags(db):
+    _seed_browse(db)
+    opts = ReportingService(db).graded_filter_options()
+    assert opts["grades"] == ["10", "9", "8"]  # distinct, descending
+    assert opts["tags"] == ["No tags", "to_crack"]  # pseudo-option leads
+    assert set(opts["grading_companies"]) == {"PSA", "CGC"}

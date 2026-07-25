@@ -237,8 +237,15 @@ def collection_grid():
 
 @app.route("/api/graded")
 def graded_grid():
-    """Owned graded slabs — the graded collection view."""
-    return jsonify(reporting.browse_graded(request.args.to_dict()))
+    """Owned graded slabs — the graded collection view (search/filter/sort)."""
+    filters = request.args.to_dict()
+    # Repeatable params collapse to their first value in to_dict(); pull the full
+    # list for the multi-select keys.
+    for plural in ("grades", "tags"):
+        values = request.args.getlist(plural)
+        if values:
+            filters[plural] = values
+    return jsonify(reporting.browse_graded(filters))
 
 
 @app.route("/api/graded", methods=["POST"])
@@ -277,6 +284,43 @@ def graded_slab_detail(cert_id):
     detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
     if detail is None:
         return "", 404
+    return jsonify(detail)
+
+
+@app.route("/api/graded/slab/<cert_id>/price", methods=["PATCH"])
+def set_graded_slab_price(cert_id):
+    """Set the manual price for the graded card this cert belongs to.
+
+    Body: { estimated_price?, estimated_low_price?, estimated_high_price? } —
+    blank/absent fields are cleared. Liquid value is derived server-side from the
+    shared macro, not accepted here. The price is stored per grade class, so it
+    applies to every cert of the same card+grade+company. Returns the refreshed
+    slab detail. 404 if the cert isn't owned.
+    """
+    body = request.get_json(silent=True) or {}
+
+    def num(key):
+        v = body.get(key)
+        if v in (None, ""):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"invalid number for {key}")
+
+    try:
+        price = {
+            "estimated_price": num("estimated_price"),
+            "estimated_low_price": num("estimated_low_price"),
+            "estimated_high_price": num("estimated_high_price"),
+        }
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    result = collection.set_graded_price_by_cert(cert_id, price)
+    if result is None:
+        return "", 404
+    detail = reporting.graded_slab_detail(cert_id, image_card_ids=list(_image_card_ids()))
     return jsonify(detail)
 
 
@@ -334,6 +378,41 @@ def graded_companies():
     return jsonify(reporting.graded_filter_options())
 
 
+def _graded_analytics_filters() -> dict:
+    """Graded filters shared by every graded-analytics endpoint. Just crack today
+    (yes/no); more graded filters slot in here without touching each route."""
+    f: dict = {}
+    crack = request.args.get("crack")
+    if crack:
+        f["crack"] = crack
+    return f
+
+
+@app.route("/api/graded/analytics/summary")
+def graded_analytics_summary():
+    return jsonify(reporting.graded_analytics_summary(_graded_analytics_filters()))
+
+
+@app.route("/api/graded/analytics/breakdown/<dimension>")
+def graded_analytics_breakdown(dimension):
+    """Owned-slab rollup by 'grade' or 'company'."""
+    try:
+        return jsonify(reporting.graded_breakdown(dimension, _graded_analytics_filters()))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/graded/analytics/price-points")
+def graded_analytics_price_points():
+    """One point per priced slab for the grade x price scatter."""
+    return jsonify(reporting.graded_price_points(_graded_analytics_filters()))
+
+
+@app.route("/api/graded/analytics/top-slabs")
+def graded_analytics_top_slabs():
+    return jsonify(reporting.top_graded_slabs(request.args.get("n", 25), _graded_analytics_filters()))
+
+
 @app.route("/api/graded/<card_id>")
 def graded_card_detail(card_id):
     """One graded variant's detail (company+grade) + raw-vs-graded comparison."""
@@ -363,6 +442,12 @@ def analytics_summary():
     return jsonify(reporting.analytics_summary())
 
 
+@app.route("/api/analytics/summary/combined")
+def analytics_summary_combined():
+    """Pooled raw + graded headline stats (the analytics 'All' view)."""
+    return jsonify(reporting.combined_analytics_summary())
+
+
 @app.route("/api/analytics/price-histogram")
 def price_histogram():
     """Price distribution histogram with custom breakpoints.
@@ -374,18 +459,23 @@ def price_histogram():
               vocabulary as the browse endpoints) to scope the distribution.
       eras / sets / conditions: repeatable multi-select variants (IN filter),
               e.g. "?eras=Vintage&eras=Modern".
+      kind: "raw" (default), "graded", or "all" — which prices are pooled.
+      crack: "yes"/"no" — graded crack filter (applied to graded prices only).
     """
     breaks_str = request.args.get("breaks", "0,1,2,5,10,20,30,50,100")
-    filters = {k: v for k, v in request.args.to_dict().items() if k != "breaks"}
+    kind = request.args.get("kind", "raw")
+    reserved = {"breaks", "kind", "crack"}
+    filters = {k: v for k, v in request.args.to_dict().items() if k not in reserved}
     # Repeatable params collapse to their first value in to_dict(); pull the
     # full list for the multi-select keys.
     for plural in ("eras", "sets", "conditions"):
         values = request.args.getlist(plural)
         if values:
             filters[plural] = values
+    graded_filters = _graded_analytics_filters()
     try:
         breaks = [float(b) for b in breaks_str.split(",") if b.strip()]
-        return jsonify(reporting.price_histogram(breaks, filters))
+        return jsonify(reporting.price_histogram(breaks, filters, kind=kind, graded_filters=graded_filters))
     except ValueError as e:
         return jsonify({"error": str(e) or "Invalid breaks parameter"}), 400
 
