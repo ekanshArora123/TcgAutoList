@@ -45,6 +45,15 @@ class SalesStore:
 
         Skipped entirely when `sales` is empty so an API hiccup (or a card with
         no recent sales) can't wipe previously-collected history. Atomic.
+
+        TODO(sales-idempotency): this wholesale replace re-downloads the full
+        ~1yr window on every refresh (~14 rate-limited requests/card), which is
+        the main driver of collect_sales' rate-limiting pain. Past sales are
+        immutable, so a refresh only needs sales newer than the newest stored
+        `order_date`: add an incremental `append_new_since(card_id, source)` that
+        fetches just the new tail and appends it (with a small overlap window +
+        natural-key dedup, since TCGplayer sales have no stable id). Keep this
+        full replace as the backfill/repair path. See collect_sales.py.
         """
         if not sales:
             return 0

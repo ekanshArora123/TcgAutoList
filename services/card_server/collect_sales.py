@@ -10,6 +10,14 @@ transaction-level backfill is a multi-day drip, run once via `--crawl`. The
 no-auth bucket endpoint (infinite-api price history) is a separate, generous
 bucket — `--loop` uses it to keep data fresh cheaply afterwards.
 
+TODO(sales-idempotency): every refresh currently re-pulls the full history
+window and replaces it wholesale, so each already-collected card still costs a
+year of raw-sales requests against that tight per-IP bucket. Since past sales
+are immutable, a refresh should fetch only the new tail (sales newer than the
+card's newest stored order_date) and append. That turns the ongoing `--loop`
+refresh from a ~14-request-per-card re-crawl into a couple of requests, and
+sharply cuts rate-limit exposure. See helpers/market/sales_store.replace_card.
+
 Usage:
   python -m services.card_server.collect_sales --crawl         # ONE-TIME full raw backfill: bucket sweep + multi-day adaptive drip
   python -m services.card_server.collect_sales --loop          # paced batches until drained (ongoing refresh)

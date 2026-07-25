@@ -172,6 +172,12 @@ class SalesCollector:
                 try:
                     await self._ensure_card_exists(card_id)
                     if with_sales:
+                        # TODO(sales-idempotency): this always walks the full
+                        # `max_days` window and hands it to replace_card, so a
+                        # refresh re-fetches a year of immutable sales it already
+                        # has — the bulk of this collector's rate-limit exposure.
+                        # Fetch only sales newer than the card's newest stored
+                        # order_date and append instead. See sales_store.replace_card.
                         sales = await fetch_sales_history(
                             card_id, max_days=max_days, client=client, limiter=limiter
                         )
