@@ -19,7 +19,14 @@ from typing import Any
 from ..crud.cards import CardsHelper
 from ..crud.prices import PricesHelper
 from ..crud.skus import SkusHelper
-from ..pricing.algorithm import compute_price
+from ..pricing.algorithm import compute_price, interpolate_in_between, relabel_alias
+from ..pricing.conditions import (
+    expand_to_primaries,
+    is_primary,
+    normalize_condition,
+    normalize_finish,
+    primary_neighbors,
+)
 from .aggregators import build_snapshots
 from .fetchers import fetch_card_info, fetch_market_data_for_card
 from .snapshots import SnapshotStore
@@ -29,12 +36,17 @@ CollectorOptions = dict
 
 
 class MarketCollector:
-    def __init__(self, db: sqlite3.Connection):
+    def __init__(self, db: sqlite3.Connection, variant_delay_ms: int = 0):
         self.db = db
         self.snapshot_store = SnapshotStore(db)
         self.cards = CardsHelper(db)
         self.skus = SkusHelper(db)
         self.prices = PricesHelper(db)
+        # Pacing BETWEEN the listing calls of a single card. A card now costs one
+        # listing request per owned variant (~1.5 on average) instead of one flat,
+        # so the intra-card gap matters to the per-IP budget as much as the
+        # between-card `delayMs` does.
+        self.variant_delay_ms = variant_delay_ms
 
     async def collect_owned(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
         """Collect market data for all cards the user owns (has inventory)."""
@@ -49,13 +61,20 @@ class MarketCollector:
         verbose = options.get("verbose", True)
         rate_limit_pause_ms = options.get("rateLimitPauseMs", 120_000)
         max_retries = options.get("maxRetries", 50)
+        force = options.get("force", False)
         today = datetime.now().date().isoformat()
         start = time.time()
 
-        already_collected = set(self._get_card_ids_collected_on_date(today))
+        # Same-day idempotency, unless forced. `force` exists for the case where
+        # today's rows were written by an older/buggier collector and need to be
+        # overwritten rather than skipped — the snapshot and price upserts are
+        # keyed by date, so a forced re-run replaces them in place.
+        already_collected = set() if force else set(self._get_card_ids_collected_on_date(today))
         remaining = [cid for cid in card_ids if cid not in already_collected]
 
-        if verbose and already_collected:
+        if verbose and force:
+            print(f"--force: ignoring same-day skip, re-collecting all {len(remaining)} cards.\n")
+        elif verbose and already_collected:
             skipped = len(card_ids) - len(remaining)
             print(f"Skipping {skipped} cards already collected today. {len(remaining)} remaining.\n")
 
@@ -138,7 +157,13 @@ class MarketCollector:
     # ─── Single Card Collection ───────────────────────────────
 
     async def _collect_single_card(self, card_id: str, date: str) -> dict[str, int]:
-        fetch_results = await fetch_market_data_for_card(card_id)
+        card = self.cards.get_by_id(card_id)
+        fetch_results = await fetch_market_data_for_card(
+            card_id,
+            variants=self._plan_variants(card_id) or None,
+            set_name=card["set_name"] if card else None,
+            delay_ms=self.variant_delay_ms,
+        )
 
         if not fetch_results:
             return {"snapshots": 0, "prices": 0}
@@ -150,18 +175,55 @@ class MarketCollector:
 
         return {"snapshots": len(snapshots), "prices": prices_written}
 
+    def _plan_variants(self, card_id: str) -> list[tuple[str, str, str]]:
+        """The (condition, finish, specialty_one) listings to fetch for this card.
+
+        Derived from the SKUs actually held, expanded through
+        `expand_to_primaries` so an in-between grade pulls BOTH its neighbors —
+        an MP-LP card plans an MP fetch and an LP fetch. The result is a set, so
+        an MP-LP and a plain MP on the same card share one MP call rather than
+        duplicating it, and both neighbors are always fetched in the same card
+        visit (they can never end up at different ages).
+
+        Empty for cards with no inventory (--cohort), where the caller falls back
+        to whatever the sold data reveals.
+        """
+        rows = self.db.execute(
+            """
+            SELECT DISTINCT s.condition, s.finish, s.specialty_one
+            FROM inventory i
+            JOIN skus s ON i.sku_id = s.sku_id
+            WHERE s.card_id = ? AND i.status NOT IN ('sold')
+            """,
+            (card_id,),
+        ).fetchall()
+
+        variants: set[tuple[str, str, str]] = set()
+        for row in rows:
+            finish = normalize_finish(row["finish"])
+            for condition in expand_to_primaries(row["condition"]):
+                variants.add((condition, finish, row["specialty_one"] or "None"))
+        return sorted(variants)
+
     def _compute_and_store_prices(
         self, card_id: str, fetch_results: list[dict[str, Any]], date: str
     ) -> int:
         count = 0
+        # Directly-priced results, keyed by the tier they describe, so the
+        # derived pass below can look up an in-between grade's neighbors.
+        priced: dict[tuple[str, str], Any] = {}
+        priced_sku_ids: set[int] = set()
 
         for result in fetch_results:
+            condition = normalize_condition(result["condition"])
+            finish = normalize_finish(result["finish"])
+
             sku = self.skus.get_or_create(
                 {
                     "card_id": card_id,
-                    "condition": result["condition"],
-                    "finish": result["finish"],
-                    "specialty_one": "None",
+                    "condition": condition,
+                    "finish": finish,
+                    "specialty_one": result.get("specialtyOne") or "None",
                     "specialty_two": "None",
                     "qty": 0,
                 }
@@ -172,46 +234,63 @@ class MarketCollector:
             price_result = compute_price(
                 result["activeListings"],
                 result["soldListings"],
-                result["condition"],
-                result["finish"],
+                condition,
+                finish,
                 has_manual_review_specialty,
             )
 
             self._store_price(sku["sku_id"], date, price_result)
+            priced[(condition, finish)] = price_result
+            priced_sku_ids.add(sku["sku_id"])
             count += 1
 
-        count += self._price_mint_skus_from_nm(card_id, fetch_results, date)
+        count += self._price_derived_skus(card_id, priced, priced_sku_ids, date)
         return count
 
-    def _price_mint_skus_from_nm(
-        self, card_id: str, fetch_results: list[dict[str, Any]], date: str
+    def _price_derived_skus(
+        self,
+        card_id: str,
+        priced: dict[tuple[str, str], Any],
+        priced_sku_ids: set[int],
+        date: str,
     ) -> int:
-        mint_skus = [s for s in self.skus.search({"card_id": card_id}) if s["condition"] == "MINT"]
-        if not mint_skus:
-            return 0
+        """Price the card's SKUs that TCGplayer has no tier for.
 
+        Two kinds, both previously skipped entirely by the collector: aliases of
+        a real tier (MINT, DM) and in-between grades (MP-LP, LP-NM, HP-MP,
+        DM-HP). Runs off `priced` — the results just computed from live data —
+        so a derived price is never built on a stale neighbor.
+        """
         count = 0
-        for mint_sku in mint_skus:
-            nm_result = next(
-                (
-                    r
-                    for r in fetch_results
-                    if r["condition"] == "NM" and r["finish"] == mint_sku["finish"]
-                ),
-                None,
-            )
-            if not nm_result:
+
+        for sku in self.skus.search({"card_id": card_id}):
+            if sku["sku_id"] in priced_sku_ids:
                 continue
 
-            price_result = compute_price(
-                nm_result["activeListings"],
-                nm_result["soldListings"],
-                "MINT",  # algorithm maps this to NM internally
-                mint_sku["finish"],
-                mint_sku["specialty_two"] != "None",
-            )
+            finish = normalize_finish(sku["finish"])
+            condition = normalize_condition(sku["condition"])
 
-            self._store_price(mint_sku["sku_id"], date, price_result)
+            if is_primary(condition):
+                source = priced.get((condition, finish))
+                if source is None:
+                    continue
+                derived = relabel_alias(source, sku["condition"], condition)
+            else:
+                neighbors = primary_neighbors(condition)
+                if not neighbors:
+                    continue
+                better, worse = neighbors
+                derived = interpolate_in_between(
+                    sku["condition"],
+                    priced.get((better, finish)),
+                    better,
+                    priced.get((worse, finish)),
+                    worse,
+                )
+                if derived is None:
+                    continue
+
+            self._store_price(sku["sku_id"], date, derived)
             count += 1
 
         return count

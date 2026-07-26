@@ -62,12 +62,15 @@ CONDITION_STEP_MULTIPLIER = 0.70
 # Primary conditions in order, best to worst.
 PRIMARY_CONDITIONS = ("MINT", "NM", "LP", "MP", "HP", "DMG")
 
-# In-between conditions and their two neighboring primary conditions.
-# Price = average of the two neighbors. TCGplayer does NOT support in-between.
+# In-between conditions and their two neighboring primary conditions, ordered
+# (better, worse). Price = average of the two neighbors. TCGplayer does NOT
+# support in-between grades, so these are always derived from their neighbors.
+# See helpers/pricing/conditions.py for the resolution helpers built on this.
 IN_BETWEEN_CONDITIONS: dict[str, tuple[str, str]] = {
     "LP-NM": ("NM", "LP"),
     "MP-LP": ("LP", "MP"),
     "HP-MP": ("MP", "HP"),
+    "DM-HP": ("HP", "DMG"),
 }
 
 # ─── Confidence Adjustments ─────────────────────────────────

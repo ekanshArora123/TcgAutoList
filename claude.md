@@ -100,7 +100,7 @@ Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish var
 
 **Major caveats:**
 - **Cheap cards (< $5)** use listing prices only — sold prices are shipping-noise.
-- **Cross-condition extrapolation** (pricing one condition off another) is always flagged for manual review.
+- **Conditions TCGplayer doesn't sell** (in-between grades like `MP-LP`, plus the `MINT`/`DM` aliases) are derived from the tiers it does. The collector fetches an in-between grade's *both* neighbors in the same visit and interpolates between them; falling back to one-sided **extrapolation** is always flagged for manual review.
 
 All constants live in `services/card_server/helpers/pricing/config.py`; the full algorithm (decision tree, confidence, liquid value) is in `docs/pricing-algorithm.md`.
 

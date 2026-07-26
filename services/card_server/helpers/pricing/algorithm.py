@@ -23,7 +23,7 @@ See docs/pricing-algorithm.md.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -245,6 +245,122 @@ def compute_liquid_value(sell_price: float) -> float:
         shipping = SHIPPING_COST_LOW
     after_fees = sell_price * (1 - FEE_RATE)
     return _round(max(after_fees - shipping, 0))
+
+
+# ─── In-Between Conditions ───────────────────────────────────
+
+
+def interpolate_in_between(
+    condition: str,
+    better: Optional[PricingResult],
+    better_condition: str,
+    worse: Optional[PricingResult],
+    worse_condition: str,
+) -> Optional[PricingResult]:
+    """Price an in-between grade (MP-LP) from its two neighboring primaries.
+
+    TCGplayer has no in-between grade, so these SKUs can only be derived. When
+    BOTH neighbors priced this run we interpolate — the midpoint of two directly
+    measured prices — which is materially better than the compounding-discount
+    guess in `extrapolate_across_conditions`, so it is NOT force-flagged for
+    review; the neighbors' own flags still carry through.
+
+    With only ONE neighbor available we fall back to true extrapolation, which
+    IS always flagged for manual review (see docs/pricing-algorithm.md).
+
+    Returns None when neither neighbor produced a price — the caller leaves the
+    SKU's previous estimate alone rather than writing a fabricated one.
+    """
+    usable = [
+        (res, cond)
+        for res, cond in ((better, better_condition), (worse, worse_condition))
+        if res is not None and res.estimated_price is not None
+    ]
+    if not usable:
+        return None
+
+    if len(usable) == 1:
+        source, source_condition = usable[0]
+        price = extrapolate_across_conditions(
+            source.estimated_price, source_condition, condition
+        )
+        if price is None:
+            return None
+        reasoning = (
+            f"No {condition} tier on TCGplayer and only {source_condition} data available. "
+            f"Extrapolated from {source_condition} (${source.estimated_price:.2f}) → ${price:.2f}. "
+            "Cross-condition extrapolation — flagged for manual review."
+        )
+        return _derived_result(price, source.confidence_percent, True, reasoning, source, source)
+
+    (better_res, _), (worse_res, _) = usable
+    price = _round((better_res.estimated_price + worse_res.estimated_price) / 2)
+    reasoning = (
+        f"{condition} sits between {better_condition} (${better_res.estimated_price:.2f}) and "
+        f"{worse_condition} (${worse_res.estimated_price:.2f}); interpolated to ${price:.2f}. "
+        "Both neighbors priced from live data this run."
+    )
+    return _derived_result(
+        price,
+        min(better_res.confidence_percent, worse_res.confidence_percent),
+        better_res.manual_check_necessary or worse_res.manual_check_necessary,
+        reasoning,
+        better_res,
+        worse_res,
+    )
+
+
+def relabel_alias(source: PricingResult, condition: str, primary: str) -> PricingResult:
+    """Copy a primary's result onto an alias SKU (MINT->NM, DM->DMG).
+
+    The alias is the same physical tier under a different name, so the estimate
+    carries over verbatim — only the reasoning changes.
+    """
+    return replace(
+        source,
+        reasoning=f"{condition} has no distinct TCGplayer tier — priced as {primary}. {source.reasoning}",
+    )
+
+
+def _derived_result(
+    price: float,
+    confidence: float,
+    manual_check: bool,
+    reasoning: str,
+    low_source: PricingResult,
+    high_source: PricingResult,
+) -> PricingResult:
+    """Assemble a PricingResult for a price derived from other conditions.
+
+    Applies the same high-value review rule `compute_price` does, so a derived
+    estimate can't slip past the threshold that a direct one would trip.
+    """
+    if price > HIGH_VALUE_THRESHOLD:
+        manual_check = True
+        reasoning += (
+            f" High-value card (${price:.2f} > ${HIGH_VALUE_THRESHOLD}) — flagged for manual review."
+        )
+
+    low = _mean_of(low_source.estimated_low_price, high_source.estimated_low_price)
+    high = _mean_of(low_source.estimated_high_price, high_source.estimated_high_price)
+
+    return PricingResult(
+        estimated_price=price,
+        estimated_liquid_value=compute_liquid_value(price),
+        estimated_low_price=low,
+        estimated_high_price=high,
+        estimated_low_price_liquid=compute_liquid_value(low) if low is not None else None,
+        estimated_high_price_liquid=compute_liquid_value(high) if high is not None else None,
+        confidence_percent=confidence,
+        manual_check_necessary=manual_check,
+        algorithm_version=ALGORITHM_VERSION,
+        reasoning=reasoning,
+    )
+
+
+def _mean_of(a: Optional[float], b: Optional[float]) -> Optional[float]:
+    present = [v for v in (a, b) if v is not None]
+    return _round(sum(present) / len(present)) if present else None
 
 
 # ─── Cross-Condition Extrapolation ───────────────────────────

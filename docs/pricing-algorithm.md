@@ -63,19 +63,37 @@ liquid_value = (sell_price * (1 - FEE_RATE)) - shipping_cost
 | $5 - $25 | $1 | PWE (plain white envelope) |
 | > $25 | $5 | Tracked bubble mailer |
 
-### Cross-Condition Extrapolation
+### Deriving Conditions TCGplayer Doesn't Sell
 
-When no data exists for a specific condition, extrapolate from another condition:
+TCGplayer only has data for five tiers (`NM, LP, MP, HP, DMG`). Two kinds of SKU
+have to be derived from those, and they are **not** equally trustworthy:
+
+**Interpolation (preferred).** An in-between grade whose *both* neighbors priced
+from live data in the same run is the midpoint of two measured prices:
+`MP-LP = (LP + MP) / 2`. The collector plans both neighbor fetches together (see
+`_plan_variants`), so they can never be at different ages. Confidence is the
+lower of the two; review flags carry through from the neighbors but
+interpolation adds none of its own — it is a measurement, not a guess.
+
+**Extrapolation (fallback).** When only one neighbor is available, the price is
+projected across tiers instead:
 
 - **30% discount per full condition tier, compounding:** NM $10 -> LP $7.00 -> MP $4.90 -> HP $3.43
-- **In-between conditions = average of neighbors:** LP-NM = (NM + LP) / 2
-- **Bidirectional:** Can go worse->better (divide by multiplier) or better->worse (multiply)
-- **Always flagged** for manual review with max 35% confidence
+- **Bidirectional:** worse->better (divide by multiplier) or better->worse (multiply)
+- **Always flagged** for manual review — this is a guess about a card nobody is
+  currently selling.
+
+Either way, a derived price over `HIGH_VALUE_THRESHOLD` is flagged like a direct
+one, and if neither neighbor produced a price **no row is written at all** —
+the SKU keeps its previous estimate rather than gaining a fabricated one.
 
 Primary conditions (best to worst): `MINT, NM, LP, MP, HP, DMG`
-In-between: `LP-NM` = [NM, LP], `MP-LP` = [LP, MP], `HP-MP` = [MP, HP]
+In-between: `LP-NM` = [NM, LP], `MP-LP` = [LP, MP], `HP-MP` = [MP, HP], `DM-HP` = [HP, DMG]
+Aliases: `MINT` -> priced as `NM`, `DM` -> priced as `DMG`
 
-All extrapolation logic is in `extrapolateAcrossConditions()` — the single function to edit.
+The condition vocabulary (what is primary, what an in-between sits between, which
+spellings are aliases) lives in `helpers/pricing/conditions.py`. Interpolation is
+`interpolate_in_between()`; extrapolation is `extrapolate_across_conditions()`.
 
 ### Confidence Scoring Summary
 

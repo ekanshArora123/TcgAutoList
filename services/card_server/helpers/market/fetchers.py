@@ -10,7 +10,7 @@ A MarketFetchResult is a dict:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from ..tcgplayer.fetch_card_info import (
     fetch_card_info,
@@ -41,32 +41,88 @@ __all__ = [
 MarketFetchResult = dict
 
 
-async def fetch_market_data_for_card(tcgplayer_id: str) -> list[dict[str, Any]]:
-    """Fetch all market data for a single card across all conditions/finishes."""
-    all_listings, all_solds = await asyncio.gather(
-        fetch_active_listings(tcgplayer_id),
-        fetch_sold_listings(tcgplayer_id),
-    )
+async def fetch_market_data_for_card(
+    tcgplayer_id: str,
+    variants: Optional[list[tuple[str, str, str]]] = None,
+    set_name: Optional[str] = None,
+    delay_ms: int = 0,
+) -> list[dict[str, Any]]:
+    """Fetch all market data for a single card.
 
-    keyed_listings = _group_by_condition_finish(all_listings)
+    `variants` are the (condition, finish, specialty_one) combinations to pull
+    ACTIVE LISTINGS for — one API call each, because TCGplayer's listing search
+    filters server-side and returns nothing about the variants you didn't ask
+    for. Omitting it previously meant the endpoint silently defaulted to Near
+    Mint + Normal, so every other variant was recorded with zero listings and
+    priced from solds alone. Callers pass the variants they actually care about
+    (the collector: the ones the owner holds) to keep the fan-out small.
+
+    `set_name` must be threaded through: WOTC-era sets use "Unlimited" printing
+    names, and without it those cards match no listings at all.
+
+    Sold listings are fetched ONCE — that endpoint returns every condition and
+    finish in a single response — then grouped and attached to the matching
+    variant. Variants that appear only in the sold data still get a result row,
+    so sold-only coverage is unchanged.
+    """
+    all_solds = await fetch_sold_listings(tcgplayer_id)
     keyed_solds = _group_by_condition_finish(all_solds)
 
-    all_keys = set(keyed_listings.keys()) | set(keyed_solds.keys())
+    if variants is None:
+        # No caller-supplied plan (e.g. --cohort, where nothing is owned): take
+        # the variants the sold data reveals, falling back to NM/Regular so a
+        # card with no sales at all still gets one listing probe.
+        variants = [(c, f, "None") for c, f in _keys_to_pairs(keyed_solds)] or [
+            ("NM", "Regular", "None")
+        ]
 
     results: list[dict[str, Any]] = []
-    for key in all_keys:
+    seen: set[str] = set()
+
+    for i, (condition, finish, specialty_one) in enumerate(variants):
+        if i > 0 and delay_ms > 0:
+            await asyncio.sleep(delay_ms / 1000)
+
+        listings = await fetch_active_listings(
+            tcgplayer_id, condition, finish, set_name, specialty_one
+        )
+        key = f"{condition}|{finish}"
+        seen.add(key)
+        results.append(
+            {
+                "cardId": tcgplayer_id,
+                "condition": condition,
+                "finish": finish,
+                "specialtyOne": specialty_one,
+                "source": "tcgplayer",
+                "activeListings": listings,
+                "soldListings": keyed_solds.get(key, []),
+            }
+        )
+
+    # Variants we have solds for but were not asked to fetch listings for: keep
+    # them so the snapshot table retains its sold-side coverage.
+    for key, solds in keyed_solds.items():
+        if key in seen:
+            continue
         condition, finish = key.split("|")
         results.append(
             {
                 "cardId": tcgplayer_id,
                 "condition": condition,
                 "finish": finish,
+                "specialtyOne": "None",
                 "source": "tcgplayer",
-                "activeListings": keyed_listings.get(key, []),
-                "soldListings": keyed_solds.get(key, []),
+                "activeListings": [],
+                "soldListings": solds,
             }
         )
+
     return results
+
+
+def _keys_to_pairs(keyed: dict[str, list[dict[str, Any]]]) -> list[tuple[str, str]]:
+    return [tuple(k.split("|")) for k in keyed]  # type: ignore[misc]
 
 
 async def fetch_market_data_for_variant(
