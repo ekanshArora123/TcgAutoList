@@ -36,13 +36,16 @@ GRADED_TO_CRACK_TAG = "to_crack"
 GRADED_NO_TAG_OPTION = "No tags"
 
 # Collection browse additionally surfaces the latest market snapshot per SKU.
+# specialty_one is part of the match: a 1st Edition card must not display the
+# Unlimited printing's listing stats (they are separate products).
 _MARKET_JOIN = """
     LEFT JOIN market_snapshots ms ON s.card_id = ms.card_id
         AND s.condition = ms.condition AND s.finish = ms.finish
+        AND s.specialty_one = ms.specialty_one
         AND ms.snapshot_date = (
             SELECT MAX(snapshot_date) FROM market_snapshots ms2
             WHERE ms2.card_id = ms.card_id AND ms2.condition = ms.condition
-              AND ms2.finish = ms.finish
+              AND ms2.finish = ms.finish AND ms2.specialty_one = ms.specialty_one
         )
 """
 

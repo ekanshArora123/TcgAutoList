@@ -27,8 +27,8 @@ from .fetch_prices import (
     SALES_VARIANT_IDS,
     _get_auth_cookie,
     _parse_condition_from_sales_api,
-    _parse_finish_from_sales_api,
 )
+from .formatters import parse_finish_from_api
 from .transport import RateLimiter, make_client, request_json
 
 _PAGE_SIZE = 25
@@ -52,7 +52,9 @@ def _map_sale(sale: dict[str, Any], card_id: str, fallback_condition: str) -> Op
     return {
         "card_id": card_id,
         "condition": _parse_condition_from_sales_api(sale.get("condition") or fallback_condition or ""),
-        "finish": _parse_finish_from_sales_api(sale.get("variant") or ""),
+        # `sales` has no specialty_one column, so 1st Edition and Unlimited
+        # merge here. Graph path only — the pricing path keys on specialty.
+        "finish": parse_finish_from_api(sale.get("variant") or "")["finish"],
         "source": "tcgplayer",
         "order_date": order_date,
         "purchase_price": sale.get("purchasePrice") or 0,

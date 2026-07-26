@@ -46,8 +46,95 @@ def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
 
     _upgrade_graded_skus(_db)
     _dedup_graded_inventory_certs(_db)
+    _upgrade_market_snapshots(_db)
 
     return _db
+
+
+# Column list for the current market_snapshots shape (must match schema.sql).
+_MARKET_SNAPSHOT_COLUMNS = (
+    "snapshot_id", "card_id", "condition", "finish", "specialty_one",
+    "snapshot_date", "source",
+    "listing_count", "lowest_listing_price", "median_listing_price",
+    "mean_listing_price", "p25_listing_price", "p75_listing_price",
+    "recent_sales_count", "avg_sale_price", "median_sale_price",
+    "min_sale_price", "max_sale_price", "newest_sale_date", "oldest_sale_date",
+)
+
+
+def _upgrade_market_snapshots(db: sqlite3.Connection) -> None:
+    """Add specialty_one to market_snapshots and re-key uniqueness on it.
+
+    The legacy table was UNIQUE(card_id, condition, finish, snapshot_date,
+    source) with no specialty column, so a card owned in both 1st Edition and
+    Unlimited collided on one row per day and the last write silently won — the
+    two are separate products at very different prices. SQLite can't drop an
+    inline UNIQUE via ALTER, so this is a table rebuild; existing rows carry
+    specialty_one='None', which preserves their uniqueness (a constant added to
+    an already-unique key stays unique) and matches what the old collector
+    actually fetched.
+
+    Guarded/idempotent: a no-op once migrated, and on a fresh DB the column is
+    already there so only the index creation runs.
+    """
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(market_snapshots)")}
+    if cols and "specialty_one" not in cols:
+        db.execute("PRAGMA foreign_keys = OFF")
+        db.execute("BEGIN")
+        try:
+            # Single-statement execute (NOT executescript, which would commit the
+            # open transaction out from under us).
+            db.execute(
+                """
+                CREATE TABLE market_snapshots_new (
+                    snapshot_id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    card_id                 TEXT NOT NULL REFERENCES cards(id),
+                    condition               TEXT NOT NULL,
+                    finish                  TEXT NOT NULL DEFAULT 'Regular',
+                    specialty_one           TEXT NOT NULL DEFAULT 'None',
+                    snapshot_date           TEXT NOT NULL,
+                    source                  TEXT NOT NULL DEFAULT 'tcgplayer',
+                    listing_count           INTEGER,
+                    lowest_listing_price    REAL,
+                    median_listing_price    REAL,
+                    mean_listing_price      REAL,
+                    p25_listing_price       REAL,
+                    p75_listing_price       REAL,
+                    recent_sales_count      INTEGER,
+                    avg_sale_price          REAL,
+                    median_sale_price       REAL,
+                    min_sale_price          REAL,
+                    max_sale_price          REAL,
+                    newest_sale_date        TEXT,
+                    oldest_sale_date        TEXT
+                )
+                """
+            )
+            carry = [c for c in _MARKET_SNAPSHOT_COLUMNS if c in cols]
+            collist = ", ".join(carry)
+            db.execute(
+                f"INSERT INTO market_snapshots_new ({collist}) SELECT {collist} FROM market_snapshots"
+            )
+            db.execute("DROP TABLE market_snapshots")
+            db.execute("ALTER TABLE market_snapshots_new RENAME TO market_snapshots")
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            db.execute("PRAGMA foreign_keys = ON")
+            raise
+        db.execute("PRAGMA foreign_keys = ON")
+        # The rebuild drops the table's indexes along with it.
+        db.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_card ON market_snapshots(card_id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_date ON market_snapshots(snapshot_date)")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_snapshots_card_date "
+            "ON market_snapshots(card_id, snapshot_date)"
+        )
+
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_variant ON market_snapshots"
+        "(card_id, condition, finish, specialty_one, snapshot_date, source)"
+    )
 
 
 def _dedup_graded_inventory_certs(db: sqlite3.Connection) -> None:

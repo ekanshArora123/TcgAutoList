@@ -19,7 +19,8 @@ from typing import Any, Optional
 
 import httpx
 
-from .fetch_prices import _parse_condition_from_sales_api, _parse_finish_from_sales_api
+from .fetch_prices import _parse_condition_from_sales_api
+from .formatters import parse_finish_from_api
 from .transport import RateLimiter, make_client, request_json
 
 INFINITE_HEADERS: dict[str, str] = {
@@ -54,7 +55,10 @@ def map_price_history(results: list[dict[str, Any]], card_id: str) -> list[dict[
     rows: list[dict[str, Any]] = []
     for entry in results or []:
         condition = _parse_condition_from_sales_api(entry.get("condition") or "")
-        finish = _parse_finish_from_sales_api(entry.get("variant") or "")
+        # market_price_history has no specialty_one column, so 1st Edition and
+        # Unlimited buckets still merge here. That is the graph path only — the
+        # pricing path keys on specialty (see _group_by_condition_finish).
+        finish = parse_finish_from_api(entry.get("variant") or "")["finish"]
         for b in entry.get("buckets") or []:
             date = b.get("bucketStartDate") or ""
             if not date:

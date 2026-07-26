@@ -15,7 +15,7 @@ from typing import Any, Optional
 import httpx
 
 from ..pricing.config import MIN_SELLER_RATING, MIN_SELLER_SALES
-from .formatters import format_condition_for_api, format_finish_for_api
+from .formatters import format_condition_for_api, format_finish_for_api, parse_finish_from_api
 
 # ─── TCGplayer Listings API ──────────────────────────────────
 
@@ -319,11 +319,17 @@ async def _fetch_sold_listings_page_with_total(
             custom_id = sale.get("customListingId")
             if not (custom_id == "0" or custom_id == 0 or not custom_id):
                 continue
+            # The sales API reports the printing ("1st Edition", "Unlimited",
+            # "Reverse Holofoil", ...) in `variant`. Parsing it with the shared
+            # formatter recovers BOTH finish and specialty, which keeps $27
+            # 1st Edition sales out of the same bucket as $2 Unlimited ones.
+            variant = parse_finish_from_api(sale.get("variant") or "")
             out.append(
                 {
                     "tcgplayer_id": tcgplayer_id,
                     "condition": _parse_condition_from_sales_api(sale.get("condition") or condition or ""),
-                    "finish": _parse_finish_from_sales_api(sale.get("variant") or ""),
+                    "finish": variant["finish"],
+                    "specialty_one": variant["specialty_one"],
                     "sold_price": (sale.get("purchasePrice") or 0) + (sale.get("shippingPrice") or 0),
                     "sold_date": sale.get("orderDate") or "",
                     "seller_name": None,
@@ -346,18 +352,6 @@ def _parse_condition_from_sales_api(api_condition: str) -> str:
         "Heavily Played": "HP",
         "Damaged": "DMG",
     }.get(api_condition, api_condition)
-
-
-def _parse_finish_from_sales_api(variant: str) -> str:
-    return {
-        "Normal": "Regular",
-        "Holofoil": "Holo",
-        "Reverse Holofoil": "Reverse-Holo",
-        "1st Edition Holofoil": "Holo",
-        "1st Edition": "Regular",
-        "Unlimited Holofoil": "Holo",
-        "Unlimited": "Regular",
-    }.get(variant, variant)
 
 
 # ─── Set Catalog API ─────────────────────────────────────────

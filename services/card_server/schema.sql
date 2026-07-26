@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     card_id                 TEXT NOT NULL REFERENCES cards(id),
     condition               TEXT NOT NULL,
     finish                  TEXT NOT NULL DEFAULT 'Regular',
+    specialty_one           TEXT NOT NULL DEFAULT 'None',       -- 'First Edition', 'None', ...
     snapshot_date           TEXT NOT NULL,               -- ISO YYYY-MM-DD
     source                  TEXT NOT NULL DEFAULT 'tcgplayer',  -- 'tcgplayer', 'ebay', etc.
 
@@ -95,10 +96,13 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     min_sale_price          REAL,
     max_sale_price          REAL,
     newest_sale_date        TEXT,
-    oldest_sale_date        TEXT,
-
-    UNIQUE(card_id, condition, finish, snapshot_date, source)
+    oldest_sale_date        TEXT
 );
+
+-- The variant-uniqueness index (which includes specialty_one) is created in
+-- db.py AFTER the market_snapshots rebuild, so executescript never references
+-- specialty_one on a not-yet-migrated table. 1st Edition and Unlimited printings
+-- are separate products at separate prices and must not collide on one row.
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_card ON market_snapshots(card_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_date ON market_snapshots(snapshot_date);

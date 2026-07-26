@@ -98,6 +98,9 @@ def build_snapshot(fetch_result: dict[str, Any], snapshot_date: str) -> dict[str
         "card_id": fetch_result["cardId"],
         "condition": fetch_result["condition"],
         "finish": fetch_result["finish"],
+        # 1st Edition and Unlimited are separate products at separate prices;
+        # without this they collide on one row per day and the last write wins.
+        "specialty_one": fetch_result.get("specialtyOne") or "None",
         "snapshot_date": snapshot_date,
         "source": fetch_result["source"],
         **listings,

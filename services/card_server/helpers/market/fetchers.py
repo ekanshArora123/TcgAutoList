@@ -72,9 +72,7 @@ async def fetch_market_data_for_card(
         # No caller-supplied plan (e.g. --cohort, where nothing is owned): take
         # the variants the sold data reveals, falling back to NM/Regular so a
         # card with no sales at all still gets one listing probe.
-        variants = [(c, f, "None") for c, f in _keys_to_pairs(keyed_solds)] or [
-            ("NM", "Regular", "None")
-        ]
+        variants = _keys_to_variants(keyed_solds) or [("NM", "Regular", "None")]
 
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -86,7 +84,7 @@ async def fetch_market_data_for_card(
         listings = await fetch_active_listings(
             tcgplayer_id, condition, finish, set_name, specialty_one
         )
-        key = f"{condition}|{finish}"
+        key = f"{condition}|{finish}|{specialty_one}"
         seen.add(key)
         results.append(
             {
@@ -105,13 +103,13 @@ async def fetch_market_data_for_card(
     for key, solds in keyed_solds.items():
         if key in seen:
             continue
-        condition, finish = key.split("|")
+        condition, finish, specialty_one = key.split("|")
         results.append(
             {
                 "cardId": tcgplayer_id,
                 "condition": condition,
                 "finish": finish,
-                "specialtyOne": "None",
+                "specialtyOne": specialty_one,
                 "source": "tcgplayer",
                 "activeListings": [],
                 "soldListings": solds,
@@ -121,7 +119,7 @@ async def fetch_market_data_for_card(
     return results
 
 
-def _keys_to_pairs(keyed: dict[str, list[dict[str, Any]]]) -> list[tuple[str, str]]:
+def _keys_to_variants(keyed: dict[str, list[dict[str, Any]]]) -> list[tuple[str, str, str]]:
     return [tuple(k.split("|")) for k in keyed]  # type: ignore[misc]
 
 
@@ -157,8 +155,14 @@ async def fetch_market_data_batch(
 
 
 def _group_by_condition_finish(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Bucket listings/solds by the full variant identity.
+
+    specialty_one is part of the key: a 1st Edition sale and an Unlimited sale
+    are different products at very different prices, and pooling them skews the
+    sold-side signal (divergence and blend) toward the rarer printing.
+    """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in items:
-        key = f"{item['condition']}|{item['finish']}"
+        key = f"{item['condition']}|{item['finish']}|{item.get('specialty_one') or 'None'}"
         grouped.setdefault(key, []).append(item)
     return grouped

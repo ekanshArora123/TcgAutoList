@@ -1,6 +1,6 @@
 """Tests for full variant coverage in the market collector.
 
-Regression tests for three collector bugs that together left ~93% of the
+Regression tests for the collector bugs that together left ~93% of the
 collection without a lowest-listing anchor:
 
   1. Listings were fetched with no condition/finish, so the TCGplayer endpoint
@@ -10,6 +10,9 @@ collection without a lowest-listing anchor:
      priced by the collector at all — their SKUs kept a years-old estimate.
   3. `set_name` was not threaded to the fetcher, so WOTC-era sets were queried
      with printing "Normal" instead of "Unlimited" and matched no listings.
+  4. specialty_one was dropped everywhere below the SKU: 1st Edition SKUs were
+     never priced, their snapshots collided with the Unlimited row, and their
+     sold listings pooled with Unlimited ones ($27 sales mixed with $2 sales).
 
 DB-backed tests use an in-memory SQLite built from schema.sql; the network is
 stubbed, so nothing here touches TCGplayer.
@@ -23,12 +26,12 @@ from pathlib import Path
 
 import pytest
 
+from services.card_server.db import _upgrade_market_snapshots
 from services.card_server.helpers.market import collector as collector_module
 from services.card_server.helpers.market.collector import MarketCollector
 from services.card_server.helpers.market.fetchers import fetch_market_data_for_card
 from services.card_server.helpers.pricing.algorithm import (
     PricingResult,
-    compute_price,
     interpolate_in_between,
     relabel_alias,
 )
@@ -222,6 +225,10 @@ def db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:", isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # schema.sql deliberately leaves the variant-uniqueness index to db.py, so a
+    # fixture that only runs the schema has no target for the snapshot upsert's
+    # ON CONFLICT. Run the real migration rather than hand-rolling the index.
+    _upgrade_market_snapshots(conn)
     conn.execute(
         "INSERT INTO cards (id, card_name, set_name) VALUES ('88075', 'Pikachu', 'Legendary Collection')"
     )
@@ -398,3 +405,80 @@ def test_price_join_unaffected_without_redirect(db):
     ).fetchone()
     # The extra skus join must not multiply rows.
     assert row["rows"] == 1 and row["total"] == 9.99
+
+
+# ─── specialty_one separation (1st Edition vs Unlimited) ─────
+
+
+def test_derived_sku_never_inherits_a_different_printings_price(db, monkeypatch):
+    """A plain SKU must not pick up the 1st Edition price. Keying the priced-this-run
+    map on (condition, finish) alone let an NM/None SKU inherit the NM/First Edition
+    result — a ~30x error on WOTC cards, where the two printings are separate
+    products ($28 vs $0.35)."""
+    plain_id = _own(db, "MINT", "Regular", "None")
+
+    async def fake_fetch(card_id, variants=None, set_name=None, delay_ms=0):
+        # Only the First Edition printing produced data this run.
+        return [
+            {"cardId": card_id, "condition": "NM", "finish": "Regular",
+             "specialtyOne": "First Edition", "source": "tcgplayer",
+             "activeListings": [{"listed_price": 28.03, "shipping_price": 0.0}],
+             "soldListings": []}
+        ]
+
+    monkeypatch.setattr(collector_module, "fetch_market_data_for_card", fake_fetch)
+    asyncio.run(MarketCollector(db).collect_cards(["88075"], {"delayMs": 0, "verbose": False}))
+
+    assert db.execute(
+        "SELECT COUNT(*) AS c FROM prices WHERE sku_id = ?", (plain_id,)
+    ).fetchone()["c"] == 0
+
+
+def test_snapshots_keep_printings_on_separate_rows(db, monkeypatch):
+    _own(db, "MP", "Regular", "First Edition")
+    _own(db, "MP", "Regular", "None")
+
+    async def fake_fetch(card_id, variants=None, set_name=None, delay_ms=0):
+        prices = {"First Edition": 11.27, "None": 0.35}
+        return [
+            {"cardId": card_id, "condition": c, "finish": f, "specialtyOne": s,
+             "source": "tcgplayer",
+             "activeListings": [{"listed_price": prices[s], "shipping_price": 0.0}],
+             "soldListings": []}
+            for c, f, s in variants
+        ]
+
+    monkeypatch.setattr(collector_module, "fetch_market_data_for_card", fake_fetch)
+    asyncio.run(MarketCollector(db).collect_cards(["88075"], {"delayMs": 0, "verbose": False}))
+
+    rows = db.execute(
+        "SELECT specialty_one, lowest_listing_price FROM market_snapshots"
+        " WHERE condition = 'MP' ORDER BY specialty_one"
+    ).fetchall()
+    # Previously these collided on one row and the last write silently won.
+    assert [(r["specialty_one"], r["lowest_listing_price"]) for r in rows] == [
+        ("First Edition", 11.27),
+        ("None", 0.35),
+    ]
+
+
+def test_sold_listings_split_first_edition_from_unlimited():
+    """The sales API reports the printing in `variant`; pooling $27 1st Edition
+    sales with $2 Unlimited sales skewed the sold-side signal."""
+    from services.card_server.helpers.market.fetchers import _group_by_condition_finish
+
+    grouped = _group_by_condition_finish([
+        {"condition": "NM", "finish": "Regular", "specialty_one": "First Edition",
+         "sold_price": 27.49},
+        {"condition": "NM", "finish": "Regular", "specialty_one": "None", "sold_price": 2.06},
+    ])
+    assert sorted(grouped) == ["NM|Regular|First Edition", "NM|Regular|None"]
+
+
+def test_sales_parser_recovers_specialty_from_variant():
+    from services.card_server.helpers.tcgplayer.formatters import parse_finish_from_api
+
+    assert parse_finish_from_api("1st Edition") == {"finish": "Regular", "specialty_one": "First Edition"}
+    assert parse_finish_from_api("1st Edition Holofoil") == {"finish": "Holo", "specialty_one": "First Edition"}
+    assert parse_finish_from_api("Unlimited") == {"finish": "Regular", "specialty_one": "None"}
+    assert parse_finish_from_api("Normal") == {"finish": "Regular", "specialty_one": "None"}

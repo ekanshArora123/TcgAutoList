@@ -209,21 +209,25 @@ class MarketCollector:
         self, card_id: str, fetch_results: list[dict[str, Any]], date: str
     ) -> int:
         count = 0
-        # Directly-priced results, keyed by the tier they describe, so the
-        # derived pass below can look up an in-between grade's neighbors.
-        priced: dict[tuple[str, str], Any] = {}
+        # Directly-priced results, keyed by the FULL variant they describe, so
+        # the derived pass below can look up an in-between grade's neighbors.
+        # specialty_one belongs in the key: 1st Edition and Unlimited are
+        # separate products, and collapsing them lets a plain SKU inherit the
+        # 1st Edition price (a ~30x error on WOTC cards).
+        priced: dict[tuple[str, str, str], Any] = {}
         priced_sku_ids: set[int] = set()
 
         for result in fetch_results:
             condition = normalize_condition(result["condition"])
             finish = normalize_finish(result["finish"])
+            specialty_one = result.get("specialtyOne") or "None"
 
             sku = self.skus.get_or_create(
                 {
                     "card_id": card_id,
                     "condition": condition,
                     "finish": finish,
-                    "specialty_one": result.get("specialtyOne") or "None",
+                    "specialty_one": specialty_one,
                     "specialty_two": "None",
                     "qty": 0,
                 }
@@ -240,7 +244,7 @@ class MarketCollector:
             )
 
             self._store_price(sku["sku_id"], date, price_result)
-            priced[(condition, finish)] = price_result
+            priced[(condition, finish, specialty_one)] = price_result
             priced_sku_ids.add(sku["sku_id"])
             count += 1
 
@@ -250,7 +254,7 @@ class MarketCollector:
     def _price_derived_skus(
         self,
         card_id: str,
-        priced: dict[tuple[str, str], Any],
+        priced: dict[tuple[str, str, str], Any],
         priced_sku_ids: set[int],
         date: str,
     ) -> int:
@@ -269,9 +273,12 @@ class MarketCollector:
 
             finish = normalize_finish(sku["finish"])
             condition = normalize_condition(sku["condition"])
+            # Derive only from the SAME printing — a plain SKU must never inherit
+            # the 1st Edition price, or vice versa.
+            specialty_one = sku["specialty_one"] or "None"
 
             if is_primary(condition):
-                source = priced.get((condition, finish))
+                source = priced.get((condition, finish, specialty_one))
                 if source is None:
                     continue
                 derived = relabel_alias(source, sku["condition"], condition)
@@ -282,9 +289,9 @@ class MarketCollector:
                 better, worse = neighbors
                 derived = interpolate_in_between(
                     sku["condition"],
-                    priced.get((better, finish)),
+                    priced.get((better, finish, specialty_one)),
                     better,
-                    priced.get((worse, finish)),
+                    priced.get((worse, finish, specialty_one)),
                     worse,
                 )
                 if derived is None:

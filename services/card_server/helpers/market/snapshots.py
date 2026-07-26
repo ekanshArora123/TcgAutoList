@@ -14,18 +14,18 @@ SnapshotQuery = dict
 
 _INSERT_SQL = """
     INSERT INTO market_snapshots (
-      card_id, condition, finish, snapshot_date, source,
+      card_id, condition, finish, specialty_one, snapshot_date, source,
       listing_count, lowest_listing_price, median_listing_price,
       mean_listing_price, p25_listing_price, p75_listing_price,
       recent_sales_count, avg_sale_price, median_sale_price,
       min_sale_price, max_sale_price, newest_sale_date, oldest_sale_date
     ) VALUES (
-      :card_id, :condition, :finish, :snapshot_date, :source,
+      :card_id, :condition, :finish, :specialty_one, :snapshot_date, :source,
       :listing_count, :lowest_listing_price, :median_listing_price,
       :mean_listing_price, :p25_listing_price, :p75_listing_price,
       :recent_sales_count, :avg_sale_price, :median_sale_price,
       :min_sale_price, :max_sale_price, :newest_sale_date, :oldest_sale_date
-    ) ON CONFLICT(card_id, condition, finish, snapshot_date, source)
+    ) ON CONFLICT(card_id, condition, finish, specialty_one, snapshot_date, source)
     DO UPDATE SET
       listing_count = excluded.listing_count,
       lowest_listing_price = excluded.lowest_listing_price,
@@ -43,7 +43,7 @@ _INSERT_SQL = """
 """
 
 _SNAPSHOT_FIELDS = (
-    "card_id", "condition", "finish", "snapshot_date", "source",
+    "card_id", "condition", "finish", "specialty_one", "snapshot_date", "source",
     "listing_count", "lowest_listing_price", "median_listing_price",
     "mean_listing_price", "p25_listing_price", "p75_listing_price",
     "recent_sales_count", "avg_sale_price", "median_sale_price",
@@ -52,7 +52,10 @@ _SNAPSHOT_FIELDS = (
 
 
 def _params(snapshot: dict[str, Any]) -> dict[str, Any]:
-    return {k: snapshot.get(k) for k in _SNAPSHOT_FIELDS}
+    params = {k: snapshot.get(k) for k in _SNAPSHOT_FIELDS}
+    # specialty_one is NOT NULL; older callers omit it entirely.
+    params["specialty_one"] = params["specialty_one"] or "None"
+    return params
 
 
 class SnapshotStore:
@@ -73,21 +76,29 @@ class SnapshotStore:
             raise
         return len(snapshots)
 
-    def get_latest(self, card_id: str, condition: str, finish: str) -> Optional[dict]:
+    def get_latest(
+        self, card_id: str, condition: str, finish: str, specialty_one: str = "None"
+    ) -> Optional[dict]:
         row = self.db.execute(
             "SELECT * FROM market_snapshots WHERE card_id = ? AND condition = ? AND finish = ? "
-            "ORDER BY snapshot_date DESC LIMIT 1",
-            (card_id, condition, finish),
+            "AND specialty_one = ? ORDER BY snapshot_date DESC LIMIT 1",
+            (card_id, condition, finish, specialty_one),
         ).fetchone()
         return dict(row) if row else None
 
     def get_history(
-        self, card_id: str, condition: str, finish: str, limit: int = 90, offset: int = 0
+        self,
+        card_id: str,
+        condition: str,
+        finish: str,
+        limit: int = 90,
+        offset: int = 0,
+        specialty_one: str = "None",
     ) -> list[dict]:
         rows = self.db.execute(
             "SELECT * FROM market_snapshots WHERE card_id = ? AND condition = ? AND finish = ? "
-            "ORDER BY snapshot_date DESC LIMIT ? OFFSET ?",
-            (card_id, condition, finish, limit, offset),
+            "AND specialty_one = ? ORDER BY snapshot_date DESC LIMIT ? OFFSET ?",
+            (card_id, condition, finish, specialty_one, limit, offset),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -104,6 +115,9 @@ class SnapshotStore:
         if query.get("finish"):
             conditions.append("finish = ?")
             params.append(query["finish"])
+        if query.get("specialty_one"):
+            conditions.append("specialty_one = ?")
+            params.append(query["specialty_one"])
         if query.get("source"):
             conditions.append("source = ?")
             params.append(query["source"])
