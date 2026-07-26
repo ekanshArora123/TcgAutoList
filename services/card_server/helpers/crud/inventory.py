@@ -12,12 +12,20 @@ from .skus import SkusHelper
 # whose calculation_date matches the SKU's latest_calc_date, priced against
 # pricing_sku_id when set (else the card's own SKU). Single source of truth —
 # every inventory+price read (CRUD, reporting, analytics) builds on this FROM.
+#
+# `s` is the card's OWN sku (its real condition/finish — what the UI shows).
+# `ps` is the sku the price is read from, which differs whenever pricing_sku_id
+# redirects a borderline card to another condition. Both the price's sku_id AND
+# its calculation_date must come from `ps`: taking the date from `s` instead
+# silently produced NO price row whenever the two skus were last calculated on
+# different dates, dropping those cards out of every total at $0.
 INV_SKU_CARD_PRICE_FROM = """
     FROM inventory i
     JOIN skus s ON i.sku_id = s.sku_id
     JOIN cards c ON s.card_id = c.id
-    LEFT JOIN prices p ON COALESCE(i.pricing_sku_id, i.sku_id) = p.sku_id
-      AND p.calculation_date = s.latest_calc_date
+    LEFT JOIN skus ps ON ps.sku_id = COALESCE(i.pricing_sku_id, i.sku_id)
+    LEFT JOIN prices p ON p.sku_id = ps.sku_id
+      AND p.calculation_date = ps.latest_calc_date
 """
 
 _DETAIL_SELECT = """

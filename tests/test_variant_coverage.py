@@ -349,3 +349,52 @@ def test_force_overrides_same_day_skip(db, monkeypatch):
 
     asyncio.run(c.collect_cards(["88075"], {"delayMs": 0, "verbose": False, "force": True}))
     assert seen == ["88075"]
+
+
+# ─── pricing_sku_id price join (bug 4) ───────────────────────
+
+
+def test_price_join_follows_pricing_sku_date(db):
+    """A redirected card must read BOTH the sku_id and the calculation_date from
+    the pricing SKU. Taking the date from the inventory SKU instead silently
+    yielded no price row whenever the two were last calculated on different
+    dates, dropping the card out of every total at $0."""
+    from services.card_server.helpers.crud.inventory import INV_SKU_CARD_PRICE_FROM
+
+    own_id = _own(db, "LP", "Reverse-Holo")          # owned condition
+    price_id = _own(db, "MP", "Reverse-Holo")        # priced against this one
+    db.execute("UPDATE inventory SET pricing_sku_id = ? WHERE sku_id = ?", (price_id, own_id))
+
+    # The two SKUs were last priced on DIFFERENT dates — the regression trigger.
+    db.execute("UPDATE skus SET latest_calc_date = '2026-07-24' WHERE sku_id = ?", (own_id,))
+    db.execute("UPDATE skus SET latest_calc_date = '2026-06-16' WHERE sku_id = ?", (price_id,))
+    db.execute(
+        "INSERT INTO prices (sku_id, calculation_date, estimated_price)"
+        " VALUES (?, '2026-06-16', 1.46)",
+        (price_id,),
+    )
+
+    row = db.execute(
+        "SELECT SUM(p.estimated_price * i.qty) AS total" + INV_SKU_CARD_PRICE_FROM
+        + "WHERE i.sku_id = ?",
+        (own_id,),
+    ).fetchone()
+    assert row["total"] == 1.46
+
+
+def test_price_join_unaffected_without_redirect(db):
+    from services.card_server.helpers.crud.inventory import INV_SKU_CARD_PRICE_FROM
+
+    sku_id = _own(db, "NM", "Regular")
+    db.execute("UPDATE skus SET latest_calc_date = '2026-07-25' WHERE sku_id = ?", (sku_id,))
+    db.execute(
+        "INSERT INTO prices (sku_id, calculation_date, estimated_price)"
+        " VALUES (?, '2026-07-25', 9.99)",
+        (sku_id,),
+    )
+
+    row = db.execute(
+        "SELECT COUNT(*) AS rows, SUM(p.estimated_price) AS total" + INV_SKU_CARD_PRICE_FROM
+    ).fetchone()
+    # The extra skus join must not multiply rows.
+    assert row["rows"] == 1 and row["total"] == 9.99
