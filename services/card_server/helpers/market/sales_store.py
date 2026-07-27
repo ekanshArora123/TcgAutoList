@@ -13,16 +13,16 @@ from typing import Any
 
 _INSERT_SQL = """
     INSERT INTO sales (
-      card_id, condition, finish, source,
+      card_id, condition, finish, specialty_one, source,
       order_date, purchase_price, shipping_price, quantity, has_image
     ) VALUES (
-      :card_id, :condition, :finish, :source,
+      :card_id, :condition, :finish, :specialty_one, :source,
       :order_date, :purchase_price, :shipping_price, :quantity, :has_image
     )
 """
 
 _FIELDS = (
-    "card_id", "condition", "finish", "source",
+    "card_id", "condition", "finish", "specialty_one", "source",
     "order_date", "purchase_price", "shipping_price", "quantity", "has_image",
 )
 
@@ -30,6 +30,9 @@ _FIELDS = (
 def _params(sale: dict[str, Any], source: str) -> dict[str, Any]:
     row = {k: sale.get(k) for k in _FIELDS}
     row["source"] = sale.get("source") or source
+    # NOT NULL with a default only helps when the column is omitted; an explicit
+    # None still fails, and callers predating the column pass none at all.
+    row["specialty_one"] = sale.get("specialty_one") or "None"
     row["quantity"] = sale.get("quantity") or 1
     row["shipping_price"] = sale.get("shipping_price") or 0
     row["has_image"] = 1 if sale.get("has_image") else 0

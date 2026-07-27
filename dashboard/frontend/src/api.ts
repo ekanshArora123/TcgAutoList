@@ -320,6 +320,7 @@ export interface SalesPoint {
 export interface CardSalesHistory {
   card_id: string;
   finish: string;
+  specialty_one: string;
   source: string;
   days: number;
   include_images: boolean;
@@ -328,13 +329,20 @@ export interface CardSalesHistory {
 }
 
 // Photo/custom-listing sales are excluded by default; pass includeImages to fold them in.
+// specialtyOne keeps 1st Edition and Unlimited on separate series (separate printings,
+// very different prices) — same variant identity the card detail page is keyed on.
 export function fetchCardSalesHistory(
   cardId: string,
   finish: string,
   days: number,
   includeImages = false,
+  specialtyOne = "None",
 ): Promise<CardSalesHistory> {
-  const params: Record<string, string> = { finish, days: String(days) };
+  const params: Record<string, string> = {
+    finish,
+    specialty_one: specialtyOne,
+    days: String(days),
+  };
   if (includeImages) params.include_images = "true";
   const qs = new URLSearchParams(params).toString();
   return fetchJson(`${BASE}/card/${cardId}/sales?${qs}`);
@@ -351,6 +359,7 @@ export interface SalesRawPoint {
 export interface CardSalesPoints {
   card_id: string;
   finish: string;
+  specialty_one: string;
   source: string;
   days: number;
   conditions: string[];
@@ -362,8 +371,13 @@ export function fetchCardSalesPoints(
   finish: string,
   days: number,
   includeImages = false,
+  specialtyOne = "None",
 ): Promise<CardSalesPoints> {
-  const params: Record<string, string> = { finish, days: String(days) };
+  const params: Record<string, string> = {
+    finish,
+    specialty_one: specialtyOne,
+    days: String(days),
+  };
   if (includeImages) params.include_images = "true";
   const qs = new URLSearchParams(params).toString();
   return fetchJson(`${BASE}/card/${cardId}/sales-points?${qs}`);
@@ -379,6 +393,7 @@ export interface MarketPricePoint {
 export interface CardPriceHistory {
   card_id: string;
   finish: string;
+  specialty_one: string;
   source: string;
   days: number;
   conditions: string[];
@@ -389,8 +404,13 @@ export function fetchCardPriceHistory(
   cardId: string,
   finish: string,
   days: number,
+  specialtyOne = "None",
 ): Promise<CardPriceHistory> {
-  const qs = new URLSearchParams({ finish, days: String(days) }).toString();
+  const qs = new URLSearchParams({
+    finish,
+    specialty_one: specialtyOne,
+    days: String(days),
+  }).toString();
   return fetchJson(`${BASE}/card/${cardId}/price-history?${qs}`);
 }
 

@@ -483,15 +483,16 @@ class ReportingService:
         days: int = 365,
         source: str = "tcgplayer",
         include_images: bool = False,
+        specialty_one: str = "None",
     ) -> dict[str, Any]:
         """Daily sales rollup for the per-card graph, one series per condition.
 
         Reads the raw `sales` table (never the pricing tables). Each point is a
         day's MEDIAN sale price (purchase + shipping) plus min/max and volume for
         one condition; the median is over sale rows (not quantity-weighted) and
-        is outlier-resistant. Sales are keyed by card_id + condition + finish, so
-        a 1st Edition (its own product id) or Reverse-Holo resolves correctly via
-        the card_id/finish the page passes in.
+        is outlier-resistant. Sales are keyed by card_id + condition + finish +
+        specialty_one, so a 1st Edition or Reverse-Holo resolves to its own
+        series via the variant axes the page passes in.
 
         Photo/custom listings (has_image = 1) are excluded by default since they
         price very differently; pass include_images=True to fold them in.
@@ -507,10 +508,11 @@ class ReportingService:
                    (purchase_price + shipping_price) AS price,
                    quantity
             FROM sales
-            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
+            WHERE card_id = ? AND finish = ? AND specialty_one = ? AND source = ?
+              AND order_date >= ?{image_clause}
             ORDER BY date
             """,
-            (card_id, finish, source, cutoff),
+            (card_id, finish, specialty_one, source, cutoff),
         ).fetchall()
 
         # Group per (condition, day) and take the median price; SQLite has no
@@ -538,6 +540,7 @@ class ReportingService:
         return {
             "card_id": card_id,
             "finish": finish,
+            "specialty_one": specialty_one,
             "source": source,
             "days": days,
             "include_images": include_images,
@@ -552,6 +555,7 @@ class ReportingService:
         days: int = 365,
         source: str = "tcgplayer",
         include_images: bool = False,
+        specialty_one: str = "None",
     ) -> dict[str, Any]:
         """Individual sales as graph points (one per unit) for the scatter view.
 
@@ -571,10 +575,11 @@ class ReportingService:
                    (purchase_price + shipping_price) AS price,
                    quantity
             FROM sales
-            WHERE card_id = ? AND finish = ? AND source = ? AND order_date >= ?{image_clause}
+            WHERE card_id = ? AND finish = ? AND specialty_one = ? AND source = ?
+              AND order_date >= ?{image_clause}
             ORDER BY order_date
             """,
-            (card_id, finish, source, cutoff),
+            (card_id, finish, specialty_one, source, cutoff),
         ).fetchall()
 
         points = []
@@ -589,6 +594,7 @@ class ReportingService:
         return {
             "card_id": card_id,
             "finish": finish,
+            "specialty_one": specialty_one,
             "source": source,
             "days": days,
             "include_images": include_images,
@@ -602,6 +608,7 @@ class ReportingService:
         finish: str = "Regular",
         days: int = 365,
         source: str = "tcgplayer",
+        specialty_one: str = "None",
     ) -> dict[str, Any]:
         """TCGplayer market-price history for the per-card graph, per condition.
 
@@ -615,11 +622,11 @@ class ReportingService:
             """
             SELECT condition, bucket_date AS date, market_price
             FROM market_price_history
-            WHERE card_id = ? AND finish = ? AND source = ? AND bucket_date >= ?
-              AND market_price IS NOT NULL
+            WHERE card_id = ? AND finish = ? AND specialty_one = ? AND source = ?
+              AND bucket_date >= ? AND market_price IS NOT NULL
             ORDER BY bucket_date
             """,
-            (card_id, finish, source, cutoff),
+            (card_id, finish, specialty_one, source, cutoff),
         ).fetchall()
 
         points = [
@@ -631,6 +638,7 @@ class ReportingService:
         return {
             "card_id": card_id,
             "finish": finish,
+            "specialty_one": specialty_one,
             "source": source,
             "days": days,
             "conditions": conditions,

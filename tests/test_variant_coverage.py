@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -235,11 +236,17 @@ def db() -> sqlite3.Connection:
     return conn
 
 
-def _own(db: sqlite3.Connection, condition: str, finish: str, specialty_one: str = "None") -> int:
+def _own(
+    db: sqlite3.Connection,
+    condition: str,
+    finish: str,
+    specialty_one: str = "None",
+    specialty_two: str = "None",
+) -> int:
     cur = db.execute(
         "INSERT INTO skus (card_id, condition, finish, specialty_one, specialty_two, qty)"
-        " VALUES ('88075', ?, ?, ?, 'None', 1)",
-        (condition, finish, specialty_one),
+        " VALUES ('88075', ?, ?, ?, ?, 1)",
+        (condition, finish, specialty_one, specialty_two),
     )
     sku_id = cur.lastrowid
     db.execute("INSERT INTO inventory (sku_id, qty) VALUES (?, 1)", (sku_id,))
@@ -311,6 +318,62 @@ def test_collector_prices_alias_conditions(db, monkeypatch):
                       (dm_id,)).fetchone()["estimated_price"] == 3.0
 
 
+def _fake_fetch_at(prices: dict[str, float]):
+    async def fake_fetch(card_id, variants=None, set_name=None, delay_ms=0):
+        return [
+            {"cardId": card_id, "condition": c, "finish": f, "specialtyOne": s,
+             "source": "tcgplayer",
+             "activeListings": [{"listed_price": prices[c], "shipping_price": 0.0}],
+             "soldListings": []}
+            for c, f, s in variants
+        ]
+
+    return fake_fetch
+
+
+def test_error_variant_priced_from_base_and_always_flagged(db, monkeypatch):
+    """An error SKU (specialty_two) has no TCGplayer tier of its own.
+
+    It used to inherit the base variant's price silently: `compute_price`'s
+    `has_manual_review_specialty` never fired (every caller resolves the SKU with
+    specialty_two='None', so the flag was always False), and the derived pass
+    relabelled it with nonsense reasoning about tiers. It must carry the base
+    price AND a review flag.
+    """
+    base_id = _own(db, "NM", "Regular")
+    error_id = _own(db, "NM", "Regular", specialty_two="Miscut")
+
+    monkeypatch.setattr(collector_module, "fetch_market_data_for_card", _fake_fetch_at({"NM": 12.0}))
+    asyncio.run(MarketCollector(db).collect_cards(["88075"], {"delayMs": 0, "verbose": False}))
+
+    base = db.execute("SELECT * FROM prices WHERE sku_id = ?", (base_id,)).fetchone()
+    error = db.execute("SELECT * FROM prices WHERE sku_id = ?", (error_id,)).fetchone()
+
+    assert base["estimated_price"] == 12.0
+    assert base["manual_check_necessary"] == 0
+    # Same estimate (the only data that exists), but a human has to look.
+    assert error["estimated_price"] == 12.0
+    assert error["manual_check_necessary"] == 1
+    assert "Miscut" in error["reasoning"]
+    # And NOT the alias wording — it is the same tier, not a renamed one.
+    assert "no distinct TCGplayer tier — priced as NM" not in error["reasoning"]
+
+
+def test_collector_persists_reasoning(db, monkeypatch):
+    """The reasoning string explains which branch produced a price. It was
+    computed and thrown away, leaving stored prices unexplainable after the fact.
+    """
+    sku_id = _own(db, "NM", "Regular")
+
+    monkeypatch.setattr(collector_module, "fetch_market_data_for_card", _fake_fetch_at({"NM": 12.0}))
+    asyncio.run(MarketCollector(db).collect_cards(["88075"], {"delayMs": 0, "verbose": False}))
+
+    reasoning = db.execute(
+        "SELECT reasoning FROM prices WHERE sku_id = ?", (sku_id,)
+    ).fetchone()["reasoning"]
+    assert "Anchored on lowest active listing: $12.00." in reasoning
+
+
 def test_in_between_sku_left_alone_when_no_neighbor_data(db, monkeypatch):
     sku_id = _own(db, "MP-LP", "Reverse-Holo")
     db.execute(
@@ -338,9 +401,14 @@ def test_in_between_sku_left_alone_when_no_neighbor_data(db, monkeypatch):
 
 def test_force_overrides_same_day_skip(db, monkeypatch):
     _own(db, "NM", "Regular")
+    # Seed with the collector's own notion of "today" (local date). SQLite's
+    # date('now') is UTC, so seeding with it made this test fail for whatever
+    # part of the day the two calendars disagree.
+    today = datetime.now().date().isoformat()
     db.execute(
         "INSERT INTO market_snapshots (card_id, condition, finish, snapshot_date, source)"
-        " VALUES ('88075', 'NM', 'Regular', date('now'), 'tcgplayer')"
+        " VALUES ('88075', 'NM', 'Regular', ?, 'tcgplayer')",
+        (today,),
     )
     seen: list[str] = []
 

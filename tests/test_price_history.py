@@ -96,3 +96,31 @@ def test_history_filters_finish(db):
     ])
     holo = ReportingService(db).card_price_history("111", finish="Holo", days=100000)
     assert [p["market_price"] for p in holo["points"]] == [200.0]
+
+
+def test_map_price_history_keeps_the_printing_apart():
+    # The API buckets by printing; 1st Edition and Unlimited are separate
+    # products at very different prices and must not share a series.
+    api = [
+        {"variant": "1st Edition Holofoil", "condition": "Near Mint",
+         "buckets": [{"marketPrice": "800.00", "bucketStartDate": "2026-06-22"}]},
+        {"variant": "Unlimited Holofoil", "condition": "Near Mint",
+         "buckets": [{"marketPrice": "25.00", "bucketStartDate": "2026-06-22"}]},
+    ]
+    rows = map_price_history(api, "111")
+    assert [(r["finish"], r["specialty_one"]) for r in rows] == [
+        ("Holo", "First Edition"),
+        ("Holo", "None"),
+    ]
+
+
+def test_history_separates_printings(db):
+    MarketPriceStore(db).replace_card("111", [
+        _row("2026-06-22", 25.0),
+        {**_row("2026-06-22", 800.0), "specialty_one": "First Edition"},
+    ])
+    svc = ReportingService(db)
+    assert [p["market_price"] for p in svc.card_price_history(
+        "111", finish="Holo", days=100000)["points"]] == [25.0]
+    assert [p["market_price"] for p in svc.card_price_history(
+        "111", finish="Holo", days=100000, specialty_one="First Edition")["points"]] == [800.0]

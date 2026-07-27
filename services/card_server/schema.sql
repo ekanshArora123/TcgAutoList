@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS prices (
     estimated_high_price            REAL,
     estimated_low_price_liquid      REAL,
     estimated_high_price_liquid     REAL,
+    reasoning                       TEXT,  -- why the algorithm landed here (audit trail)
 
     PRIMARY KEY (sku_id, calculation_date)
 );
@@ -141,6 +142,9 @@ CREATE TABLE IF NOT EXISTS sales (
     card_id        TEXT NOT NULL REFERENCES cards(id),
     condition      TEXT NOT NULL,
     finish         TEXT NOT NULL DEFAULT 'Regular',
+    -- Same reason as market_snapshots: 1st Edition and Unlimited are separate
+    -- printings at very different prices, so a graph that pools them is wrong.
+    specialty_one  TEXT NOT NULL DEFAULT 'None',
     source         TEXT NOT NULL DEFAULT 'tcgplayer',
     order_date     TEXT NOT NULL,                 -- ISO datetime of the sale
     purchase_price REAL NOT NULL,                 -- card price (excl. shipping)
@@ -150,7 +154,7 @@ CREATE TABLE IF NOT EXISTS sales (
     fetched_at     TEXT DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_sales_variant ON sales(card_id, condition, finish, source);
+CREATE INDEX IF NOT EXISTS idx_sales_variant ON sales(card_id, condition, finish, specialty_one, source);
 CREATE INDEX IF NOT EXISTS idx_sales_card_date ON sales(card_id, order_date);
 
 -----------------------------------------------------
@@ -164,6 +168,7 @@ CREATE TABLE IF NOT EXISTS market_price_history (
     card_id           TEXT NOT NULL REFERENCES cards(id),
     condition         TEXT NOT NULL,
     finish            TEXT NOT NULL DEFAULT 'Regular',
+    specialty_one     TEXT NOT NULL DEFAULT 'None',   -- see `sales`
     source            TEXT NOT NULL DEFAULT 'tcgplayer',
     bucket_date       TEXT NOT NULL,             -- ISO week-start date YYYY-MM-DD
     market_price      REAL,
@@ -174,7 +179,7 @@ CREATE TABLE IF NOT EXISTS market_price_history (
     fetched_at        TEXT DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_mph_variant ON market_price_history(card_id, condition, finish, source);
+CREATE INDEX IF NOT EXISTS idx_mph_variant ON market_price_history(card_id, condition, finish, specialty_one, source);
 CREATE INDEX IF NOT EXISTS idx_mph_card_date ON market_price_history(card_id, bucket_date);
 
 -----------------------------------------------------

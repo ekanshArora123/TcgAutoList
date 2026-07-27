@@ -47,7 +47,15 @@ function SalesTooltip({ active, payload, label }: any) {
   );
 }
 
-export default function SalesChart({ cardId, finish }: { cardId: string; finish: string }) {
+export default function SalesChart({
+  cardId,
+  finish,
+  specialtyOne = "None",
+}: {
+  cardId: string;
+  finish: string;
+  specialtyOne?: string;
+}) {
   const [days, setDays] = useState(90);
   const [sales, setSales] = useState<CardSalesHistory | null>(null);
   const [prices, setPrices] = useState<CardPriceHistory | null>(null);
@@ -63,18 +71,20 @@ export default function SalesChart({ cardId, finish }: { cardId: string; finish:
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      fetchCardSalesHistory(cardId, finish, days).catch(() => null),
-      fetchCardPriceHistory(cardId, finish, days).catch(() => null),
+      fetchCardSalesHistory(cardId, finish, days, false, specialtyOne).catch(() => null),
+      fetchCardPriceHistory(cardId, finish, days, specialtyOne).catch(() => null),
     ])
       .then(([s, p]) => { setSales(s); setPrices(p); })
       .finally(() => setLoading(false));
-  }, [cardId, finish, days]);
+  }, [cardId, finish, specialtyOne, days]);
 
   // Individual sale points are fetched only when the Points layer is on.
   useEffect(() => {
     if (!showPoints) { setRawPoints(null); return; }
-    fetchCardSalesPoints(cardId, finish, days).then(setRawPoints).catch(() => setRawPoints(null));
-  }, [cardId, finish, days, showPoints]);
+    fetchCardSalesPoints(cardId, finish, days, false, specialtyOne)
+      .then(setRawPoints)
+      .catch(() => setRawPoints(null));
+  }, [cardId, finish, specialtyOne, days, showPoints]);
 
   // Union of conditions across all series, best -> worst. Colors key off this
   // full list so a condition keeps its color regardless of what's filtered.

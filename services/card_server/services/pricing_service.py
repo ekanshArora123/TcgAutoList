@@ -140,14 +140,17 @@ class PricingService:
                 }
             )
 
-            has_manual_review_specialty = sku["specialty_two"] != "None"
-
+            # The SKU resolved above is always the plain one (get_or_create keys
+            # on specialty_two='None'), so there is no error specialty to honour
+            # here. Error variants are priced by the collector's derived pass,
+            # which flags them; the seller pipeline routes them via the tier
+            # router's own specialty_two check.
             result = compute_price(
                 listings_by_key.get(key, []),
                 solds_by_key.get(key, []),
                 condition,
                 finish,
-                has_manual_review_specialty,
+                has_manual_review_specialty=False,
             )
 
             price = self.prices.upsert(
@@ -164,10 +167,12 @@ class PricingService:
                     "estimated_high_price": result.estimated_high_price,
                     "estimated_low_price_liquid": result.estimated_low_price_liquid,
                     "estimated_high_price_liquid": result.estimated_high_price_liquid,
+                    "reasoning": result.reasoning,
                 }
             )
 
-            results.append({**price, "reasoning": result.reasoning})
+            # `reasoning` is a stored column now, so the row already carries it.
+            results.append(price)
 
         return results
 
@@ -194,9 +199,8 @@ class PricingService:
             }
         )
 
-        has_manual_review_specialty = sku["specialty_two"] != "None"
-
-        result = compute_price(listings, solds, condition, finish, has_manual_review_specialty)
+        # Always the plain SKU — see the note in fetch_and_store_prices.
+        result = compute_price(listings, solds, condition, finish, has_manual_review_specialty=False)
 
         if result.estimated_price is None:
             extrapolated = await self._try_extrapolate_from_other_conditions(
@@ -227,10 +231,11 @@ class PricingService:
                 "estimated_high_price": result.estimated_high_price,
                 "estimated_low_price_liquid": result.estimated_low_price_liquid,
                 "estimated_high_price_liquid": result.estimated_high_price_liquid,
+                "reasoning": result.reasoning,
             }
         )
 
-        return {**price, "reasoning": result.reasoning}
+        return price
 
     async def _try_extrapolate_from_other_conditions(
         self, tcgplayer_id: str, target_condition: str, target_finish: str

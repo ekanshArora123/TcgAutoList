@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from services.card_server.db import _upgrade_graph_specialty
 from services.card_server.helpers.crud.cards import CardsHelper
 from services.card_server.helpers.market.sales_store import SalesStore
 from services.card_server.helpers.tcgplayer.fetch_sales_history import map_sales
@@ -55,6 +56,22 @@ def test_map_sales_maps_fields_and_normalizes_codes():
     assert r["quantity"] == 1
     assert r["source"] == "tcgplayer"
     assert r["has_image"] == 0             # standard listing
+    assert r["specialty_one"] == "None"    # plain printing
+
+
+def test_map_sales_keeps_the_printing_apart():
+    """`variant` carries the printing, which yields both finish and specialty.
+
+    Dropping the specialty pooled $27 1st Edition sales with $2 Unlimited ones
+    in a single graph series for every WOTC card.
+    """
+    rows, _ = map_sales(
+        [_raw("2025-06-01T10:00:00", variant="1st Edition Holofoil"),
+         _raw("2025-06-01T11:00:00", variant="Unlimited Holofoil")],
+        "111", "", cutoff="2024-01-01",
+    )
+    assert [r["specialty_one"] for r in rows] == ["First Edition", "None"]
+    assert all(r["finish"] == "Holo" for r in rows)  # same finish, different printing
 
 
 def test_map_sales_flags_photo_listings_and_skips_dateless_rows():
@@ -192,9 +209,88 @@ def test_card_sales_history_excludes_photo_listings_by_default(db):
     assert nm2["median_price"] == 31.0  # median of (10+1) and (50+1)
 
 
+def test_card_sales_history_separates_printings(db):
+    # Same card_id, same finish, same day — different printing. The 1st Edition
+    # sale must not land in the plain variant's series (or vice versa).
+    SalesStore(db).replace_card("111", [
+        {**_hsale("2025-06-01T10:00:00", "NM", 2.0), "specialty_one": "None"},
+        {**_hsale("2025-06-01T11:00:00", "NM", 27.0), "specialty_one": "First Edition"},
+    ])
+    svc = ReportingService(db)
+
+    plain = svc.card_sales_history("111", finish="Holo", days=100000)
+    assert [p["median_price"] for p in plain["points"]] == [3.0]  # 2 + 1 shipping
+
+    first_ed = svc.card_sales_history(
+        "111", finish="Holo", days=100000, specialty_one="First Edition"
+    )
+    assert [p["median_price"] for p in first_ed["points"]] == [28.0]
+    assert first_ed["specialty_one"] == "First Edition"
+
+
+def test_card_sales_points_separates_printings(db):
+    SalesStore(db).replace_card("111", [
+        {**_hsale("2025-06-01T10:00:00", "NM", 2.0), "specialty_one": "None"},
+        {**_hsale("2025-06-01T11:00:00", "NM", 27.0), "specialty_one": "First Edition"},
+    ])
+    res = ReportingService(db).card_sales_points(
+        "111", finish="Holo", days=100000, specialty_one="First Edition"
+    )
+    assert [p["price"] for p in res["points"]] == [28.0]
+
+
 def test_card_sales_history_respects_window(db):
     # A sale far in the past is excluded by a short window.
     SalesStore(db).replace_card("111", [_hsale("2000-01-01T10:00:00", "NM", 10.0)])
     hist = ReportingService(db).card_sales_history("111", finish="Holo", days=30)
     assert hist["points"] == []
     assert hist["conditions"] == []
+
+
+# ─── specialty_one migration ─────────────────────────────────
+
+
+def test_upgrade_adds_specialty_to_legacy_graph_tables():
+    """The live DB predates the column, so the upgrade has to add it in place.
+
+    Existing rows land on 'None' (they self-heal on the next collect_sales run,
+    which replaces a card's rows wholesale), and the stale variant index is
+    rebuilt to include the new column.
+    """
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE sales (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, card_id TEXT NOT NULL,
+            condition TEXT NOT NULL, finish TEXT NOT NULL DEFAULT 'Regular',
+            source TEXT NOT NULL DEFAULT 'tcgplayer', order_date TEXT NOT NULL,
+            purchase_price REAL NOT NULL, shipping_price REAL DEFAULT 0,
+            quantity INTEGER DEFAULT 1, has_image INTEGER NOT NULL DEFAULT 0,
+            fetched_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_sales_variant ON sales(card_id, condition, finish, source);
+        CREATE TABLE market_price_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, card_id TEXT NOT NULL,
+            condition TEXT NOT NULL, finish TEXT NOT NULL DEFAULT 'Regular',
+            source TEXT NOT NULL DEFAULT 'tcgplayer', bucket_date TEXT NOT NULL,
+            market_price REAL, low_sale_price REAL, high_sale_price REAL,
+            quantity_sold INTEGER, transaction_count INTEGER,
+            fetched_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_mph_variant ON market_price_history(card_id, condition, finish, source);
+        INSERT INTO sales (card_id, condition, order_date, purchase_price)
+          VALUES ('111', 'NM', '2025-06-01T10:00:00', 10.0);
+        """
+    )
+
+    _upgrade_graph_specialty(conn)
+
+    assert conn.execute("SELECT specialty_one FROM sales").fetchone()["specialty_one"] == "None"
+    for table, index in (("sales", "idx_sales_variant"), ("market_price_history", "idx_mph_variant")):
+        assert "specialty_one" in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        indexed = [r["name"] for r in conn.execute(f"PRAGMA index_info({index})")]
+        assert "specialty_one" in indexed
+
+    _upgrade_graph_specialty(conn)  # idempotent — a second run is a no-op
+    assert conn.execute("SELECT COUNT(*) c FROM sales").fetchone()["c"] == 1

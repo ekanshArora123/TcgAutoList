@@ -19,7 +19,12 @@ from typing import Any
 from ..crud.cards import CardsHelper
 from ..crud.prices import PricesHelper
 from ..crud.skus import SkusHelper
-from ..pricing.algorithm import compute_price, interpolate_in_between, relabel_alias
+from ..pricing.algorithm import (
+    compute_price,
+    flag_error_variant,
+    interpolate_in_between,
+    relabel_alias,
+)
 from ..pricing.conditions import (
     expand_to_primaries,
     is_primary,
@@ -233,14 +238,17 @@ class MarketCollector:
                 }
             )
 
-            has_manual_review_specialty = sku["specialty_two"] != "None"
-
+            # The variant fetched from TCGplayer is by definition the plain one
+            # (specialty_two is an off-TCGplayer error attribute), and the
+            # get_or_create above matches on specialty_two='None', so this SKU
+            # never carries one. Error SKUs are derived from this result in
+            # `_price_derived_skus`, which is where their review flag is set.
             price_result = compute_price(
                 result["activeListings"],
                 result["soldListings"],
                 condition,
                 finish,
-                has_manual_review_specialty,
+                has_manual_review_specialty=False,
             )
 
             self._store_price(sku["sku_id"], date, price_result)
@@ -260,10 +268,13 @@ class MarketCollector:
     ) -> int:
         """Price the card's SKUs that TCGplayer has no tier for.
 
-        Two kinds, both previously skipped entirely by the collector: aliases of
-        a real tier (MINT, DM) and in-between grades (MP-LP, LP-NM, HP-MP,
-        DM-HP). Runs off `priced` — the results just computed from live data —
-        so a derived price is never built on a stale neighbor.
+        Three kinds, all previously skipped by the collector's direct pass:
+        aliases of a real tier (MINT, DM), in-between grades (MP-LP, LP-NM,
+        HP-MP, DM-HP), and error variants (specialty_two — miscuts, holo
+        bleeds), which have no TCGplayer tier of their own and inherit the plain
+        variant's price under a forced review flag. Runs off `priced` — the
+        results just computed from live data — so a derived price is never built
+        on a stale neighbor.
         """
         count = 0
 
@@ -272,16 +283,25 @@ class MarketCollector:
                 continue
 
             finish = normalize_finish(sku["finish"])
+            stored_condition = (sku["condition"] or "").strip().upper()
             condition = normalize_condition(sku["condition"])
             # Derive only from the SAME printing — a plain SKU must never inherit
             # the 1st Edition price, or vice versa.
             specialty_one = sku["specialty_one"] or "None"
+            specialty_two = sku["specialty_two"] or "None"
 
             if is_primary(condition):
                 source = priced.get((condition, finish, specialty_one))
                 if source is None:
                     continue
-                derived = relabel_alias(source, sku["condition"], condition)
+                # Same tier under a different name (MINT/DM) gets relabelled; the
+                # same tier under the SAME name is an error variant of it, whose
+                # estimate carries over untouched (only the flag below changes).
+                derived = (
+                    source
+                    if stored_condition == condition
+                    else relabel_alias(source, sku["condition"], condition)
+                )
             else:
                 neighbors = primary_neighbors(condition)
                 if not neighbors:
@@ -296,6 +316,9 @@ class MarketCollector:
                 )
                 if derived is None:
                     continue
+
+            if specialty_two != "None":
+                derived = flag_error_variant(derived, specialty_two)
 
             self._store_price(sku["sku_id"], date, derived)
             count += 1
@@ -317,6 +340,9 @@ class MarketCollector:
                 "estimated_high_price": price_result.estimated_high_price,
                 "estimated_low_price_liquid": price_result.estimated_low_price_liquid,
                 "estimated_high_price_liquid": price_result.estimated_high_price_liquid,
+                # Persisted so a stored price can be explained after the fact —
+                # which branch fired, what diverged, whether it was derived.
+                "reasoning": price_result.reasoning,
             }
         )
 

@@ -55,10 +55,9 @@ def map_price_history(results: list[dict[str, Any]], card_id: str) -> list[dict[
     rows: list[dict[str, Any]] = []
     for entry in results or []:
         condition = _parse_condition_from_sales_api(entry.get("condition") or "")
-        # market_price_history has no specialty_one column, so 1st Edition and
-        # Unlimited buckets still merge here. That is the graph path only — the
-        # pricing path keys on specialty (see _group_by_condition_finish).
-        finish = parse_finish_from_api(entry.get("variant") or "")["finish"]
+        # The API buckets by printing, so 1st Edition and Unlimited arrive as
+        # separate entries — keep them apart (see the `sales` note).
+        variant = parse_finish_from_api(entry.get("variant") or "")
         for b in entry.get("buckets") or []:
             date = b.get("bucketStartDate") or ""
             if not date:
@@ -67,7 +66,8 @@ def map_price_history(results: list[dict[str, Any]], card_id: str) -> list[dict[
                 {
                     "card_id": card_id,
                     "condition": condition,
-                    "finish": finish,
+                    "finish": variant["finish"],
+                    "specialty_one": variant["specialty_one"],
                     "source": "tcgplayer",
                     "bucket_date": date,
                     "market_price": _f(b.get("marketPrice")),

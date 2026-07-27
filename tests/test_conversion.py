@@ -91,6 +91,42 @@ def test_extrapolation_compounds_30_percent():
     assert extrapolate_across_conditions(10.0, "NM", "NM") == 10.0
 
 
+def test_extrapolation_resolves_alias_spellings():
+    # DM is the legacy spelling of DMG and MINT is priced as NM. Both used to
+    # fall off the tier ladder and return None instead of a price.
+    assert extrapolate_across_conditions(10.0, "NM", "DM") == extrapolate_across_conditions(
+        10.0, "NM", "DMG"
+    )
+    assert extrapolate_across_conditions(10.0, "DM", "HP") is not None
+    assert extrapolate_across_conditions(10.0, "MINT", "LP") == 7.0
+    assert extrapolate_across_conditions(10.0, " nm ", "LP") == 7.0  # case/whitespace
+
+
+# ─── Divergence handling ─────────────────────────────────────
+
+
+def test_listing_above_recent_sales_blends_with_month_average():
+    # Listing $20 vs a fresh sold signal of $10 (>30% divergence) -> blend 50/50
+    # with the last-month sold average, which is also $10 -> $15.
+    solds = [{"sold_price": 10.0, "sold_date": _days_ago(i)} for i in range(3)]
+    res = compute_price([{"listed_price": 20.0, "shipping_price": 0.0}], solds, "NM", "Holo", False)
+    assert res.estimated_price == 15.0
+    assert res.confidence_percent == 80  # blended (70) + volume bonus (10)
+
+
+def test_divergent_listing_without_monthly_solds_scores_lower():
+    """Divergence can be measured off sales of ANY age (the "3 most recent"
+    fallback has no age limit), but the blend needs sales inside 30 days. With
+    none, the listing price stands — and must be distinguishable from a real
+    blend, or downstream can't tell a corrected price from an uncorrectable one.
+    """
+    stale = [{"sold_price": 10.0, "sold_date": _days_ago(120 + i)} for i in range(3)]
+    res = compute_price([{"listed_price": 20.0, "shipping_price": 0.0}], stale, "NM", "Holo", False)
+    assert res.estimated_price == 20.0  # nothing fresh to blend against
+    assert res.confidence_percent == 70  # 60 + volume bonus, below the blended 80
+    assert "no sales within 30 days" in res.reasoning
+
+
 # ─── Recent-sales window ─────────────────────────────────────
 
 

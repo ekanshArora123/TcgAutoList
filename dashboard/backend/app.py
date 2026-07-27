@@ -180,6 +180,7 @@ def card_sales(card_id):
         reporting.card_sales_history(
             card_id,
             finish=request.args.get("finish", "Regular"),
+            specialty_one=request.args.get("specialty_one", "None"),
             days=days,
             include_images=request.args.get("include_images") == "true",
         )
@@ -197,6 +198,7 @@ def card_sales_points(card_id):
         reporting.card_sales_points(
             card_id,
             finish=request.args.get("finish", "Regular"),
+            specialty_one=request.args.get("specialty_one", "None"),
             days=days,
             include_images=request.args.get("include_images") == "true",
         )
@@ -214,6 +216,7 @@ def card_price_history(card_id):
         reporting.card_price_history(
             card_id,
             finish=request.args.get("finish", "Regular"),
+            specialty_one=request.args.get("specialty_one", "None"),
             days=days,
         )
     )

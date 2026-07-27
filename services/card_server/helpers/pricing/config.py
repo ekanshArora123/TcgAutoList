@@ -21,12 +21,18 @@ MIN_SOLDS_FOR_CONFIDENCE = 3
 
 # ─── Recent-Sales Window ────────────────────────────────────
 
-# Sold-listing fetches can now return a card's full sales history (hundreds of
-# rows). Stats that feed pricing (fallback average, low/high range, data volume)
-# must use only RECENT sales, or stale historical prices drag the estimate.
+# Stats that feed pricing (fallback average, low/high range, data volume) use
+# only RECENT sales, so stale historical prices can't drag the estimate.
 # Use whichever group is LARGER: all sales within RECENT_SOLDS_DAYS, or the
 # RECENT_SOLDS_MAX_COUNT most recent sales. (Divergence/blend windows are
 # separate — see DIVERGENCE_RECENT_DAYS / BLEND_SOLDS_DAYS.)
+#
+# NOTE: this window only bites when the fetch returns MORE than
+# RECENT_SOLDS_MAX_COUNT sales. `fetch_prices.fetch_sold_listings` currently
+# caps a card at 25 rows (its own `max_results`), which equals the count below,
+# so today the window is a safety net rather than an active filter. Raise the
+# fetch cap and it starts doing real work — keep the two numbers in mind
+# together.
 RECENT_SOLDS_MAX_COUNT = 25
 RECENT_SOLDS_DAYS = 5
 
@@ -77,8 +83,13 @@ IN_BETWEEN_CONDITIONS: dict[str, tuple[str, str]] = {
 
 CONFIDENCE_LISTING_BASE = 70
 CONFIDENCE_CHEAP_DIVERGENT = 75
-CONFIDENCE_SOLDS_OVERRIDE = 60
 CONFIDENCE_BLENDED = 70
+# Listing sits >30% above the sold signal, but there are no sales inside
+# BLEND_SOLDS_DAYS to blend against — the divergence was measured off the
+# "3 most recent" fallback, which has no age limit. We keep the listing price
+# (the only fresh evidence) but score it BELOW a real blend so downstream can
+# tell "corrected against fresh sales" from "wanted to correct, had no data".
+CONFIDENCE_DIVERGENT_NO_BLEND = 60
 BLEND_RATIO = 0.5
 BLEND_SOLDS_DAYS = 30
 DIVERGENCE_RECENT_DAYS = 7

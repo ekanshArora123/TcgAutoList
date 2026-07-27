@@ -181,7 +181,7 @@ export default function CardDetailPage() {
         </aside>
 
         {/* Middle: sales history graph (one line per condition). */}
-        <SalesChart cardId={card.card_id} finish={finish} />
+        <SalesChart cardId={card.card_id} finish={finish} specialtyOne={specialty_one} />
 
         {/* Right: pricing analytics — placeholder. */}
         <aside className="card-detail-analytics">

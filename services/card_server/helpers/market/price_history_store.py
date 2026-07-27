@@ -12,16 +12,16 @@ from typing import Any
 
 _INSERT_SQL = """
     INSERT INTO market_price_history (
-      card_id, condition, finish, source, bucket_date,
+      card_id, condition, finish, specialty_one, source, bucket_date,
       market_price, low_sale_price, high_sale_price, quantity_sold, transaction_count
     ) VALUES (
-      :card_id, :condition, :finish, :source, :bucket_date,
+      :card_id, :condition, :finish, :specialty_one, :source, :bucket_date,
       :market_price, :low_sale_price, :high_sale_price, :quantity_sold, :transaction_count
     )
 """
 
 _FIELDS = (
-    "card_id", "condition", "finish", "source", "bucket_date",
+    "card_id", "condition", "finish", "specialty_one", "source", "bucket_date",
     "market_price", "low_sale_price", "high_sale_price", "quantity_sold", "transaction_count",
 )
 
@@ -29,6 +29,8 @@ _FIELDS = (
 def _params(row: dict[str, Any], source: str) -> dict[str, Any]:
     out = {k: row.get(k) for k in _FIELDS}
     out["source"] = row.get("source") or source
+    # NOT NULL with a default doesn't cover an explicit None (see sales_store).
+    out["specialty_one"] = row.get("specialty_one") or "None"
     return out
 
 

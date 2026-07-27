@@ -8,10 +8,12 @@ from typing import Any, Optional
 _INSERT_SQL = """
     INSERT INTO prices (sku_id, calculation_date, estimated_price, estimated_liquid_value,
       confidence_percent, manual_check_necessary, manually_checked, algorithm_version,
-      estimated_low_price, estimated_high_price, estimated_low_price_liquid, estimated_high_price_liquid)
+      estimated_low_price, estimated_high_price, estimated_low_price_liquid, estimated_high_price_liquid,
+      reasoning)
     VALUES (:sku_id, :calculation_date, :estimated_price, :estimated_liquid_value,
       :confidence_percent, :manual_check_necessary, :manually_checked, :algorithm_version,
-      :estimated_low_price, :estimated_high_price, :estimated_low_price_liquid, :estimated_high_price_liquid)
+      :estimated_low_price, :estimated_high_price, :estimated_low_price_liquid, :estimated_high_price_liquid,
+      :reasoning)
 """
 
 _UPSERT_SQL = _INSERT_SQL + """
@@ -25,7 +27,8 @@ _UPSERT_SQL = _INSERT_SQL + """
       estimated_low_price = excluded.estimated_low_price,
       estimated_high_price = excluded.estimated_high_price,
       estimated_low_price_liquid = excluded.estimated_low_price_liquid,
-      estimated_high_price_liquid = excluded.estimated_high_price_liquid
+      estimated_high_price_liquid = excluded.estimated_high_price_liquid,
+      reasoning = excluded.reasoning
 """
 
 _UPDATE_CALC_DATE_SQL = """
@@ -37,7 +40,7 @@ _PRICE_FIELDS = (
     "sku_id", "calculation_date", "estimated_price", "estimated_liquid_value",
     "confidence_percent", "manual_check_necessary", "manually_checked",
     "algorithm_version", "estimated_low_price", "estimated_high_price",
-    "estimated_low_price_liquid", "estimated_high_price_liquid",
+    "estimated_low_price_liquid", "estimated_high_price_liquid", "reasoning",
 )
 
 

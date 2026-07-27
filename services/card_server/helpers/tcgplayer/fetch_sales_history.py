@@ -49,12 +49,15 @@ def _map_sale(sale: dict[str, Any], card_id: str, fallback_condition: str) -> Op
         return None
     custom_id = sale.get("customListingId")
     is_photo = not (custom_id == "0" or custom_id == 0 or not custom_id)
+    # `variant` carries the printing, which yields BOTH the finish and the
+    # specialty: pooling $27 1st Edition sales with $2 Unlimited ones under one
+    # series makes the graph meaningless for WOTC cards.
+    variant = parse_finish_from_api(sale.get("variant") or "")
     return {
         "card_id": card_id,
         "condition": _parse_condition_from_sales_api(sale.get("condition") or fallback_condition or ""),
-        # `sales` has no specialty_one column, so 1st Edition and Unlimited
-        # merge here. Graph path only — the pricing path keys on specialty.
-        "finish": parse_finish_from_api(sale.get("variant") or "")["finish"],
+        "finish": variant["finish"],
+        "specialty_one": variant["specialty_one"],
         "source": "tcgplayer",
         "order_date": order_date,
         "purchase_price": sale.get("purchasePrice") or 0,

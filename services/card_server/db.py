@@ -37,6 +37,7 @@ def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
         "ALTER TABLE inventory ADD COLUMN front_photo_path TEXT",
         "ALTER TABLE inventory ADD COLUMN back_photo_path TEXT",
         "ALTER TABLE sales ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE prices ADD COLUMN reasoning TEXT",
     ]
     for sql in migrations:
         try:
@@ -47,8 +48,36 @@ def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
     _upgrade_graded_skus(_db)
     _dedup_graded_inventory_certs(_db)
     _upgrade_market_snapshots(_db)
+    _upgrade_graph_specialty(_db)
 
     return _db
+
+
+def _upgrade_graph_specialty(db: sqlite3.Connection) -> None:
+    """Add specialty_one to the two graph tables (`sales`, `market_price_history`).
+
+    Both key a variant as card+condition+finish, which pools 1st Edition with
+    Unlimited — the same conflation `_upgrade_market_snapshots` fixed on the
+    pricing side. The printing is right there in each fetched row (the sales API
+    reports it in `variant`); it was simply dropped for want of a column.
+
+    A plain ADD COLUMN suffices — no rebuild, since nothing about the old
+    uniqueness needs relaxing. Existing rows land on 'None', which is wrong for
+    any 1st Edition history already collected; that self-heals on the next
+    `collect_sales` run for a card, because each refresh replaces the card's rows
+    wholesale. The stale (card, condition, finish, source) index is dropped and
+    rebuilt with the new column, once, at the same time.
+    """
+    for table, index in (("sales", "idx_sales_variant"), ("market_price_history", "idx_mph_variant")):
+        cols = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
+        if not cols or "specialty_one" in cols:
+            continue
+        db.execute(f"ALTER TABLE {table} ADD COLUMN specialty_one TEXT NOT NULL DEFAULT 'None'")
+        db.execute(f"DROP INDEX IF EXISTS {index}")
+        db.execute(
+            f"CREATE INDEX IF NOT EXISTS {index} "
+            f"ON {table}(card_id, condition, finish, specialty_one, source)"
+        )
 
 
 # Column list for the current market_snapshots shape (must match schema.sql).

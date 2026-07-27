@@ -7,12 +7,13 @@ PHILOSOPHY:
   TCGplayer "market price" is unreliable and is NOT used.
 
 Anchors on the lowest active TCGplayer listing. When the listing is >30% above
-recent sales, blends 50% listing + 50% last-month sold avg. Divergence check
-uses max(last 7 days, last 3 sales). MINT is priced as NM.
+recent sales, blends 50% listing + 50% last-month sold avg; with no sales inside
+that month the listing stands but at reduced confidence. Divergence check uses
+max(last 7 days, last 3 sales). MINT is priced as NM.
 
 Sold stats (fallback average, low/high range, data volume) use only a RECENT
-window of sales — max(last 5 days, last 25 sales) — so a full sales history
-(now retrievable via paginated fetch) can't drag pricing toward stale values.
+window of sales — max(last 5 days, last 25 sales) — so a long sales history
+can't drag pricing toward stale values.
 
 Ported from algorithm.ts. Listings/solds are plain dicts:
   active listing: {listed_price, shipping_price, ...}
@@ -39,12 +40,12 @@ from .config import (
     SHIPPING_COST_HIGH,
     CONDITION_STEP_MULTIPLIER,
     PRIMARY_CONDITIONS,
-    IN_BETWEEN_CONDITIONS,
     CONFIDENCE_LISTING_BASE,
     CONFIDENCE_CHEAP_DIVERGENT,
     CONFIDENCE_SOLDS_HIGHER,
     CONFIDENCE_SOLDS_CONFIRM,
     CONFIDENCE_BLENDED,
+    CONFIDENCE_DIVERGENT_NO_BLEND,
     CONFIDENCE_VOLUME_BONUS,
     CONFIDENCE_MAX,
     CONFIDENCE_NO_SOLDS,
@@ -58,6 +59,7 @@ from .config import (
     RECENT_SOLDS_MAX_COUNT,
     RECENT_SOLDS_DAYS,
 )
+from .conditions import is_primary, normalize_condition, primary_neighbors
 
 
 @dataclass
@@ -139,9 +141,12 @@ def compute_price(
                             f"(${month_avg:.2f}) → ${estimated_price:.2f}."
                         )
                     else:
+                        confidence = CONFIDENCE_DIVERGENT_NO_BLEND
                         reasons.append(
-                            f"Listing is {divergence * 100:.0f}% above recent sales but no monthly sold data — "
-                            "keeping listing price."
+                            f"Listing is {divergence * 100:.0f}% above the sold signal "
+                            f"(${effective_sale_price:.2f}), but no sales within "
+                            f"{BLEND_SOLDS_DAYS} days to blend against — keeping the listing "
+                            "price at reduced confidence."
                         )
                 else:
                     confidence = CONFIDENCE_SOLDS_HIGHER
@@ -322,6 +327,26 @@ def relabel_alias(source: PricingResult, condition: str, primary: str) -> Pricin
     )
 
 
+def flag_error_variant(source: PricingResult, specialty_two: str) -> PricingResult:
+    """Force manual review on an error variant that inherited a base price.
+
+    TCGplayer sells no miscut/holo-bleed/etc. variant, so the only estimate
+    available for one is the plain card's — which is exactly why a human has to
+    look: the error is usually worth a multiple of the base card, sometimes
+    less. `compute_price`'s own `has_manual_review_specialty` can't cover this,
+    because the SKU being priced there is always the plain (`specialty_two =
+    'None'`) one; the error SKUs are derived afterwards from its result.
+    """
+    return replace(
+        source,
+        manual_check_necessary=True,
+        reasoning=(
+            f"{source.reasoning} Error variant ({specialty_two}) — no TCGplayer tier exists "
+            "for it, so this is the base variant's price; flagged for manual review."
+        ),
+    )
+
+
 def _derived_result(
     price: float,
     confidence: float,
@@ -373,9 +398,13 @@ def extrapolate_across_conditions(
 ) -> Optional[float]:
     """Estimate a price for a condition that has no direct data, based on a
     different condition of the same card. 30% discount per tier, compounding.
+
+    Both ends go through the shared condition vocabulary first, so alternate
+    spellings (MINT -> NM, DM -> DMG, stray case/whitespace) resolve instead of
+    falling off the tier ladder and returning None.
     """
-    effective_source = "NM" if source_condition == "MINT" else source_condition
-    effective_target = "NM" if target_condition == "MINT" else target_condition
+    effective_source = normalize_condition(source_condition)
+    effective_target = normalize_condition(target_condition)
 
     if effective_source == effective_target:
         return source_price
@@ -386,12 +415,12 @@ def extrapolate_across_conditions(
     if resolved_source_price is None or resolved_source_condition is None:
         return None
 
-    if _is_primary(effective_target):
+    if is_primary(effective_target):
         return _extrapolate_between_primaries(
             resolved_source_price, resolved_source_condition, effective_target
         )
 
-    neighbors = IN_BETWEEN_CONDITIONS.get(effective_target)
+    neighbors = primary_neighbors(effective_target)
     if not neighbors:
         return None
 
@@ -422,15 +451,11 @@ def _extrapolate_between_primaries(
     return _round(source_price * multiplier)
 
 
-def _is_primary(condition: str) -> bool:
-    return condition in PRIMARY_CONDITIONS
-
-
 def _resolve_in_between_source(source_price: float, source_condition: str) -> Optional[float]:
-    if _is_primary(source_condition):
+    if is_primary(source_condition):
         return source_price
 
-    neighbors = IN_BETWEEN_CONDITIONS.get(source_condition)
+    neighbors = primary_neighbors(source_condition)
     if not neighbors:
         return None
 
@@ -440,9 +465,9 @@ def _resolve_in_between_source(source_price: float, source_condition: str) -> Op
 
 
 def _get_resolved_primary(condition: str) -> Optional[str]:
-    if _is_primary(condition):
+    if is_primary(condition):
         return condition
-    neighbors = IN_BETWEEN_CONDITIONS.get(condition)
+    neighbors = primary_neighbors(condition)
     return neighbors[0] if neighbors else None
 
 
