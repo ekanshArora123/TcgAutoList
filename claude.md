@@ -87,7 +87,7 @@ services/card_server/         (imported as `services.card_server`)
 
 ## Database Schema
 
-Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish variants, composite UNIQUE) -> `inventory` (physical cards owned) -> `prices` (historical estimates per SKU per date). Plus three market-data tables keyed by card+condition+finish: `market_snapshots` (periodic aggregate stats — additionally keyed by `specialty_one`, since 1st Edition and Unlimited are separate products; a historical/analytics record, not an input to the pricing run), `sales` (raw individual sold listings, ~1yr history), and `market_price_history` (TCGplayer weekly "market price" from the Infinite API). The latter two feed the per-card sales graph only — never the pricing algorithm; both are gathered by `collect_sales`.
+Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish variants, composite UNIQUE) -> `inventory` (physical cards owned) -> `prices` (historical estimates per SKU per date, each carrying the algorithm's `reasoning`). Plus three market-data tables keyed by card+condition+finish+`specialty_one` (1st Edition and Unlimited are separate printings at very different prices, so none of them may pool the two): `market_snapshots` (periodic aggregate stats; a historical/analytics record, not an input to the pricing run), `sales` (raw individual sold listings, ~1yr history), and `market_price_history` (TCGplayer weekly "market price" from the Infinite API). The latter two feed the per-card sales graph only — never the pricing algorithm; both are gathered by `collect_sales`.
 
 **Key decisions:**
 - `inventory.pricing_sku_id` allows pricing a borderline card against a different condition (e.g., LP-NM priced as NM)
@@ -100,7 +100,7 @@ Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish var
 
 **Major caveats:**
 - **Cheap cards (< $5)** use listing prices only — sold prices are shipping-noise.
-- **Conditions TCGplayer doesn't sell** (in-between grades like `MP-LP`, plus the `MINT`/`DM` aliases) are derived from the tiers it does. The collector fetches an in-between grade's *both* neighbors in the same visit and interpolates between them; falling back to one-sided **extrapolation** is always flagged for manual review.
+- **Conditions TCGplayer doesn't sell** (in-between grades like `MP-LP`, plus the `MINT`/`DM` aliases) are derived from the tiers it does. The collector fetches an in-between grade's *both* neighbors in the same visit and interpolates between them; falling back to one-sided **extrapolation** is always flagged for manual review. Error variants (`specialty_two`) have no tier either — they inherit the plain card's price and are always flagged.
 
 All constants live in `services/card_server/helpers/pricing/config.py`; the full algorithm (decision tree, confidence, liquid value) is in `docs/pricing-algorithm.md`.
 
