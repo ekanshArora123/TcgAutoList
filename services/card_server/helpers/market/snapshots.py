@@ -18,13 +18,15 @@ _INSERT_SQL = """
       listing_count, lowest_listing_price, median_listing_price,
       mean_listing_price, p25_listing_price, p75_listing_price,
       recent_sales_count, avg_sale_price, median_sale_price,
-      min_sale_price, max_sale_price, newest_sale_date, oldest_sale_date
+      min_sale_price, max_sale_price, newest_sale_date, oldest_sale_date,
+      divergence_sale_price, weighted_sale_price
     ) VALUES (
       :card_id, :condition, :finish, :specialty_one, :snapshot_date, :source,
       :listing_count, :lowest_listing_price, :median_listing_price,
       :mean_listing_price, :p25_listing_price, :p75_listing_price,
       :recent_sales_count, :avg_sale_price, :median_sale_price,
-      :min_sale_price, :max_sale_price, :newest_sale_date, :oldest_sale_date
+      :min_sale_price, :max_sale_price, :newest_sale_date, :oldest_sale_date,
+      :divergence_sale_price, :weighted_sale_price
     ) ON CONFLICT(card_id, condition, finish, specialty_one, snapshot_date, source)
     DO UPDATE SET
       listing_count = excluded.listing_count,
@@ -39,7 +41,9 @@ _INSERT_SQL = """
       min_sale_price = excluded.min_sale_price,
       max_sale_price = excluded.max_sale_price,
       newest_sale_date = excluded.newest_sale_date,
-      oldest_sale_date = excluded.oldest_sale_date
+      oldest_sale_date = excluded.oldest_sale_date,
+      divergence_sale_price = excluded.divergence_sale_price,
+      weighted_sale_price = excluded.weighted_sale_price
 """
 
 _SNAPSHOT_FIELDS = (
@@ -48,6 +52,9 @@ _SNAPSHOT_FIELDS = (
     "mean_listing_price", "p25_listing_price", "p75_listing_price",
     "recent_sales_count", "avg_sale_price", "median_sale_price",
     "min_sale_price", "max_sale_price", "newest_sale_date", "oldest_sale_date",
+    # Pricing inputs: the divergence signal and the age-weighted sold mean the
+    # algorithm blends. Stored so a price can be recomputed without refetching.
+    "divergence_sale_price", "weighted_sale_price",
 )
 
 

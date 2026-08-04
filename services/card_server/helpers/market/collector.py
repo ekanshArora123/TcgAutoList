@@ -17,21 +17,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from ..crud.cards import CardsHelper
-from ..crud.prices import PricesHelper
 from ..crud.skus import SkusHelper
-from ..pricing.algorithm import (
-    compute_price,
-    flag_error_variant,
-    interpolate_in_between,
-    relabel_alias,
-)
-from ..pricing.conditions import (
-    expand_to_primaries,
-    is_primary,
-    normalize_condition,
-    normalize_finish,
-    primary_neighbors,
-)
+from ..pricing.conditions import expand_to_primaries, normalize_finish
+from ..pricing.config import DEFAULT_CONFIG, PricingConfig
+from ..pricing.repricer import Repricer
 from .aggregators import build_snapshots
 from .fetchers import fetch_card_info, fetch_market_data_for_card
 from .snapshots import SnapshotStore
@@ -41,12 +30,26 @@ CollectorOptions = dict
 
 
 class MarketCollector:
-    def __init__(self, db: sqlite3.Connection, variant_delay_ms: int = 0):
+    """Collects market data and stores it; pricing is delegated, not duplicated.
+
+    A card visit does two separable things: write this card's market state to
+    `market_snapshots`, then ask the `Repricer` to turn that stored state into
+    prices. The collector never runs the pricing algorithm itself, so a reprice
+    triggered from anywhere else produces byte-identical results.
+    """
+
+    def __init__(
+        self,
+        db: sqlite3.Connection,
+        variant_delay_ms: int = 0,
+        config: PricingConfig = DEFAULT_CONFIG,
+    ):
         self.db = db
         self.snapshot_store = SnapshotStore(db)
         self.cards = CardsHelper(db)
         self.skus = SkusHelper(db)
-        self.prices = PricesHelper(db)
+        self.repricer = Repricer(db, config)
+        self.config = config
         # Pacing BETWEEN the listing calls of a single card. A card now costs one
         # listing request per owned variant (~1.5 on average) instead of one flat,
         # so the intra-card gap matters to the per-IP budget as much as the
@@ -173,10 +176,13 @@ class MarketCollector:
         if not fetch_results:
             return {"snapshots": 0, "prices": 0}
 
-        snapshots = build_snapshots(fetch_results, date)
+        # Store the market state first, then price FROM the store — not from the
+        # in-memory fetch. Slightly more work, but it means the collector and a
+        # standalone reprice run the exact same code over the exact same inputs.
+        snapshots = build_snapshots(fetch_results, date, self.config)
         self.snapshot_store.upsert_batch(snapshots)
 
-        prices_written = self._compute_and_store_prices(card_id, fetch_results, date)
+        prices_written = self.repricer.price_card(card_id, date)
 
         return {"snapshots": len(snapshots), "prices": prices_written}
 
@@ -210,143 +216,16 @@ class MarketCollector:
                 variants.add((condition, finish, row["specialty_one"] or "None"))
         return sorted(variants)
 
-    def _compute_and_store_prices(
-        self, card_id: str, fetch_results: list[dict[str, Any]], date: str
-    ) -> int:
-        count = 0
-        # Directly-priced results, keyed by the FULL variant they describe, so
-        # the derived pass below can look up an in-between grade's neighbors.
-        # specialty_one belongs in the key: 1st Edition and Unlimited are
-        # separate products, and collapsing them lets a plain SKU inherit the
-        # 1st Edition price (a ~30x error on WOTC cards).
-        priced: dict[tuple[str, str, str], Any] = {}
-        priced_sku_ids: set[int] = set()
-
-        for result in fetch_results:
-            condition = normalize_condition(result["condition"])
-            finish = normalize_finish(result["finish"])
-            specialty_one = result.get("specialtyOne") or "None"
-
-            sku = self.skus.get_or_create(
-                {
-                    "card_id": card_id,
-                    "condition": condition,
-                    "finish": finish,
-                    "specialty_one": specialty_one,
-                    "specialty_two": "None",
-                    "qty": 0,
-                }
-            )
-
-            # The variant fetched from TCGplayer is by definition the plain one
-            # (specialty_two is an off-TCGplayer error attribute), and the
-            # get_or_create above matches on specialty_two='None', so this SKU
-            # never carries one. Error SKUs are derived from this result in
-            # `_price_derived_skus`, which is where their review flag is set.
-            price_result = compute_price(
-                result["activeListings"],
-                result["soldListings"],
-                condition,
-                finish,
-                has_manual_review_specialty=False,
-            )
-
-            self._store_price(sku["sku_id"], date, price_result)
-            priced[(condition, finish, specialty_one)] = price_result
-            priced_sku_ids.add(sku["sku_id"])
-            count += 1
-
-        count += self._price_derived_skus(card_id, priced, priced_sku_ids, date)
-        return count
-
-    def _price_derived_skus(
-        self,
-        card_id: str,
-        priced: dict[tuple[str, str, str], Any],
-        priced_sku_ids: set[int],
-        date: str,
-    ) -> int:
-        """Price the card's SKUs that TCGplayer has no tier for.
-
-        Three kinds, all previously skipped by the collector's direct pass:
-        aliases of a real tier (MINT, DM), in-between grades (MP-LP, LP-NM,
-        HP-MP, DM-HP), and error variants (specialty_two — miscuts, holo
-        bleeds), which have no TCGplayer tier of their own and inherit the plain
-        variant's price under a forced review flag. Runs off `priced` — the
-        results just computed from live data — so a derived price is never built
-        on a stale neighbor.
-        """
-        count = 0
-
-        for sku in self.skus.search({"card_id": card_id}):
-            if sku["sku_id"] in priced_sku_ids:
-                continue
-
-            finish = normalize_finish(sku["finish"])
-            stored_condition = (sku["condition"] or "").strip().upper()
-            condition = normalize_condition(sku["condition"])
-            # Derive only from the SAME printing — a plain SKU must never inherit
-            # the 1st Edition price, or vice versa.
-            specialty_one = sku["specialty_one"] or "None"
-            specialty_two = sku["specialty_two"] or "None"
-
-            if is_primary(condition):
-                source = priced.get((condition, finish, specialty_one))
-                if source is None:
-                    continue
-                # Same tier under a different name (MINT/DM) gets relabelled; the
-                # same tier under the SAME name is an error variant of it, whose
-                # estimate carries over untouched (only the flag below changes).
-                derived = (
-                    source
-                    if stored_condition == condition
-                    else relabel_alias(source, sku["condition"], condition)
-                )
-            else:
-                neighbors = primary_neighbors(condition)
-                if not neighbors:
-                    continue
-                better, worse = neighbors
-                derived = interpolate_in_between(
-                    sku["condition"],
-                    priced.get((better, finish, specialty_one)),
-                    better,
-                    priced.get((worse, finish, specialty_one)),
-                    worse,
-                )
-                if derived is None:
-                    continue
-
-            if specialty_two != "None":
-                derived = flag_error_variant(derived, specialty_two)
-
-            self._store_price(sku["sku_id"], date, derived)
-            count += 1
-
-        return count
-
-    def _store_price(self, sku_id: int, date: str, price_result: Any) -> None:
-        self.prices.upsert(
-            {
-                "sku_id": sku_id,
-                "calculation_date": date,
-                "estimated_price": price_result.estimated_price,
-                "estimated_liquid_value": price_result.estimated_liquid_value,
-                "confidence_percent": price_result.confidence_percent,
-                "manual_check_necessary": price_result.manual_check_necessary,
-                "manually_checked": False,
-                "algorithm_version": price_result.algorithm_version,
-                "estimated_low_price": price_result.estimated_low_price,
-                "estimated_high_price": price_result.estimated_high_price,
-                "estimated_low_price_liquid": price_result.estimated_low_price_liquid,
-                "estimated_high_price_liquid": price_result.estimated_high_price_liquid,
-                # Persisted so a stored price can be explained after the fact —
-                # which branch fired, what diverged, whether it was derived.
-                "reasoning": price_result.reasoning,
-            }
-        )
-
     # ─── Card Selection Queries ───────────────────────────────
+
+    def select_cards(self, mode: str, stale_days: int = 7) -> list[str]:
+        """Card IDs for a selection mode, so a reprice-only run can target the
+        same set a collecting run would without duplicating these queries."""
+        if mode == "cohort":
+            return self._get_cohort_card_ids()
+        if mode == "stale":
+            return self._get_stale_card_ids(stale_days)
+        return self._get_owned_card_ids()
 
     def _get_owned_card_ids(self) -> list[str]:
         rows = self.db.execute(

@@ -1,4 +1,4 @@
-"""Pricing Algorithm — Lowest Listing Anchor (blended-v2).
+"""Pricing Algorithm — Lowest-Listing Anchor with a weighted sold blend (v3).
 
 PHILOSOPHY:
   The price of a card is what someone will pay for it. For liquid cards,
@@ -6,18 +6,24 @@ PHILOSOPHY:
   For illiquid cards, recent sold prices are a better signal.
   TCGplayer "market price" is unreliable and is NOT used.
 
-Anchors on the lowest active TCGplayer listing. When the listing is >30% above
-recent sales, blends 50% listing + 50% last-month sold avg; with no sales inside
-that month the listing stands but at reduced confidence. Divergence check uses
-max(last 7 days, last 3 sales). MINT is priced as NM.
+The lowest active listing is the anchor. When it disagrees with the sold signal
+by more than the divergence threshold, the price becomes a weighted blend of the
+listing and an age-weighted sold mean rather than the listing alone:
 
-Sold stats (fallback average, low/high range, data volume) use only a RECENT
-window of sales — max(last 5 days, last 25 sales) — so a long sales history
-can't drag pricing toward stale values.
+  * divergence is measured on the plain mean of the last few sales,
+  * the sold side's share of the price scales with how large that divergence is
+    (listing above solds) or is a flat maximum (listing below solds),
+  * within that share, each sale counts by a half-life on its age, so a stale
+    history fades out instead of either dominating or being cut off,
+  * the listing always retains the remaining share, so it keeps materially
+    influencing the price no matter how extreme the gap.
 
-Ported from algorithm.ts. Listings/solds are plain dicts:
-  active listing: {listed_price, shipping_price, ...}
-  sold listing:   {sold_price, sold_date, ...}
+Cards under the cheap-card threshold bypass all of the above and price on the
+lowest listing alone — at that level sold prices are shipping noise.
+
+Everything the algorithm reads arrives as a `PricingInputs` (see inputs.py), so
+a price can be recomputed from stored data with no network call. All thresholds
+come from the `PricingConfig` passed in, defaulting to `DEFAULT_CONFIG`.
 
 See docs/pricing-algorithm.md.
 """
@@ -25,41 +31,16 @@ See docs/pricing-algorithm.md.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Optional
 
 from .config import (
-    ALGORITHM_VERSION,
-    HIGH_VALUE_THRESHOLD,
-    PRICE_DIVERGENCE_THRESHOLD,
-    MIN_SOLDS_FOR_CONFIDENCE,
-    FEE_RATE,
-    CHEAP_CARD_THRESHOLD,
-    SHIPPING_THRESHOLD,
-    SHIPPING_COST_LOW,
-    SHIPPING_COST_HIGH,
-    CONDITION_STEP_MULTIPLIER,
+    DEFAULT_CONFIG,
+    IN_BETWEEN_CONDITIONS,
     PRIMARY_CONDITIONS,
-    CONFIDENCE_LISTING_BASE,
-    CONFIDENCE_CHEAP_DIVERGENT,
-    CONFIDENCE_SOLDS_HIGHER,
-    CONFIDENCE_SOLDS_CONFIRM,
-    CONFIDENCE_BLENDED,
-    CONFIDENCE_DIVERGENT_NO_BLEND,
-    CONFIDENCE_VOLUME_BONUS,
-    CONFIDENCE_MAX,
-    CONFIDENCE_NO_SOLDS,
-    CONFIDENCE_SOLDS_ONLY,
-    CONFIDENCE_FEW_SOLDS,
-    LOW_ESTIMATE_MULTIPLIER,
-    HIGH_ESTIMATE_MULTIPLIER,
-    BLEND_RATIO,
-    BLEND_SOLDS_DAYS,
-    DIVERGENCE_RECENT_DAYS,
-    RECENT_SOLDS_MAX_COUNT,
-    RECENT_SOLDS_DAYS,
+    PricingConfig,
 )
 from .conditions import is_primary, normalize_condition, primary_neighbors
+from .inputs import PricingInputs
 
 
 @dataclass
@@ -80,14 +61,30 @@ def _round(n: float) -> float:
     return round(n * 100) / 100
 
 
+def sales_weight(divergence: float, listing_is_higher: bool, config: PricingConfig) -> float:
+    """The sold side's share of a blended price.
+
+    Above the sold signal the share ramps linearly with divergence, from
+    `sales_weight_min` where the blend first trips to `sales_weight_max` at
+    `divergence_at_max_sales_weight`, then clamps. Below it, the share is a flat
+    `sales_weight_listing_below`: a listing under the market gives no reading on
+    *how far* under it deserves to be trusted, so there is nothing to ramp on.
+    """
+    if not listing_is_higher:
+        return config.sales_weight_listing_below
+
+    over = divergence - config.price_divergence_threshold
+    weight = config.sales_weight_min + over * config.sales_weight_slope
+    return min(max(weight, config.sales_weight_min), config.sales_weight_max)
+
+
 def compute_price(
-    active_listings: list[dict[str, Any]],
-    sold_listings: list[dict[str, Any]],
-    condition: str,
-    finish: str,
-    has_manual_review_specialty: bool,
+    inputs: PricingInputs,
+    config: PricingConfig = DEFAULT_CONFIG,
+    *,
+    has_manual_review_specialty: bool = False,
 ) -> PricingResult:
-    """Compute a listing price from available TCGplayer data.
+    """Compute a listing price from the stored/derived inputs for one variant.
 
     MINT cards are priced as NM — TCGplayer has no MINT-specific data.
     """
@@ -96,106 +93,88 @@ def compute_price(
     confidence: float = 0
     manual_check = False
 
-    if condition == "MINT":
+    if inputs.condition == "MINT":
         reasons.append("MINT condition — pricing as Near Mint.")
 
-    lowest_listing = _get_lowest_listing_price(active_listings)
-    # Cap sold stats to a recent window so a long sales history (now retrievable
-    # via paginated fetch) can't drag the price toward stale values. Divergence
-    # and blend helpers keep their own (broader) windows over the full list.
-    recent_solds = _recent_solds(sold_listings)
-    sold_stats = _compute_sold_stats(recent_solds)
+    listing = inputs.lowest_listing_price
+    weighted = inputs.weighted_sale_price
+    signal = inputs.divergence_sale_price
 
-    # ── Step 1: Try lowest active listing ──
-    if lowest_listing is not None:
-        estimated_price = lowest_listing
-        confidence = CONFIDENCE_LISTING_BASE
-        reasons.append(f"Anchored on lowest active listing: ${lowest_listing:.2f}.")
+    if listing is not None:
+        estimated_price = listing
+        confidence = config.confidence_listing_base
+        reasons.append(f"Anchored on lowest active listing: ${listing:.2f}.")
 
-        is_cheap_card = lowest_listing < CHEAP_CARD_THRESHOLD
-
-        if sold_stats is not None:
-            divergence_sale_price = _compute_divergence_sale_price(sold_listings)
-            effective_sale_price = (
-                divergence_sale_price if divergence_sale_price is not None else sold_stats["average"]
+        if listing < config.cheap_card_threshold:
+            # Sold prices under the free-shipping threshold are dominated by
+            # shipping noise, so they are ignored outright rather than blended.
+            confidence = config.confidence_cheap
+            reasons.append(
+                f"Under ${config.cheap_card_threshold} — sold prices are shipping noise at this "
+                "level; priced on listings alone."
             )
-            divergence = abs(lowest_listing - effective_sale_price) / effective_sale_price
-            listing_is_higher = lowest_listing > effective_sale_price
+        elif inputs.has_sales and signal:
+            divergence = abs(listing - signal) / signal
+            listing_is_higher = listing > signal
 
-            if divergence > PRICE_DIVERGENCE_THRESHOLD:
-                if is_cheap_card:
-                    confidence = CONFIDENCE_CHEAP_DIVERGENT
-                    reasons.append(
-                        f"Sold price (${effective_sale_price:.2f}) diverges {divergence * 100:.0f}% from listing. "
-                        f"Card is under ${CHEAP_CARD_THRESHOLD} — sold prices are unreliable (shipping noise). "
-                        "Keeping listing price."
-                    )
-                elif listing_is_higher:
-                    month_avg = _compute_month_sold_avg(sold_listings)
-                    if month_avg is not None:
-                        estimated_price = _round(BLEND_RATIO * lowest_listing + BLEND_RATIO * month_avg)
-                        confidence = CONFIDENCE_BLENDED
-                        reasons.append(
-                            f"Listing (${lowest_listing:.2f}) is {divergence * 100:.0f}% above recent sales "
-                            f"(${effective_sale_price:.2f}). Blending 50/50 with last-month sold avg "
-                            f"(${month_avg:.2f}) → ${estimated_price:.2f}."
-                        )
-                    else:
-                        confidence = CONFIDENCE_DIVERGENT_NO_BLEND
-                        reasons.append(
-                            f"Listing is {divergence * 100:.0f}% above the sold signal "
-                            f"(${effective_sale_price:.2f}), but no sales within "
-                            f"{BLEND_SOLDS_DAYS} days to blend against — keeping the listing "
-                            "price at reduced confidence."
-                        )
-                else:
-                    confidence = CONFIDENCE_SOLDS_HIGHER
-                    reasons.append(
-                        f"Sold price (${effective_sale_price:.2f}) is above lowest listing — "
-                        "someone is undercutting. Lowest listing is a competitive price."
-                    )
-            else:
-                confidence = CONFIDENCE_SOLDS_CONFIRM
+            if divergence > config.price_divergence_threshold:
+                weight = sales_weight(divergence, listing_is_higher, config)
+                estimated_price = _round(weight * weighted + (1 - weight) * listing)
+                direction = "above" if listing_is_higher else "below"
+                confidence = (
+                    config.confidence_blended if listing_is_higher else config.confidence_solds_higher
+                )
                 reasons.append(
-                    f"Sold price (${effective_sale_price:.2f}) confirms listing price "
+                    f"Listing is {divergence * 100:.0f}% {direction} the recent sold mean "
+                    f"(${signal:.2f}). Blending {weight * 100:.0f}% age-weighted sold average "
+                    f"(${weighted:.2f}) with {(1 - weight) * 100:.0f}% listing → "
+                    f"${estimated_price:.2f}."
+                )
+            else:
+                confidence = config.confidence_solds_confirm
+                reasons.append(
+                    f"Recent sold mean (${signal:.2f}) confirms the listing "
                     f"({divergence * 100:.0f}% divergence)."
                 )
 
-            if sold_stats["count"] >= MIN_SOLDS_FOR_CONFIDENCE:
-                confidence = min(confidence + CONFIDENCE_VOLUME_BONUS, CONFIDENCE_MAX)
-                reasons.append(f"{sold_stats['count']} recent solds — good data volume.")
+            if inputs.sale_count >= config.min_solds_for_confidence:
+                confidence = min(confidence + config.confidence_volume_bonus, config.confidence_max)
+                reasons.append(f"{inputs.sale_count} sales in the weighting window — good data volume.")
             else:
-                reasons.append(f"Only {sold_stats['count']} recent sold(s) — limited data.")
+                reasons.append(f"Only {inputs.sale_count} sale(s) available — limited data.")
         else:
-            confidence = CONFIDENCE_NO_SOLDS
+            confidence = config.confidence_no_solds
             reasons.append("No sold data available. Pricing based on listings only — lower confidence.")
 
-    # ── Step 3: No active listings — fall back to solds ──
-    elif sold_stats is not None:
-        estimated_price = sold_stats["average"]
-        confidence = CONFIDENCE_SOLDS_ONLY
+    # ── No active listings — fall back to the age-weighted sold average ──
+    elif inputs.has_sales:
+        estimated_price = weighted
+        confidence = config.confidence_solds_only
         reasons.append(
-            f"No active listings. Using average of {sold_stats['count']} recent sold(s): "
-            f"${sold_stats['average']:.2f}."
+            f"No active listings. Using the age-weighted average of {inputs.sale_count} "
+            f"sale(s): ${weighted:.2f}."
         )
 
-        if sold_stats["count"] < MIN_SOLDS_FOR_CONFIDENCE:
-            confidence = CONFIDENCE_FEW_SOLDS
+        if inputs.sale_count < config.min_solds_for_confidence:
+            confidence = config.confidence_few_solds
             manual_check = True
-            reasons.append(f"Fewer than {MIN_SOLDS_FOR_CONFIDENCE} solds — flagged for manual review.")
+            reasons.append(
+                f"Fewer than {config.min_solds_for_confidence} sales — flagged for manual review."
+            )
 
-    # ── Step 3b: No data at all ──
+    # ── No data at all ──
     else:
         estimated_price = None
         confidence = 0
         manual_check = True
         reasons.append("No active listings and no sold data. Card is unpriceable automatically.")
 
-    # ── Step 4: Edge case flags ──
-    if estimated_price is not None and estimated_price > HIGH_VALUE_THRESHOLD:
+    # ── Edge case flags ──
+    if estimated_price is not None and estimated_price > config.high_value_threshold:
         manual_check = True
         reasons.append(
-            f"High-value card (${estimated_price:.2f} > ${HIGH_VALUE_THRESHOLD}) — flagged for manual review."
+            f"High-value card (${estimated_price:.2f} > ${config.high_value_threshold}) — "
+            "flagged for manual review."
         )
 
     if has_manual_review_specialty:
@@ -204,51 +183,70 @@ def compute_price(
             "Card has manual-review specialty (graded, error, etc.) — flagged for manual review."
         )
 
-    # ── Step 5: Compute derived values ──
-    liquid_value = compute_liquid_value(estimated_price) if estimated_price is not None else None
-
-    if sold_stats is not None:
-        low_price = sold_stats["min"]
-        high_price = sold_stats["max"]
-    elif lowest_listing is not None:
-        low_price = _round(lowest_listing * LOW_ESTIMATE_MULTIPLIER)
-        high_price = _round(lowest_listing * HIGH_ESTIMATE_MULTIPLIER)
-    else:
-        low_price = None
-        high_price = None
-
-    low_price_liquid = compute_liquid_value(low_price) if low_price is not None else None
-    high_price_liquid = compute_liquid_value(high_price) if high_price is not None else None
+    # ── Derived values ──
+    low_price, high_price = _price_band(inputs, config)
 
     return PricingResult(
         estimated_price=_round(estimated_price) if estimated_price is not None else None,
-        estimated_liquid_value=liquid_value,
+        estimated_liquid_value=(
+            compute_liquid_value(estimated_price, config) if estimated_price is not None else None
+        ),
         estimated_low_price=low_price,
         estimated_high_price=high_price,
-        estimated_low_price_liquid=low_price_liquid,
-        estimated_high_price_liquid=high_price_liquid,
+        estimated_low_price_liquid=(
+            compute_liquid_value(low_price, config) if low_price is not None else None
+        ),
+        estimated_high_price_liquid=(
+            compute_liquid_value(high_price, config) if high_price is not None else None
+        ),
         confidence_percent=confidence,
         manual_check_necessary=manual_check,
-        algorithm_version=ALGORITHM_VERSION,
+        algorithm_version=config.algorithm_version,
         reasoning=" ".join(reasons),
     )
+
+
+def _price_band(
+    inputs: PricingInputs, config: PricingConfig
+) -> tuple[Optional[float], Optional[float]]:
+    """The low/high band bracketing the estimate.
+
+    With both signals present the band is simply the two of them, lower first —
+    and because a blended price is a convex combination of exactly those two
+    numbers, the estimate always lands inside its own band. With only one
+    signal there is nothing to bracket against, so the band falls back to the
+    sold range, or to fixed multipliers on the listing.
+    """
+    listing = inputs.lowest_listing_price
+    weighted = inputs.weighted_sale_price
+
+    if listing is not None and weighted is not None:
+        return min(listing, weighted), max(listing, weighted)
+    if weighted is not None:
+        return inputs.min_sale_price, inputs.max_sale_price
+    if listing is not None:
+        return (
+            _round(listing * config.low_estimate_multiplier),
+            _round(listing * config.high_estimate_multiplier),
+        )
+    return None, None
 
 
 # ─── Liquid Value ────────────────────────────────────────────
 
 
-def compute_liquid_value(sell_price: float) -> float:
-    """Compute liquid value: (sell_price * (1 - FEE_RATE)) - shipping_cost.
+def compute_liquid_value(sell_price: float, config: PricingConfig = DEFAULT_CONFIG) -> float:
+    """Compute liquid value: (sell_price * (1 - fee_rate)) - shipping_cost.
 
     Shipping tiers: <$5 = $0, $5-$25 = $1 (PWE), >$25 = $5 (tracked).
     """
-    if sell_price < CHEAP_CARD_THRESHOLD:
-        shipping = 0
-    elif sell_price > SHIPPING_THRESHOLD:
-        shipping = SHIPPING_COST_HIGH
+    if sell_price < config.cheap_card_threshold:
+        shipping = 0.0
+    elif sell_price > config.shipping_threshold:
+        shipping = config.shipping_cost_high
     else:
-        shipping = SHIPPING_COST_LOW
-    after_fees = sell_price * (1 - FEE_RATE)
+        shipping = config.shipping_cost_low
+    after_fees = sell_price * (1 - config.fee_rate)
     return _round(max(after_fees - shipping, 0))
 
 
@@ -261,6 +259,7 @@ def interpolate_in_between(
     better_condition: str,
     worse: Optional[PricingResult],
     worse_condition: str,
+    config: PricingConfig = DEFAULT_CONFIG,
 ) -> Optional[PricingResult]:
     """Price an in-between grade (MP-LP) from its two neighboring primaries.
 
@@ -287,7 +286,7 @@ def interpolate_in_between(
     if len(usable) == 1:
         source, source_condition = usable[0]
         price = extrapolate_across_conditions(
-            source.estimated_price, source_condition, condition
+            source.estimated_price, source_condition, condition, config
         )
         if price is None:
             return None
@@ -296,7 +295,7 @@ def interpolate_in_between(
             f"Extrapolated from {source_condition} (${source.estimated_price:.2f}) → ${price:.2f}. "
             "Cross-condition extrapolation — flagged for manual review."
         )
-        return _derived_result(price, source.confidence_percent, True, reasoning, source, source)
+        return _derived_result(price, source.confidence_percent, True, reasoning, source, source, config)
 
     (better_res, _), (worse_res, _) = usable
     price = _round((better_res.estimated_price + worse_res.estimated_price) / 2)
@@ -312,6 +311,7 @@ def interpolate_in_between(
         reasoning,
         better_res,
         worse_res,
+        config,
     )
 
 
@@ -354,16 +354,18 @@ def _derived_result(
     reasoning: str,
     low_source: PricingResult,
     high_source: PricingResult,
+    config: PricingConfig = DEFAULT_CONFIG,
 ) -> PricingResult:
     """Assemble a PricingResult for a price derived from other conditions.
 
     Applies the same high-value review rule `compute_price` does, so a derived
     estimate can't slip past the threshold that a direct one would trip.
     """
-    if price > HIGH_VALUE_THRESHOLD:
+    if price > config.high_value_threshold:
         manual_check = True
         reasoning += (
-            f" High-value card (${price:.2f} > ${HIGH_VALUE_THRESHOLD}) — flagged for manual review."
+            f" High-value card (${price:.2f} > ${config.high_value_threshold}) — "
+            "flagged for manual review."
         )
 
     low = _mean_of(low_source.estimated_low_price, high_source.estimated_low_price)
@@ -371,14 +373,14 @@ def _derived_result(
 
     return PricingResult(
         estimated_price=price,
-        estimated_liquid_value=compute_liquid_value(price),
+        estimated_liquid_value=compute_liquid_value(price, config),
         estimated_low_price=low,
         estimated_high_price=high,
-        estimated_low_price_liquid=compute_liquid_value(low) if low is not None else None,
-        estimated_high_price_liquid=compute_liquid_value(high) if high is not None else None,
+        estimated_low_price_liquid=compute_liquid_value(low, config) if low is not None else None,
+        estimated_high_price_liquid=compute_liquid_value(high, config) if high is not None else None,
         confidence_percent=confidence,
         manual_check_necessary=manual_check,
-        algorithm_version=ALGORITHM_VERSION,
+        algorithm_version=config.algorithm_version,
         reasoning=reasoning,
     )
 
@@ -395,6 +397,7 @@ def extrapolate_across_conditions(
     source_price: float,
     source_condition: str,
     target_condition: str,
+    config: PricingConfig = DEFAULT_CONFIG,
 ) -> Optional[float]:
     """Estimate a price for a condition that has no direct data, based on a
     different condition of the same card. 30% discount per tier, compounding.
@@ -409,7 +412,7 @@ def extrapolate_across_conditions(
     if effective_source == effective_target:
         return source_price
 
-    resolved_source_price = _resolve_in_between_source(source_price, effective_source)
+    resolved_source_price = _resolve_in_between_source(source_price, effective_source, config)
     resolved_source_condition = _get_resolved_primary(effective_source)
 
     if resolved_source_price is None or resolved_source_condition is None:
@@ -417,7 +420,7 @@ def extrapolate_across_conditions(
 
     if is_primary(effective_target):
         return _extrapolate_between_primaries(
-            resolved_source_price, resolved_source_condition, effective_target
+            resolved_source_price, resolved_source_condition, effective_target, config
         )
 
     neighbors = primary_neighbors(effective_target)
@@ -426,10 +429,10 @@ def extrapolate_across_conditions(
 
     better_condition, worse_condition = neighbors
     better_price = _extrapolate_between_primaries(
-        resolved_source_price, resolved_source_condition, better_condition
+        resolved_source_price, resolved_source_condition, better_condition, config
     )
     worse_price = _extrapolate_between_primaries(
-        resolved_source_price, resolved_source_condition, worse_condition
+        resolved_source_price, resolved_source_condition, worse_condition, config
     )
 
     if better_price is None or worse_price is None:
@@ -438,7 +441,7 @@ def extrapolate_across_conditions(
 
 
 def _extrapolate_between_primaries(
-    source_price: float, source_condition: str, target_condition: str
+    source_price: float, source_condition: str, target_condition: str, config: PricingConfig
 ) -> Optional[float]:
     try:
         source_idx = PRIMARY_CONDITIONS.index(source_condition)
@@ -447,11 +450,13 @@ def _extrapolate_between_primaries(
         return None
 
     steps = target_idx - source_idx  # positive = worse condition
-    multiplier = CONDITION_STEP_MULTIPLIER ** steps
+    multiplier = config.condition_step_multiplier ** steps
     return _round(source_price * multiplier)
 
 
-def _resolve_in_between_source(source_price: float, source_condition: str) -> Optional[float]:
+def _resolve_in_between_source(
+    source_price: float, source_condition: str, config: PricingConfig
+) -> Optional[float]:
     if is_primary(source_condition):
         return source_price
 
@@ -460,7 +465,7 @@ def _resolve_in_between_source(source_price: float, source_condition: str) -> Op
         return None
 
     # source_price = better * (1 + MULTIPLIER) / 2  =>  better = source_price * 2 / (1 + MULTIPLIER)
-    better_price = source_price * 2 / (1 + CONDITION_STEP_MULTIPLIER)
+    better_price = source_price * 2 / (1 + config.condition_step_multiplier)
     return _round(better_price)
 
 
@@ -471,96 +476,14 @@ def _get_resolved_primary(condition: str) -> Optional[str]:
     return neighbors[0] if neighbors else None
 
 
-# ─── Divergence & Blend Helpers ──────────────────────────────
-
-
-def _recent_solds(solds: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Restrict sold data to a recent window so a long history can't skew stats.
-
-    Returns whichever group is LARGER: all sales within the last
-    RECENT_SOLDS_DAYS days, or the RECENT_SOLDS_MAX_COUNT most recent sales.
-    This keeps fast-moving cards on truly fresh data while still giving illiquid
-    cards a floor of recent comps. Mirrors the max(window, count) pattern used
-    for divergence.
-    """
-    if not solds:
-        return []
-
-    cutoff_str = (datetime.now() - timedelta(days=RECENT_SOLDS_DAYS)).date().isoformat()
-    within_window = [s for s in solds if s["sold_date"] >= cutoff_str]
-
-    most_recent = sorted(solds, key=lambda s: s["sold_date"], reverse=True)[:RECENT_SOLDS_MAX_COUNT]
-
-    return within_window if len(within_window) >= len(most_recent) else most_recent
-
-
-def _compute_divergence_sale_price(solds: list[dict[str, Any]]) -> Optional[float]:
-    """Avg of whichever group has more entries: last 7 days, or 3 most recent."""
-    if not solds:
-        return None
-
-    cutoff_str = (datetime.now() - timedelta(days=DIVERGENCE_RECENT_DAYS)).date().isoformat()
-    last_week = [s for s in solds if s["sold_date"] >= cutoff_str]
-
-    sorted_solds = sorted(solds, key=lambda s: s["sold_date"], reverse=True)
-    last3 = sorted_solds[:3]
-
-    group = last_week if len(last_week) >= len(last3) else last3
-    if not group:
-        return None
-
-    return _round(sum(s["sold_price"] for s in group) / len(group))
-
-
-def _compute_month_sold_avg(solds: list[dict[str, Any]]) -> Optional[float]:
-    if not solds:
-        return None
-
-    cutoff_str = (datetime.now() - timedelta(days=BLEND_SOLDS_DAYS)).date().isoformat()
-    month_solds = [s for s in solds if s["sold_date"] >= cutoff_str]
-
-    if not month_solds:
-        return None
-
-    return _round(sum(s["sold_price"] for s in month_solds) / len(month_solds))
-
-
-# ─── Helpers ─────────────────────────────────────────────────
-
-
-def _get_lowest_listing_price(listings: list[dict[str, Any]]) -> Optional[float]:
-    """Lowest listing price, accounting for TCGplayer's shipping model.
-
-    For cards under $5: use listed_price only. For cards >= $5: listed + shipping.
-    """
-    if not listings:
-        return None
-
-    lowest = float("inf")
-    for listing in listings:
-        total = (
-            listing["listed_price"]
-            if listing["listed_price"] < CHEAP_CARD_THRESHOLD
-            else listing["listed_price"] + listing["shipping_price"]
-        )
-        if total < lowest:
-            lowest = total
-    return None if lowest == float("inf") else _round(lowest)
-
-
-def _compute_sold_stats(solds: list[dict[str, Any]]) -> Optional[dict[str, float]]:
-    if not solds:
-        return None
-
-    prices = sorted(s["sold_price"] for s in solds)
-    total = sum(prices)
-    mid = len(prices) // 2
-    median = (prices[mid - 1] + prices[mid]) / 2 if len(prices) % 2 == 0 else prices[mid]
-
-    return {
-        "average": _round(total / len(prices)),
-        "median": _round(median),
-        "min": prices[0],
-        "max": prices[-1],
-        "count": len(prices),
-    }
+__all__ = [
+    "PricingResult",
+    "compute_price",
+    "compute_liquid_value",
+    "sales_weight",
+    "interpolate_in_between",
+    "relabel_alias",
+    "flag_error_variant",
+    "extrapolate_across_conditions",
+    "IN_BETWEEN_CONDITIONS",
+]

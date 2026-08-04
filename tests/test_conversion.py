@@ -16,7 +16,10 @@ from services.card_server.helpers.pricing.algorithm import (
     compute_liquid_value,
     compute_price,
     extrapolate_across_conditions,
+    sales_weight,
 )
+from services.card_server.helpers.pricing.config import DEFAULT_CONFIG
+from services.card_server.helpers.pricing.inputs import PricingInputs, from_raw
 from services.card_server.helpers.tcgplayer.formatters import (
     format_condition_for_api,
     format_finish_for_api,
@@ -30,17 +33,29 @@ from services.telegram.renderer import render_card_summary, render_listing_confi
 # ─── Pricing algorithm ───────────────────────────────────────
 
 
+def _days_ago(n: int) -> str:
+    return (date.today() - timedelta(days=n)).isoformat()
+
+
+def _price(listings, solds, condition="NM", finish="Holo"):
+    """Price from raw rows, the way the on-demand path does."""
+    return compute_price(from_raw(listings, solds, condition, finish))
+
+
+def _inputs(**kwargs) -> PricingInputs:
+    """Hand-built inputs, for asserting the blend maths without constructing
+    sale rows that happen to produce the required statistics."""
+    return PricingInputs(condition=kwargs.pop("condition", "NM"), **kwargs)
+
+
 def test_lowest_listing_anchor_with_confirming_solds():
-    res = compute_price(
+    res = _price(
         [{"listed_price": 10.0, "shipping_price": 1.0}, {"listed_price": 12.0, "shipping_price": 0.0}],
         [
-            {"sold_price": 11.0, "sold_date": "2999-01-03"},
-            {"sold_price": 10.5, "sold_date": "2999-01-02"},
-            {"sold_price": 9.5, "sold_date": "2999-01-01"},
+            {"sold_price": 11.0, "sold_date": _days_ago(0)},
+            {"sold_price": 10.5, "sold_date": _days_ago(1)},
+            {"sold_price": 9.5, "sold_date": _days_ago(2)},
         ],
-        "NM",
-        "Holo",
-        False,
     )
     # cheapest total = 11.0 (10 + 1 shipping; the $12 listing has $0 shipping)
     assert res.estimated_price == 11.0
@@ -50,31 +65,19 @@ def test_lowest_listing_anchor_with_confirming_solds():
 
 
 def test_cheap_card_ignores_shipping():
-    res = compute_price(
-        [{"listed_price": 2.0, "shipping_price": 5.0}],
-        [],
-        "NM",
-        "Regular",
-        False,
-    )
+    res = _price([{"listed_price": 2.0, "shipping_price": 5.0}], [], finish="Regular")
     # under $5 -> listed_price only, shipping ignored
     assert res.estimated_price == 2.0
 
 
 def test_no_data_is_unpriceable_and_flagged():
-    res = compute_price([], [], "NM", "Regular", False)
+    res = _price([], [], finish="Regular")
     assert res.estimated_price is None
     assert res.manual_check_necessary is True
 
 
 def test_high_value_flagged_for_review():
-    res = compute_price(
-        [{"listed_price": 80.0, "shipping_price": 0.0}],
-        [],
-        "NM",
-        "Holo",
-        False,
-    )
+    res = _price([{"listed_price": 80.0, "shipping_price": 0.0}], [])
     assert res.estimated_price == 80.0
     assert res.manual_check_necessary is True  # > $50
 
@@ -102,67 +105,132 @@ def test_extrapolation_resolves_alias_spellings():
     assert extrapolate_across_conditions(10.0, " nm ", "LP") == 7.0  # case/whitespace
 
 
-# ─── Divergence handling ─────────────────────────────────────
+# ─── Divergence blend ────────────────────────────────────────
 
 
-def test_listing_above_recent_sales_blends_with_month_average():
-    # Listing $20 vs a fresh sold signal of $10 (>30% divergence) -> blend 50/50
-    # with the last-month sold average, which is also $10 -> $15.
-    solds = [{"sold_price": 10.0, "sold_date": _days_ago(i)} for i in range(3)]
-    res = compute_price([{"listed_price": 20.0, "shipping_price": 0.0}], solds, "NM", "Holo", False)
-    assert res.estimated_price == 15.0
-    assert res.confidence_percent == 80  # blended (70) + volume bonus (10)
+def test_worked_example_from_the_spec():
+    """Listing $350 against a last-5 mean of $200 is 75% divergence, which puts
+    60% of the price on the sold side; with an age-weighted sold mean of $175
+    that is 0.60*175 + 0.40*350 = $245."""
+    res = compute_price(
+        _inputs(
+            lowest_listing_price=350.0,
+            listing_count=4,
+            divergence_sale_price=200.0,
+            weighted_sale_price=175.0,
+            sale_count=15,
+        )
+    )
+    assert res.estimated_price == 245.0
 
 
-def test_divergent_listing_without_monthly_solds_scores_lower():
-    """Divergence can be measured off sales of ANY age (the "3 most recent"
-    fallback has no age limit), but the blend needs sales inside 30 days. With
-    none, the listing price stands — and must be distinguishable from a real
-    blend, or downstream can't tell a corrected price from an uncorrectable one.
-    """
+def test_sales_weight_ramps_with_divergence_then_clamps():
+    cfg = DEFAULT_CONFIG
+    # At the threshold the sold side takes its minimum share, at the ceiling its
+    # maximum, and beyond the ceiling it stays there — the listing always keeps
+    # at least 1 - sales_weight_max of the price.
+    assert sales_weight(0.30, True, cfg) == cfg.sales_weight_min
+    assert round(sales_weight(0.75, True, cfg), 4) == 0.60
+    assert sales_weight(0.90, True, cfg) == cfg.sales_weight_max
+    assert sales_weight(9.00, True, cfg) == cfg.sales_weight_max
+    # Below the market there is no "how far below" reading to ramp on.
+    assert sales_weight(0.40, False, cfg) == cfg.sales_weight_listing_below
+
+
+def test_extreme_divergence_still_leaves_the_listing_a_share():
+    # $40 listing against $4 sales: sales take their 70% cap, listing keeps 30%.
+    res = compute_price(
+        _inputs(
+            lowest_listing_price=40.0,
+            divergence_sale_price=4.0,
+            weighted_sale_price=4.0,
+            sale_count=6,
+        )
+    )
+    assert res.estimated_price == 14.8  # 0.7*4 + 0.3*40
+
+
+def test_listing_below_sales_is_corrected_upward():
+    # Previously a below-market listing was copied verbatim as the price.
+    res = compute_price(
+        _inputs(
+            lowest_listing_price=10.0,
+            divergence_sale_price=30.0,
+            weighted_sale_price=30.0,
+            sale_count=6,
+        )
+    )
+    assert res.estimated_price == 24.0  # 0.7*30 + 0.3*10
+
+
+def test_stale_sales_still_correct_the_price():
+    """Sales older than a month used to leave the price untouched, because the
+    blend was gated on a 30-day window. They now pull the price with a reduced
+    weight instead of being silently ignored."""
     stale = [{"sold_price": 10.0, "sold_date": _days_ago(120 + i)} for i in range(3)]
-    res = compute_price([{"listed_price": 20.0, "shipping_price": 0.0}], stale, "NM", "Holo", False)
-    assert res.estimated_price == 20.0  # nothing fresh to blend against
-    assert res.confidence_percent == 70  # 60 + volume bonus, below the blended 80
-    assert "no sales within 30 days" in res.reasoning
+    res = _price([{"listed_price": 20.0, "shipping_price": 0.0}], stale)
+    assert res.estimated_price == 13.0  # 0.7*10 + 0.3*20, not the bare $20
 
 
-# ─── Recent-sales window ─────────────────────────────────────
+def test_cheap_cards_ignore_diverging_sales_entirely():
+    # Under the free-shipping threshold sold prices are shipping noise, so the
+    # listing stands however far the sales disagree.
+    res = compute_price(
+        _inputs(
+            lowest_listing_price=2.0,
+            divergence_sale_price=30.0,
+            weighted_sale_price=30.0,
+            sale_count=8,
+        )
+    )
+    assert res.estimated_price == 2.0
 
 
-def _days_ago(n: int) -> str:
-    return (date.today() - timedelta(days=n)).isoformat()
+def test_price_band_brackets_the_estimate():
+    res = compute_price(
+        _inputs(
+            lowest_listing_price=350.0,
+            divergence_sale_price=200.0,
+            weighted_sale_price=175.0,
+            sale_count=15,
+        )
+    )
+    assert res.estimated_low_price == 175.0
+    assert res.estimated_high_price == 350.0
+    assert res.estimated_low_price <= res.estimated_price <= res.estimated_high_price
 
 
-def test_fallback_average_uses_recent_sales_not_full_history():
-    # 25 recent sales at $10, plus 50 ancient sales at $2. With no listings the
-    # algorithm falls back to the sold average — it must reflect the recent ~$10,
-    # not get dragged toward $2 by the long history.
+# ─── Age weighting ───────────────────────────────────────────
+
+
+def test_weighted_average_leans_on_the_recent_sales():
+    # 3 sales at 45 days ($200) against 12 at 120 days ($120). A plain mean is
+    # $136; the half-life weighting pulls it well above that, toward the recent
+    # cluster, without discarding the older tail.
+    recent = [{"sold_price": 200.0, "sold_date": _days_ago(45)} for _ in range(3)]
+    older = [{"sold_price": 120.0, "sold_date": _days_ago(120)} for _ in range(12)]
+    res = compute_price(from_raw([], recent + older, "NM", "Holo"))
+    assert 160.0 < res.estimated_price < 175.0
+
+
+def test_sold_window_caps_at_max_sales_considered():
+    # 25 recent sales at $10, plus 50 ancient at $2. Only the 25 most recent
+    # enter the average, so the ancient tail can't drag the price toward $2.
     recent = [{"sold_price": 10.0, "sold_date": _days_ago(i)} for i in range(25)]
     ancient = [{"sold_price": 2.0, "sold_date": _days_ago(300 + i)} for i in range(50)]
-    res = compute_price([], recent + ancient, "NM", "Holo", False)
-    assert res.estimated_price == 10.0  # full-history avg would be ~4.67
+    res = _price([], recent + ancient)
+    assert res.estimated_price == 10.0  # full-history mean would be ~4.67
 
 
-def test_recent_window_prefers_5_days_when_busier_than_25_sales():
-    # 40 sales in the last 5 days at $10, plus 10 older sales at $50. The 5-day
-    # group (40) is larger than the last-25 group, so it wins -> avg $10.
-    fresh = [{"sold_price": 10.0, "sold_date": _days_ago(0)} for _ in range(40)]
-    older = [{"sold_price": 50.0, "sold_date": _days_ago(20)} for _ in range(10)]
-    res = compute_price([], fresh + older, "NM", "Holo", False)
+def test_undated_sales_are_skipped_not_counted():
+    # A row with no order date can be neither ordered nor aged, so it is dropped
+    # rather than silently weighted as if it were fresh.
+    solds = [
+        {"sold_price": 10.0, "sold_date": _days_ago(1)},
+        {"sold_price": 999.0, "sold_date": ""},
+    ]
+    res = compute_price(from_raw([], solds, "NM", "Holo"))
     assert res.estimated_price == 10.0
-
-
-def test_low_high_range_bounded_to_recent_sales():
-    # An ancient outlier sale must not blow out the low/high range, which is
-    # derived from sold min/max.
-    recent = [{"sold_price": 10.0, "sold_date": _days_ago(i)} for i in range(25)]
-    ancient = [{"sold_price": 100.0, "sold_date": _days_ago(400)}]
-    res = compute_price(
-        [{"listed_price": 11.0, "shipping_price": 0.0}], recent + ancient, "NM", "Holo", False
-    )
-    assert res.estimated_high_price == 10.0  # not 100 from the ancient sale
-    assert res.estimated_low_price == 10.0
 
 
 # ─── Formatters ──────────────────────────────────────────────

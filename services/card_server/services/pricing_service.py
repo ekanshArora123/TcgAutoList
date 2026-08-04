@@ -1,8 +1,17 @@
 """PricingService — High-level operations for pricing cards.
 
-Composes price CRUD helpers + TCGplayer price fetchers + pricing algorithm into
-workflow-level operations. Flow: fetch external data -> run algorithm -> store
-results -> return. Ported from pricingService.ts.
+Two ways in, both landing on the same algorithm:
+
+  * `reprice_card` / `reprice_sku` — recompute from data already stored by
+    `collect`. No network, so this is the cheap path: change a `PricingConfig`
+    and regenerate the collection's prices in seconds.
+  * `fetch_and_store_prices` / `compute_and_store_price` — fetch live TCGplayer
+    data for one card and price it now. The on-demand path the seller pipeline
+    uses when a card comes up before the next collection run.
+
+Both build a `PricingInputs` and hand it to `compute_price`, and both write
+through `repricer.store_price`, so neither can drift from the collector.
+Ported from pricingService.ts.
 """
 
 from __future__ import annotations
@@ -14,11 +23,14 @@ from typing import Any, Optional
 from ..helpers.crud.cards import CardsHelper
 from ..helpers.crud.prices import PricesHelper
 from ..helpers.crud.skus import SkusHelper
+from ..helpers.pricing import inputs
 from ..helpers.pricing.algorithm import (
     compute_liquid_value,
     compute_price,
     extrapolate_across_conditions,
 )
+from ..helpers.pricing.config import DEFAULT_CONFIG, PricingConfig
+from ..helpers.pricing.repricer import Repricer, store_price
 from ..helpers.tcgplayer.fetch_card_info import fetch_card_info
 from ..helpers.tcgplayer.fetch_prices import fetch_active_listings, fetch_sold_listings
 
@@ -30,12 +42,30 @@ def _group_by(items: list[dict[str, Any]], key_fn) -> dict[str, list[dict[str, A
     return grouped
 
 
+def _variant_key(item: dict[str, Any]) -> str:
+    """Full variant identity. Listing rows carry no printing of their own — they
+    are labelled with whatever was requested — so they default to 'None'."""
+    return f"{item['condition']}|{item['finish']}|{item.get('specialty_one') or 'None'}"
+
+
 class PricingService:
-    def __init__(self, db: sqlite3.Connection):
+    def __init__(self, db: sqlite3.Connection, config: PricingConfig = DEFAULT_CONFIG):
         self.db = db
         self.cards = CardsHelper(db)
         self.skus = SkusHelper(db)
         self.prices = PricesHelper(db)
+        self.config = config
+        self.repricer = Repricer(db, config)
+
+    # ─── Repricing (stored inputs, no network) ─────────────────
+
+    def reprice_card(self, card_id: str, date: Optional[str] = None) -> int:
+        """Recompute every SKU of a card from its stored snapshots."""
+        return self.repricer.price_card(card_id, date)
+
+    def reprice_sku(self, sku_id: int, date: Optional[str] = None) -> Optional[dict]:
+        """Recompute one SKU from stored snapshots, loading what it depends on."""
+        return self.repricer.price_sku(sku_id, date)
 
     # ─── Price Lookups (DB only) ───────────────────────────────
 
@@ -112,7 +142,7 @@ class PricingService:
     # ─── Pricing Workflows (fetch + algorithm + store) ─────────
 
     async def fetch_and_store_prices(self, tcgplayer_id: str) -> list[dict]:
-        """Fetch all TCGplayer data for a card and price every condition/finish combo."""
+        """Fetch all TCGplayer data for a card and price every variant it reveals."""
         await self._ensure_card_exists(tcgplayer_id)
 
         all_solds = await fetch_sold_listings(tcgplayer_id)
@@ -121,20 +151,21 @@ class PricingService:
         today = datetime.now().date().isoformat()
         results: list[dict] = []
 
-        solds_by_key = _group_by(all_solds, lambda s: f"{s['condition']}|{s['finish']}")
-        listings_by_key = _group_by(all_listings, lambda l: f"{l['condition']}|{l['finish']}")
+        # specialty_one is part of the key: 1st Edition and Unlimited are
+        # separate products at very different prices, and pooling their sales
+        # skews the sold signal toward the rarer printing.
+        solds_by_key = _group_by(all_solds, _variant_key)
+        listings_by_key = _group_by(all_listings, _variant_key)
 
-        all_keys = set(solds_by_key.keys()) | set(listings_by_key.keys())
-
-        for key in all_keys:
-            condition, finish = key.split("|")
+        for key in set(solds_by_key) | set(listings_by_key):
+            condition, finish, specialty_one = key.split("|")
 
             sku = self.skus.get_or_create(
                 {
                     "card_id": tcgplayer_id,
                     "condition": condition,
                     "finish": finish,
-                    "specialty_one": "None",
+                    "specialty_one": specialty_one,
                     "specialty_two": "None",
                     "qty": 0,
                 }
@@ -142,37 +173,22 @@ class PricingService:
 
             # The SKU resolved above is always the plain one (get_or_create keys
             # on specialty_two='None'), so there is no error specialty to honour
-            # here. Error variants are priced by the collector's derived pass,
+            # here. Error variants are priced by the repricer's derived pass,
             # which flags them; the seller pipeline routes them via the tier
             # router's own specialty_two check.
             result = compute_price(
-                listings_by_key.get(key, []),
-                solds_by_key.get(key, []),
-                condition,
-                finish,
-                has_manual_review_specialty=False,
+                inputs.from_raw(
+                    listings_by_key.get(key, []),
+                    solds_by_key.get(key, []),
+                    condition,
+                    finish,
+                    specialty_one,
+                    self.config,
+                ),
+                self.config,
             )
 
-            price = self.prices.upsert(
-                {
-                    "sku_id": sku["sku_id"],
-                    "calculation_date": today,
-                    "estimated_price": result.estimated_price,
-                    "estimated_liquid_value": result.estimated_liquid_value,
-                    "confidence_percent": result.confidence_percent,
-                    "manual_check_necessary": result.manual_check_necessary,
-                    "manually_checked": False,
-                    "algorithm_version": result.algorithm_version,
-                    "estimated_low_price": result.estimated_low_price,
-                    "estimated_high_price": result.estimated_high_price,
-                    "estimated_low_price_liquid": result.estimated_low_price_liquid,
-                    "estimated_high_price_liquid": result.estimated_high_price_liquid,
-                    "reasoning": result.reasoning,
-                }
-            )
-
-            # `reasoning` is a stored column now, so the row already carries it.
-            results.append(price)
+            results.append(store_price(self.prices, sku["sku_id"], today, result))
 
         return results
 
@@ -200,7 +216,9 @@ class PricingService:
         )
 
         # Always the plain SKU — see the note in fetch_and_store_prices.
-        result = compute_price(listings, solds, condition, finish, has_manual_review_specialty=False)
+        result = compute_price(
+            inputs.from_raw(listings, solds, condition, finish, "None", self.config), self.config
+        )
 
         if result.estimated_price is None:
             extrapolated = await self._try_extrapolate_from_other_conditions(
@@ -217,41 +235,28 @@ class PricingService:
                 )
 
         today = datetime.now().date().isoformat()
-        price = self.prices.upsert(
-            {
-                "sku_id": sku["sku_id"],
-                "calculation_date": today,
-                "estimated_price": result.estimated_price,
-                "estimated_liquid_value": result.estimated_liquid_value,
-                "confidence_percent": result.confidence_percent,
-                "manual_check_necessary": result.manual_check_necessary,
-                "manually_checked": False,
-                "algorithm_version": result.algorithm_version,
-                "estimated_low_price": result.estimated_low_price,
-                "estimated_high_price": result.estimated_high_price,
-                "estimated_low_price_liquid": result.estimated_low_price_liquid,
-                "estimated_high_price_liquid": result.estimated_high_price_liquid,
-                "reasoning": result.reasoning,
-            }
-        )
-
-        return price
+        return store_price(self.prices, sku["sku_id"], today, result)
 
     async def _try_extrapolate_from_other_conditions(
         self, tcgplayer_id: str, target_condition: str, target_finish: str
     ) -> Optional[dict]:
         other_skus = self.skus.search({"card_id": tcgplayer_id})
-        preferred_sources = ["NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP"]
+        preferred_sources = ["NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP", "DMG", "DM"]
 
         for source_condition in preferred_sources:
             if source_condition == target_condition:
                 continue
 
+            # Same printing only — a plain SKU must not be extrapolated from the
+            # 1st Edition price, which is a different product at a different
+            # price. (`compute_and_store_price` only ever targets the plain one.)
             source_sku = next(
                 (
                     s
                     for s in other_skus
-                    if s["condition"] == source_condition and s["finish"] == target_finish
+                    if s["condition"] == source_condition
+                    and s["finish"] == target_finish
+                    and (s["specialty_one"] or "None") == "None"
                 ),
                 None,
             )

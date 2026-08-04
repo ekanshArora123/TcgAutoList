@@ -38,6 +38,11 @@ def init_database(db_path: Optional[str] = None) -> sqlite3.Connection:
         "ALTER TABLE inventory ADD COLUMN back_photo_path TEXT",
         "ALTER TABLE sales ADD COLUMN has_image INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE prices ADD COLUMN reasoning TEXT",
+        # The two sale statistics the pricing algorithm reads. Existing rows get
+        # NULL, so a variant not yet re-collected prices off its listings alone
+        # until the next `collect` run fills them in.
+        "ALTER TABLE market_snapshots ADD COLUMN divergence_sale_price REAL",
+        "ALTER TABLE market_snapshots ADD COLUMN weighted_sale_price REAL",
     ]
     for sql in migrations:
         try:
@@ -88,6 +93,7 @@ _MARKET_SNAPSHOT_COLUMNS = (
     "mean_listing_price", "p25_listing_price", "p75_listing_price",
     "recent_sales_count", "avg_sale_price", "median_sale_price",
     "min_sale_price", "max_sale_price", "newest_sale_date", "oldest_sale_date",
+    "divergence_sale_price", "weighted_sale_price",
 )
 
 
@@ -135,7 +141,9 @@ def _upgrade_market_snapshots(db: sqlite3.Connection) -> None:
                     min_sale_price          REAL,
                     max_sale_price          REAL,
                     newest_sale_date        TEXT,
-                    oldest_sale_date        TEXT
+                    oldest_sale_date        TEXT,
+                    divergence_sale_price   REAL,
+                    weighted_sale_price     REAL
                 )
                 """
             )

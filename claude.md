@@ -20,8 +20,8 @@ The working capabilities in the repo today — built and in use. They reuse each
 |------------|----------|--------------|-----------|
 | **Card-data store + MCP server** | `services/card_server/` (`db.py`, `schema.sql`, `index.py`) | SQLite substrate (cards/skus/inventory/prices + market tables) exposed as CRUD services. | The shared foundation — everything else builds on it. |
 | **TCGplayer scrapers/fetchers** | `helpers/tcgplayer/` | Active/sold listings, card metadata, condition/finish formatters, shared HTTP transport. See `docs/tcgplayer-api.md`. | TCGplayer APIs. |
-| **Pricing engine** | `helpers/pricing/` via `pricing_service.py` | Lowest-listing anchor + sold sanity checks, confidence scoring, cross-condition extrapolation, liquid value. | Card-data store, scrapers, market-data. |
-| **Market-data collector** | `helpers/market/` + `collect.py` | Fetches listings/solds per owned variant, computes + stores prices, and records aggregate stats → `market_snapshots` (historical/analytics record; the pricing run itself uses the live fetch, not this table). Idempotent per date. | Card-data store, scrapers. |
+| **Pricing engine** | `helpers/pricing/` via `pricing_service.py` | Lowest-listing anchor blended with an age-weighted sold mean, confidence scoring, cross-condition extrapolation, liquid value. Prices from *stored* inputs, so a config change reprices the collection offline. | Card-data store, scrapers, market-data. |
+| **Market-data collector** | `helpers/market/` + `collect.py` | Fetches listings/solds per owned variant and records the aggregate stats the pricer reads → `market_snapshots`, then invokes the pricing engine to write `prices`. Idempotent per date. | Card-data store, scrapers. |
 | **Sales-history + market-price collector & graph** | `sales_collector.py`, `sales_store.py`, `price_history_store.py`, `collect_sales.py` | ~1yr of raw sold listings + weekly TCGplayer market price for the per-card graph. Kept out of the pricing path. | Card-data store, scrapers/transport. |
 | **Analytics dashboard** | `dashboard/frontend/` + `dashboard/backend/app.py` → `reporting_service.py` | Browse/filter/search the collection, charts, per-card detail + sales graph. | Card-data store (reporting), sales/market data. |
 | **Seller listing pipeline** | `services/telegram/` + `dashboard/backend/orchestrator/` + `services/ebay/` | Turns owned inventory into live listings: `/next` → pick unlisted card → fetch price → route by tier → request photo → build listing → post → mark done. | Card-data store, pricing, Telegram, eBay. |
@@ -77,7 +77,7 @@ services/card_server/         (imported as `services.card_server`)
 │   └── reporting_service.py  <- Read-only browse + analytics for the dashboard (no writes)
 ├── helpers/                  <- INTERNAL (services compose these)
 │   ├── crud/                 <- Pure DB CRUD per table (cards, skus, inventory, prices)
-│   ├── pricing/              <- algorithm.py + config.py (see docs/pricing-algorithm.md)
+│   ├── pricing/              <- algorithm + inputs + config + repricer (see docs/pricing-algorithm.md)
 │   ├── tcgplayer/            <- API fetchers, formatters, shared rate-limited transport (see docs/tcgplayer-api.md)
 │   └── market/               <- snapshot collection (pricing) + raw sales & price-history stores (graph)
 ├── collect.py                <- CLI: market snapshots (pricing)
@@ -87,7 +87,7 @@ services/card_server/         (imported as `services.card_server`)
 
 ## Database Schema
 
-Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish variants, composite UNIQUE) -> `inventory` (physical cards owned) -> `prices` (historical estimates per SKU per date, each carrying the algorithm's `reasoning`). Plus three market-data tables keyed by card+condition+finish+`specialty_one` (1st Edition and Unlimited are separate printings at very different prices, so none of them may pool the two): `market_snapshots` (periodic aggregate stats; a historical/analytics record, not an input to the pricing run), `sales` (raw individual sold listings, ~1yr history), and `market_price_history` (TCGplayer weekly "market price" from the Infinite API). The latter two feed the per-card sales graph only — never the pricing algorithm; both are gathered by `collect_sales`.
+Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish variants, composite UNIQUE) -> `inventory` (physical cards owned) -> `prices` (historical estimates per SKU per date, each carrying the algorithm's `reasoning`). Plus three market-data tables keyed by card+condition+finish+`specialty_one` (1st Edition and Unlimited are separate printings at very different prices, so none of them may pool the two): `market_snapshots` (per-variant aggregate stats written by `collect`; the pricing run's stored input as well as the historical/analytics record), `sales` (raw individual sold listings, ~1yr history), and `market_price_history` (TCGplayer weekly "market price" from the Infinite API). The latter two are written only by `collect_sales` and feed the per-card sales graph; the pricer reads `sales` for parameter calibration only, never as a live pricing input.
 
 **Key decisions:**
 - `inventory.pricing_sku_id` allows pricing a borderline card against a different condition (e.g., LP-NM priced as NM)
@@ -98,8 +98,11 @@ Core chain: `cards` (TCGplayer product metadata) -> `skus` (condition+finish var
 
 **Goal:** maximum profit with variable aggressiveness. The primary anchor is the **lowest active TCGplayer listing** (best proxy for liquid modern cards); recent solds are a secondary signal that takes over for illiquid cards. TCGplayer's own "market price" is **not** trusted for pricing.
 
+**Collection and pricing are separate steps.** `collect` writes each variant's market state to `market_snapshots`, then the pricer reads it back and writes `prices` — it never prices from the fetch directly. So `collect.bat --reprice-only` regenerates prices from stored data with zero requests, which is how a changed constant gets applied across the collection.
+
 **Major caveats:**
 - **Cheap cards (< $5)** use listing prices only — sold prices are shipping-noise.
+- **When the listing disagrees with the sold signal by >30%**, the price is a weighted blend of the two rather than the listing alone; the sold side's share scales with the divergence (30–70%), and within it each sale decays by a half-life on its age. The listing always keeps at least 30%.
 - **Conditions TCGplayer doesn't sell** (in-between grades like `MP-LP`, plus the `MINT`/`DM` aliases) are derived from the tiers it does. The collector fetches an in-between grade's *both* neighbors in the same visit and interpolates between them; falling back to one-sided **extrapolation** is always flagged for manual review. Error variants (`specialty_two`) have no tier either — they inherit the plain card's price and are always flagged.
 
 All constants live in `services/card_server/helpers/pricing/config.py`; the full algorithm (decision tree, confidence, liquid value) is in `docs/pricing-algorithm.md`.

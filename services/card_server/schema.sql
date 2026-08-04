@@ -96,7 +96,15 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     min_sale_price          REAL,
     max_sale_price          REAL,
     newest_sale_date        TEXT,
-    oldest_sale_date        TEXT
+    oldest_sale_date        TEXT,
+
+    -- Pricing inputs (the two sale statistics the algorithm actually reads):
+    -- the plain mean of the most recent few sales, which the divergence test
+    -- compares the lowest listing against, and the age-weighted mean that gets
+    -- blended in when they diverge. Stored so a price can be recomputed from
+    -- the DB with no refetch. See helpers/pricing/inputs.py.
+    divergence_sale_price   REAL,
+    weighted_sale_price     REAL
 );
 
 -- The variant-uniqueness index (which includes specialty_one) is created in

@@ -3,6 +3,12 @@
 Standalone script that collects market data for owned cards. Run manually or via
 Task Scheduler / cron. Ported from collect.ts.
 
+Each card visit does two separable things: fetch its market state into
+`market_snapshots`, then reprice its SKUs from what was just stored. Because the
+pricing half reads the DB rather than the fetch, `--reprice-only` can redo just
+that half for the same cards with no network calls at all — the way to apply a
+changed pricing constant across the collection in seconds.
+
 Usage:
   python -m services.card_server.collect                  # collect all owned cards
   python -m services.card_server.collect --stale          # cards not collected in 7+ days
@@ -12,10 +18,12 @@ Usage:
   python -m services.card_server.collect --delay 1000      # 1s between cards (default 500ms)
   python -m services.card_server.collect --variant-delay 0 # no gap between a card's variant calls
   python -m services.card_server.collect --force           # re-collect cards already done today
+  python -m services.card_server.collect --reprice-only    # reprice from stored data, no fetching
 
 A card costs one listing request per owned variant (an MP-LP card fetches both
 MP and LP), so `--variant-delay` paces the calls WITHIN a card and `--delay`
-paces the gap BETWEEN cards.
+paces the gap BETWEEN cards. Neither applies under `--reprice-only`, which
+issues no requests.
 
 Environment:
   DB_PATH                — SQLite database path (default: services/card_server/data/cards.db)
@@ -28,6 +36,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 from datetime import datetime
 
 from .db import close_database, init_database
@@ -42,7 +51,39 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--delay", type=int, default=500)
     parser.add_argument("--variant-delay", type=int, default=250)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--reprice-only",
+        dest="reprice_only",
+        action="store_true",
+        help="recompute prices from stored snapshots without fetching anything",
+    )
     return parser.parse_args()
+
+
+def _reprice(collector: MarketCollector, card_ids: list[str]) -> int:
+    """Recompute prices for the selected cards from stored snapshots.
+
+    Cards with no snapshot yet simply price nothing — they need a collecting run
+    first, and their previous estimates are left untouched rather than cleared.
+    """
+    start = time.time()
+    today = datetime.now().date().isoformat()
+    priced = 0
+    touched = 0
+
+    for i, card_id in enumerate(card_ids):
+        written = collector.repricer.price_card(card_id, today)
+        priced += written
+        if written:
+            touched += 1
+        if (i + 1) % 250 == 0:
+            print(f"  [{i + 1}/{len(card_ids)}] {priced} prices written...")
+
+    print(
+        f"\nReprice complete: {touched}/{len(card_ids)} cards had stored data, "
+        f"{priced} prices written, {time.time() - start:.1f}s"
+    )
+    return 0
 
 
 async def _main() -> int:
@@ -60,6 +101,18 @@ async def _main() -> int:
         mode = "owned"
 
     opts = {"delayMs": args.delay, "force": args.force}
+
+    if args.reprice_only:
+        card_ids = (
+            [s.strip() for s in args.cards.split(",") if s.strip()]
+            if args.cards
+            else collector.select_cards(mode, args.stale or 7)
+        )
+        print(f"Repricing from stored data (mode: {mode}, {len(card_ids)} cards, no fetching)\n")
+        try:
+            return _reprice(collector, card_ids)
+        finally:
+            close_database()
 
     print(
         f"Market data collection starting (mode: {mode}, delay: {args.delay}ms, "

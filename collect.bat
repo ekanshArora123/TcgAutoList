@@ -19,7 +19,15 @@ REM    collect.bat --stale            owned cards not collected in 7+ days
 REM    collect.bat --stale 14         owned cards not collected in 14+ days
 REM    collect.bat --cohort           same-set neighbors (not owned)
 REM    collect.bat --cards 123,456    specific TCGplayer card IDs
-REM    collect.bat --delay 1000       ms between API calls (default 500)
+REM    collect.bat --delay 1000       ms between cards (default 500)
+REM    collect.bat --variant-delay 0  ms between a card's variant calls (default 250)
+REM    collect.bat --force            re-collect cards already collected today
+REM    collect.bat --reprice-only     recompute prices from stored data, no fetching
+REM
+REM  A collect run stores each card's market state, then prices it FROM that
+REM  store. --reprice-only redoes only the second half, so a changed pricing
+REM  constant can be applied across the collection in seconds with no requests.
+REM  It accepts the same selection flags (--stale / --cohort / --cards).
 REM
 REM  NOTE: TCGPLAYER_AUTH_COOKIE is optional here - it only widens sold-
 REM        listing pagination for the sold sanity check. The primary anchor
@@ -67,9 +75,13 @@ endlocal & exit /b %RC%
 
 :usage
 echo Usage: collect.bat [--stale [days] ^| --cohort ^| --cards id1,id2] [--delay ms]
-echo   no args        collect all owned cards
-echo   --stale [N]    owned cards not collected in N+ days (default 7)
-echo   --cohort       same-set neighbors of owned cards (not owned)
-echo   --cards LIST   comma-separated TCGplayer card IDs
-echo   --delay MS     milliseconds between API calls (default 500)
+echo                    [--variant-delay ms] [--force] [--reprice-only]
+echo   no args           collect all owned cards
+echo   --stale [N]       owned cards not collected in N+ days (default 7)
+echo   --cohort          same-set neighbors of owned cards (not owned)
+echo   --cards LIST      comma-separated TCGplayer card IDs
+echo   --delay MS        milliseconds between cards (default 500)
+echo   --variant-delay MS  milliseconds between a card's variant calls (default 250)
+echo   --force           re-collect cards already collected today
+echo   --reprice-only    recompute prices from stored data, no fetching
 endlocal
