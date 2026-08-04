@@ -62,7 +62,7 @@ class PricingInputs:
         and a sold-only variant (no listings at all) would price to NULL and be
         flagged unpriceable. Callers skip these rather than overwrite a good
         estimate with a degraded one — the variant reprices normally once a
-        collect run, or a backfill, fills the columns in.
+        collect run fills the columns in.
         """
         return self.sale_count > 0 and self.weighted_sale_price is None
 

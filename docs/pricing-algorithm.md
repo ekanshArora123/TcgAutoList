@@ -150,8 +150,8 @@ age 0, and only the `MAX_SALES_CONSIDERED` (25) most recent enter the mean.
 > `weighted_sale_price` is therefore still correct weeks later — it only moves
 > when new sales arrive. The one exception is the half-life itself: changing it
 > invalidates stored values, because it changes the *relative* weights. Every
-> other constant reprices for free; re-tuning the half-life means re-aggregating
-> (a collect run, or a recompute from the raw `sales` table).
+> other constant reprices for free; re-tuning the half-life means re-aggregating,
+> i.e. a collect run.
 
 ### Cheap Card Shipping Model (< $5)
 
@@ -317,9 +317,9 @@ the next collect run refreshes it.
 
 The raw sold rows that *are* kept come from a separate collector
 (`collect_sales.py` → `sales`, `market_price_history`), which feeds the per-card
-graph. The pricing path reads `sales` only for parameter calibration — e.g.
-recomputing weighted means under a different half-life to choose one — never as
-a live pricing input.
+graph, and nothing in the pricing path reads it. It remains the natural source
+for calibrating the half-life offline — it holds the same sales keyed the same
+way — but no tool does that today.
 
 ## Future Versions
 

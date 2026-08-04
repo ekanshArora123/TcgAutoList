@@ -48,7 +48,7 @@ DIVERGENCE_SALE_COUNT = 5
 # scales every weight by the same factor, which cancels in the ratio. A stored
 # weighted average therefore does NOT drift between collections — it only moves
 # when new sales arrive. Changing the half-life below DOES invalidate a stored
-# value, which is why re-tuning it means recomputing from raw `sales` rows.
+# value, which is why re-tuning it means re-aggregating, i.e. a collect run.
 MAX_SALES_CONSIDERED = 25
 SOLD_WEIGHT_HALF_LIFE_DAYS = 30.0
 
