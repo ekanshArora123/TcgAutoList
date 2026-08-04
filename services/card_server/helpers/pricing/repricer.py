@@ -156,8 +156,17 @@ class Repricer:
     # ─── Internals ────────────────────────────────────────────
 
     def _load_inputs(self, card_id: str) -> list[PricingInputs]:
+        """The latest snapshot per variant, as pricing inputs.
+
+        Rows predating the pricing-input columns are dropped rather than priced:
+        they know sales existed but not what they were, so using them would
+        replace a blended estimate with a listing-only one — or, for a variant
+        with no listings, wipe the price entirely. Skipping leaves the previous
+        estimate standing, which is the same choice made everywhere else here.
+        """
         rows = self.db.execute(_LATEST_SNAPSHOTS_SQL, {"card_id": card_id}).fetchall()
-        return [from_snapshot(dict(row)) for row in rows]
+        loaded = [from_snapshot(dict(row)) for row in rows]
+        return [i for i in loaded if not i.predates_pricing_inputs]
 
     def _price_variants(
         self, card_id: str, inputs: list[PricingInputs], date: str, store: bool = True

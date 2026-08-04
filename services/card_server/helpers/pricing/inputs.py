@@ -52,6 +52,20 @@ class PricingInputs:
     def has_sales(self) -> bool:
         return self.sale_count > 0 and self.weighted_sale_price is not None
 
+    @property
+    def predates_pricing_inputs(self) -> bool:
+        """True for a snapshot written before the weighted columns existed.
+
+        Such a row records that sales WERE seen but not the statistics the
+        algorithm reads, so pricing from it would silently drop the sold signal:
+        a variant that should blend would fall back to a bare listing anchor,
+        and a sold-only variant (no listings at all) would price to NULL and be
+        flagged unpriceable. Callers skip these rather than overwrite a good
+        estimate with a degraded one — the variant reprices normally once a
+        collect run, or a backfill, fills the columns in.
+        """
+        return self.sale_count > 0 and self.weighted_sale_price is None
+
 
 def _round(n: float) -> float:
     return round(n * 100) / 100

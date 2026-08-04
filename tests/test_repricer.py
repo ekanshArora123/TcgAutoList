@@ -277,6 +277,45 @@ def test_in_between_with_one_missing_neighbour_extrapolates_and_flags(db):
     assert "Extrapolated" in row["reasoning"]
 
 
+def test_pre_migration_snapshot_is_skipped_not_degraded(db):
+    """A row from before the pricing-input columns knows sales existed but not
+    what they were. Pricing from it would drop the sold signal — silently for a
+    variant with listings, catastrophically for one without, which would go to a
+    NULL price. Both must leave the previous estimate alone instead."""
+    sold_only = _own(db, "NM")
+    with_listing = _own(db, "LP")
+    for sku_id, price in ((sold_only, 8.0), (with_listing, 20.0)):
+        db.execute(
+            "INSERT INTO prices (sku_id, calculation_date, estimated_price)"
+            " VALUES (?, '2026-07-01', ?)",
+            (sku_id, price),
+        )
+    # Legacy shape: sales were counted, but neither weighted column was written.
+    for condition, lowest in (("NM", None), ("LP", 25.0)):
+        db.execute(
+            "INSERT INTO market_snapshots (card_id, condition, finish, specialty_one,"
+            " snapshot_date, source, listing_count, lowest_listing_price,"
+            " recent_sales_count, avg_sale_price)"
+            " VALUES ('88075', ?, 'Regular', 'None', ?, 'tcgplayer', ?, ?, 9, 10.0)",
+            (condition, TODAY, 0 if lowest is None else 1, lowest),
+        )
+
+    assert Repricer(db).price_card("88075") == 0
+    assert _price_of(db, sold_only) == 8.0
+    assert _price_of(db, with_listing) == 20.0
+
+
+def test_variant_with_genuinely_no_sales_still_prices(db):
+    # A NULL weighted column is only suspicious when sales were counted; with
+    # zero sales it just means the variant has none, and listings price it.
+    sku_id = _own(db, "NM")
+    _store_snapshot(db, "NM", listings=(30.0,), solds=())
+
+    Repricer(db).price_card("88075")
+
+    assert _price_of(db, sku_id) == 30.0
+
+
 def test_derived_skus_never_cross_printings(db):
     """A plain SKU must not inherit the 1st Edition price — separate products."""
     plain_id = _own(db, "MP-LP", "Regular", specialty_one="None")
