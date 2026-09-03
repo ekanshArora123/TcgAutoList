@@ -550,3 +550,92 @@ def test_sales_parser_recovers_specialty_from_variant():
     assert parse_finish_from_api("1st Edition Holofoil") == {"finish": "Holo", "specialty_one": "First Edition"}
     assert parse_finish_from_api("Unlimited") == {"finish": "Regular", "specialty_one": "None"}
     assert parse_finish_from_api("Normal") == {"finish": "Regular", "specialty_one": "None"}
+
+
+# ─── Selection order (most expensive first) ──────────────────
+
+
+def _owned_card(db: sqlite3.Connection, card_id: str, prices: list[tuple[str, float]]) -> None:
+    """An owned NM card with `prices` as (calculation_date, estimated_price) rows."""
+    db.execute("INSERT OR IGNORE INTO cards (id, card_name) VALUES (?, ?)", (card_id, card_id))
+    cur = db.execute(
+        "INSERT INTO skus (card_id, condition, finish, qty) VALUES (?, 'NM', 'Regular', 1)",
+        (card_id,),
+    )
+    sku_id = cur.lastrowid
+    db.execute("INSERT INTO inventory (sku_id, qty) VALUES (?, 1)", (sku_id,))
+    for date, price in prices:
+        db.execute(
+            "INSERT INTO prices (sku_id, calculation_date, estimated_price) VALUES (?, ?, ?)",
+            (sku_id, date, price),
+        )
+
+
+def test_owned_selection_is_most_expensive_first(db):
+    _owned_card(db, "cheap", [("2026-08-01", 1.25)])
+    _owned_card(db, "pricey", [("2026-08-01", 480.0)])
+    _owned_card(db, "mid", [("2026-08-01", 42.0)])
+    _owned_card(db, "never_priced", [])
+
+    ids = MarketCollector(db)._get_owned_card_ids()
+
+    # Never-priced cards have no value to sort on and go last, behind every
+    # priced card, rather than riding NULLs to the top of a DESC sort.
+    assert ids == ["pricey", "mid", "cheap", "never_priced"]
+
+
+def test_selection_value_uses_the_latest_price_not_the_highest(db):
+    # A card that crashed from $900 to $5 must sort by what it's worth now.
+    _owned_card(db, "crashed", [("2026-01-01", 900.0), ("2026-08-01", 5.0)])
+    _owned_card(db, "steady", [("2026-08-01", 60.0)])
+
+    assert MarketCollector(db)._get_owned_card_ids() == ["steady", "crashed"]
+
+
+def test_selection_value_is_the_cards_priciest_variant(db):
+    # A DMG copy of an expensive card is still an expensive card to collect:
+    # value is the max across the card's SKUs on their latest dates.
+    db.execute("INSERT INTO cards (id, card_name) VALUES ('two_skus', 'Charizard')")
+    for condition, price in (("NM", 300.0), ("DMG", 20.0)):
+        cur = db.execute(
+            "INSERT INTO skus (card_id, condition, finish, qty)"
+            " VALUES ('two_skus', ?, 'Regular', 1)",
+            (condition,),
+        )
+        db.execute("INSERT INTO inventory (sku_id, qty) VALUES (?, 1)", (cur.lastrowid,))
+        db.execute(
+            "INSERT INTO prices (sku_id, calculation_date, estimated_price)"
+            " VALUES (?, '2026-08-01', ?)",
+            (cur.lastrowid, price),
+        )
+    _owned_card(db, "middling", [("2026-08-01", 100.0)])
+
+    ids = MarketCollector(db)._get_owned_card_ids()
+    # One row per card despite the two SKUs, and sorted on the $300 NM.
+    assert ids == ["two_skus", "middling"]
+
+
+def test_stale_and_cohort_selection_share_the_ordering(db):
+    _owned_card(db, "cheap", [("2026-08-01", 1.25)])
+    _owned_card(db, "pricey", [("2026-08-01", 480.0)])
+    # Both owned cards are stale (no snapshot at all), so stale == owned here.
+    assert MarketCollector(db)._get_stale_card_ids(7) == ["pricey", "cheap"]
+
+    # Cohort: unowned same-set neighbours, one of them priced from an earlier run.
+    db.execute("UPDATE cards SET set_name = 'Base Set' WHERE id IN ('cheap', 'pricey')")
+    for card_id, price in (("neighbour_cheap", 2.0), ("neighbour_rich", 75.0)):
+        db.execute(
+            "INSERT INTO cards (id, card_name, set_name) VALUES (?, ?, 'Base Set')",
+            (card_id, card_id),
+        )
+        cur = db.execute(
+            "INSERT INTO skus (card_id, condition, finish, qty) VALUES (?, 'NM', 'Regular', 0)",
+            (card_id,),
+        )
+        db.execute(
+            "INSERT INTO prices (sku_id, calculation_date, estimated_price)"
+            " VALUES (?, '2026-08-01', ?)",
+            (cur.lastrowid, price),
+        )
+
+    assert MarketCollector(db)._get_cohort_card_ids() == ["neighbour_rich", "neighbour_cheap"]

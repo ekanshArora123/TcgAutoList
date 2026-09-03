@@ -25,6 +25,11 @@ MP and LP), so `--variant-delay` paces the calls WITHIN a card and `--delay`
 paces the gap BETWEEN cards. Neither applies under `--reprice-only`, which
 issues no requests.
 
+Selection modes (owned / stale / cohort) run most-expensive-card-first, by each
+card's latest stored estimate, so an interrupted run has already refreshed the
+cards worth the most; never-priced cards sort last. An explicit `--cards` list
+is collected in the order given.
+
 Environment:
   DB_PATH                — SQLite database path (default: services/card_server/data/cards.db)
   TCGPLAYER_AUTH_COOKIE  — Optional, enables full sold data pagination

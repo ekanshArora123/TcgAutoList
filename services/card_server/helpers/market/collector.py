@@ -28,6 +28,31 @@ from .snapshots import SnapshotStore
 CollectionReport = dict
 CollectorOptions = dict
 
+# Every selection mode hands its cards back most-expensive-first. A run is often
+# cut short — a rate-limit wall it never gets past, a Ctrl-C, a machine that goes
+# to sleep — and whatever it did manage to collect should be the cards where a
+# stale price costs the most. Ordering here (rather than in `collect_cards`)
+# keeps an explicit `--cards` list in the order the caller gave it.
+#
+# A card's value is the highest estimate across its SKUs on that SKU's most
+# recent calculation date — the card's best-known worth today, condition-agnostic
+# so a DMG copy of a $500 card still sorts as an expensive card. Cards never
+# priced (new adds, --cohort neighbours) have nothing to sort on and go last.
+_CARD_VALUE_CTE = """
+    WITH card_value AS (
+        SELECT s.card_id AS card_id, MAX(p.estimated_price) AS value
+        FROM prices p
+        JOIN skus s ON s.sku_id = p.sku_id
+        WHERE p.calculation_date = (
+            SELECT MAX(p2.calculation_date) FROM prices p2 WHERE p2.sku_id = p.sku_id
+        )
+        GROUP BY s.card_id
+    )
+"""
+# `value IS NULL` first so unpriced cards sort after every priced one (DESC alone
+# would put SQLite's NULLs at the top).
+_BY_VALUE_DESC = "ORDER BY v.value IS NULL, v.value DESC"
+
 
 class MarketCollector:
     """Collects market data and stores it; pricing is delegated, not duplicated.
@@ -57,7 +82,7 @@ class MarketCollector:
         self.variant_delay_ms = variant_delay_ms
 
     async def collect_owned(self, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Collect market data for all cards the user owns (has inventory)."""
+        """Collect market data for all cards the user owns, priciest first."""
         return await self.collect_cards(self._get_owned_card_ids(), options or {})
 
     async def collect_cards(
@@ -219,8 +244,9 @@ class MarketCollector:
     # ─── Card Selection Queries ───────────────────────────────
 
     def select_cards(self, mode: str, stale_days: int = 7) -> list[str]:
-        """Card IDs for a selection mode, so a reprice-only run can target the
-        same set a collecting run would without duplicating these queries."""
+        """Card IDs for a selection mode, most expensive first (see
+        `_CARD_VALUE_CTE`), so a reprice-only run can target the same set in the
+        same order a collecting run would without duplicating these queries."""
         if mode == "cohort":
             return self._get_cohort_card_ids()
         if mode == "stale":
@@ -229,20 +255,25 @@ class MarketCollector:
 
     def _get_owned_card_ids(self) -> list[str]:
         rows = self.db.execute(
-            """
-            SELECT DISTINCT s.card_id
+            _CARD_VALUE_CTE
+            + """
+            SELECT DISTINCT s.card_id, v.value
             FROM inventory i
             JOIN skus s ON i.sku_id = s.sku_id
+            LEFT JOIN card_value v ON v.card_id = s.card_id
             WHERE i.status NOT IN ('sold')
             """
+            + _BY_VALUE_DESC
         ).fetchall()
         return [r["card_id"] for r in rows]
 
     def _get_cohort_card_ids(self) -> list[str]:
         rows = self.db.execute(
-            """
-            SELECT DISTINCT c2.id
+            _CARD_VALUE_CTE
+            + """
+            SELECT DISTINCT c2.id, v.value
             FROM cards c2
+            LEFT JOIN card_value v ON v.card_id = c2.id
             WHERE c2.set_name IN (
               SELECT DISTINCT c.set_name
               FROM inventory i
@@ -257,21 +288,25 @@ class MarketCollector:
               WHERE i.status NOT IN ('sold')
             )
             """
+            + _BY_VALUE_DESC
         ).fetchall()
         return [r["id"] for r in rows]
 
     def _get_stale_card_ids(self, max_age_days: int) -> list[str]:
         cutoff_str = (datetime.now() - timedelta(days=max_age_days)).date().isoformat()
         rows = self.db.execute(
-            """
-            SELECT DISTINCT s.card_id
+            _CARD_VALUE_CTE
+            + """
+            SELECT DISTINCT s.card_id, v.value
             FROM inventory i
             JOIN skus s ON i.sku_id = s.sku_id
+            LEFT JOIN card_value v ON v.card_id = s.card_id
             WHERE i.status NOT IN ('sold')
             AND s.card_id NOT IN (
               SELECT card_id FROM market_snapshots WHERE snapshot_date >= ?
             )
-            """,
+            """
+            + _BY_VALUE_DESC,
             (cutoff_str,),
         ).fetchall()
         return [r["card_id"] for r in rows]

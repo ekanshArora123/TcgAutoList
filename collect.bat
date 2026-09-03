@@ -13,6 +13,11 @@ REM
 REM  Idempotent per day: cards already collected today are skipped, and
 REM  re-runs upsert (never duplicate) that day's snapshot + price rows.
 REM
+REM  Order: most expensive card first, by each card's latest stored estimate
+REM  (never-priced cards last), so a run that dies on a rate-limit wall or gets
+REM  cancelled has already refreshed the cards worth the most. Applies to the
+REM  selection modes; an explicit --cards list keeps the order given.
+REM
 REM  Usage (all args are forwarded to the Python runner):
 REM    collect.bat                    collect all owned cards
 REM    collect.bat --stale            owned cards not collected in 7+ days
@@ -84,4 +89,6 @@ echo   --delay MS        milliseconds between cards (default 500)
 echo   --variant-delay MS  milliseconds between a card's variant calls (default 250)
 echo   --force           re-collect cards already collected today
 echo   --reprice-only    recompute prices from stored data, no fetching
+echo.
+echo   Cards are collected most-expensive-first [latest stored estimate].
 endlocal
