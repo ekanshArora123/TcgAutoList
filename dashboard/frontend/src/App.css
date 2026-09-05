@@ -61,6 +61,38 @@ body {
   color: #fff;
 }
 
+/* Price disclaimer: pinned just below the sticky 56px navbar, so it is never
+   scrolled past. z-index sits under the navbar so the nav wins any overlap. */
+.price-disclaimer {
+  position: sticky;
+  top: 56px;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-align: center;
+  color: #4a2f00;
+  background: #f5c451;
+  border-bottom: 1px solid #d9a72c;
+}
+
+.price-disclaimer-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .price-disclaimer {
+    font-size: 12.5px;
+    padding: 8px 12px;
+  }
+}
+
 .main-content {
   padding: 24px;
   max-width: 1400px;

@@ -27,6 +27,13 @@ function App() {
           </NavLink>
         </div>
       </nav>
+      {/* Card-show disclaimer. Sticky directly under the navbar (which is itself
+          sticky at height 56px) so it stays on screen at any scroll position on
+          every page — a customer deep in the grid still sees it. */}
+      <div className="price-disclaimer" role="note">
+        <span className="price-disclaimer-icon" aria-hidden="true">&#9888;</span>
+        Prices shown are automated estimates and may be inaccurate &mdash; higher or lower.
+      </div>
       <main className="main-content">
         <Routes>
           <Route path="/" element={<CollectionGridPage />} />
