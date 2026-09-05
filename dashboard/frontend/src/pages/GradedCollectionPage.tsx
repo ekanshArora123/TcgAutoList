@@ -31,7 +31,6 @@ export default function GradedCollectionPage() {
   const [company, setCompany] = useState("");
   const [status, setStatus] = useState("");
   const [grades, setGrades] = useState<string[]>([]);
-  const [tags, setTags] = useState<string[]>([]);
   const [sort, setSort] = useState("grade");
   const [order, setOrder] = useState("desc");
   const [perPage, setPerPage] = useState(48);
@@ -54,10 +53,9 @@ export default function GradedCollectionPage() {
     if (company) params.grading_company = company;
     if (status) params.status = status;
     if (grades.length) params.grades = grades;
-    if (tags.length) params.tags = tags;
     setData(await fetchGradedCollection(params));
     setLoading(false);
-  }, [q, company, status, grades, tags, sort, order, page, perPage]);
+  }, [q, company, status, grades, sort, order, page, perPage]);
 
   useEffect(() => { fetchGradedFilters().then(setFilters); }, []);
   useEffect(() => { load(); }, [load]);
@@ -135,11 +133,6 @@ export default function GradedCollectionPage() {
             <div style={{ width: 140 }}>
               <MultiSelect label="Grades" options={filters.grades ?? []} selected={grades} onChange={(v) => { setGrades(v); setPage(1); }} />
             </div>
-            {(filters.tags ?? []).length > 0 && (
-              <div style={{ width: 140 }}>
-                <MultiSelect label="Tags" options={filters.tags} selected={tags} onChange={(v) => { setTags(v); setPage(1); }} />
-              </div>
-            )}
           </>
         )}
       </div>
@@ -175,7 +168,7 @@ export default function GradedCollectionPage() {
         <div className="loading">Loading...</div>
       ) : !data || data.items.length === 0 ? (
         <div className="loading">
-          {q || company || status || grades.length || tags.length
+          {q || company || status || grades.length
             ? "No graded slabs match these filters."
             : "No graded slabs yet. Add one by cert number above."}
         </div>
@@ -207,7 +200,6 @@ function GradedTile({ card }: { card: GradedCardItem }) {
   // Awkward/unavailable grades come through as the -1 sentinel (see psa.py); show
   // "ERR" rather than a number.
   const gradeText = card.grade > 0 ? String(card.grade) : "ERR";
-  const toCrack = (card.tags || "").split(",").map((t) => t.trim()).includes("to_crack");
   // Condensed extra details (omit blanks) — one small line under the set.
   const meta = [
     card.card_year,
@@ -233,7 +225,6 @@ function GradedTile({ card }: { card: GradedCardItem }) {
           <span className="ggb-company">{card.grading_company}</span>
           <span className="ggb-grade">{gradeText}</span>
         </div>
-        {toCrack && <span className="graded-tile-crack">Crack</span>}
       </div>
 
       <div className="card-tile-info">

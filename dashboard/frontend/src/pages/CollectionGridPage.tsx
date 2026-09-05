@@ -6,8 +6,9 @@ import {
 } from "../api";
 import CardImage from "../components/CardImage";
 
-// Path to a card's detail page. Identity is the SKU minus condition; tags are
-// excluded from the key (tagged cards don't route — see CardTile).
+// Path to a card's detail page. Identity is the SKU minus condition. Tagged
+// inventory never reaches the browse views (hidden in browse mode), so tags are
+// not part of the key.
 function cardDetailPath(card: CollectionItem): string {
   const qs = new URLSearchParams({
     finish: card.finish,
@@ -42,7 +43,6 @@ export default function CollectionGridPage() {
   const [finish, setFinish] = useState("");
   const [status, setStatus] = useState("");
   const [specialty, setSpecialty] = useState("");
-  const [tagsContain, setTagsContain] = useState("");
   const [manualCheck, setManualCheck] = useState(false);
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
@@ -64,7 +64,6 @@ export default function CollectionGridPage() {
     if (finish) params.finish = finish;
     if (status) params.status = status;
     if (specialty) params.specialty = specialty;
-    if (tagsContain) params.tags_contain = tagsContain;
     if (manualCheck) params.manual_check = "true";
     if (priceMin) params.price_min = priceMin;
     if (priceMax) params.price_max = priceMax;
@@ -73,7 +72,7 @@ export default function CollectionGridPage() {
     const result = await fetchCollection(params);
     setData(result);
     setLoading(false);
-  }, [q, setName, era, rarity, condition, finish, status, specialty, tagsContain, manualCheck, priceMin, priceMax, confidenceMin, confidenceMax, sort, order, page, perPage]);
+  }, [q, setName, era, rarity, condition, finish, status, specialty, manualCheck, priceMin, priceMax, confidenceMin, confidenceMax, sort, order, page, perPage]);
 
   useEffect(() => { fetchFilters().then(setFilters); }, []);
   useEffect(() => { load(); }, [load]);
@@ -175,7 +174,6 @@ export default function CollectionGridPage() {
 
       {/* Extra filters row */}
       <div className="filters-bar">
-        <input className="search-input" style={{ width: 120, minWidth: 0 }} placeholder="Tags contain..." value={tagsContain} onChange={(e) => { setTagsContain(e.target.value); setPage(1); }} />
         <input className="search-input" style={{ width: 80, minWidth: 0 }} placeholder="Conf min" type="number" value={confidenceMin} onChange={(e) => { setConfidenceMin(e.target.value); setPage(1); }} />
         <span style={{ color: "#484f58" }}>-</span>
         <input className="search-input" style={{ width: 80, minWidth: 0 }} placeholder="Conf max" type="number" value={confidenceMax} onChange={(e) => { setConfidenceMax(e.target.value); setPage(1); }} />
@@ -229,8 +227,6 @@ export default function CollectionGridPage() {
 
 function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean }) {
   const isFirstEdition = card.specialty_one === "1st Edition" || card.specialty_one === "First Edition";
-  // Tagged cards don't get their own page yet — only untagged tiles link out.
-  const hasTags = !!(card.tags && card.tags.trim());
 
   const imageInner = (
     <>
@@ -241,13 +237,9 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
 
   return (
     <div className={`card-tile ${advanced ? "card-tile-advanced" : ""}`}>
-      {hasTags ? (
-        <div className="card-tile-image">{imageInner}</div>
-      ) : (
-        <Link to={cardDetailPath(card)} className="card-tile-image card-tile-image-link">
-          {imageInner}
-        </Link>
-      )}
+      <Link to={cardDetailPath(card)} className="card-tile-image card-tile-image-link">
+        {imageInner}
+      </Link>
 
       <div className="card-tile-info">
         <div className="card-tile-name" title={card.card_name}>
@@ -272,10 +264,9 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
           )}
         </div>
 
-        {/* Tags and specialties */}
+        {/* Specialties. Tags are never shown — tagged inventory is hidden. */}
         <div className="card-tile-tags">
           {card.specialty_two !== "None" && <span className="tag tag-special">{card.specialty_two}</span>}
-          {card.tags && card.tags.split(",").map((t, i) => <span key={i} className="tag">{t.trim()}</span>)}
           {card.manual_check_necessary ? <span className="tag tag-review">Review</span> : null}
         </div>
 

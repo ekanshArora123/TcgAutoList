@@ -35,6 +35,26 @@ GRADED_TO_CRACK_TAG = "to_crack"
 # untagged slabs, so it ORs alongside real tags like any other predicate.
 GRADED_NO_TAG_OPTION = "No tags"
 
+# ── Card-show browse mode ──────────────────────────────────
+# The dashboard doubles as a customer-facing browse screen at card shows, where
+# flawed inventory must not be on display. Anything carrying a tag (hidden
+# creases, surface scratches, holo bleeds, …) is hidden from every reporting
+# read.
+#
+# The predicate is folded into the skus JOIN of the canonical inventory join
+# rather than each query's WHERE: that join is an INNER JOIN, so an ON-clause
+# predicate is exactly equivalent to a WHERE, and this applies it to all ~13
+# reporting queries (browse, detail, analytics, breakdowns) in one place. The
+# original constant is left untouched so the write/orchestrator path that also
+# imports it still sees every card.
+_SHOW_MODE_PREDICATE = "AND (i.tags IS NULL OR TRIM(i.tags) = '')"
+
+_SKUS_JOIN = "JOIN skus s ON i.sku_id = s.sku_id"
+assert _SKUS_JOIN in INV_SKU_CARD_PRICE_FROM, "inventory join changed shape"
+_SHOW_FROM = INV_SKU_CARD_PRICE_FROM.replace(
+    _SKUS_JOIN, f"{_SKUS_JOIN} {_SHOW_MODE_PREDICATE}"
+)
+
 # Collection browse additionally surfaces the latest market snapshot per SKU.
 # specialty_one is part of the match: a 1st Edition card must not display the
 # Unlimited printing's listing stats (they are separate products).
@@ -355,11 +375,11 @@ class ReportingService:
         page, per_page, offset = _paginate(filters.get("page"), filters.get("per_page"), 50)
 
         total = self.db.execute(
-            f"SELECT COUNT(*) as total {INV_SKU_CARD_PRICE_FROM} {where}", params
+            f"SELECT COUNT(*) as total {_SHOW_FROM} {where}", params
         ).fetchone()["total"]
 
         rows = self.db.execute(
-            f"SELECT {_CARD_COLUMNS} {INV_SKU_CARD_PRICE_FROM} {where} "
+            f"SELECT {_CARD_COLUMNS} {_SHOW_FROM} {where} "
             f"ORDER BY {sort_col} {order_dir} LIMIT ? OFFSET ?",
             params + [per_page, offset],
         ).fetchall()
@@ -392,7 +412,7 @@ class ReportingService:
         sort_col, order_dir = _resolve_sort(filters.get("sort"), filters.get("order"))
         page, per_page, offset = _paginate(filters.get("page"), filters.get("per_page"), 48)
 
-        from_clause = INV_SKU_CARD_PRICE_FROM + _MARKET_JOIN
+        from_clause = _SHOW_FROM + _MARKET_JOIN
 
         total = self.db.execute(
             f"SELECT COUNT(*) as total {from_clause} {where}", params
@@ -444,7 +464,7 @@ class ReportingService:
                    MAX(p.estimated_price) as estimated_price,
                    MAX(p.confidence_percent) as confidence_percent
             """
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + """
             WHERE s.card_id = ? AND s.finish = ?
               AND s.specialty_one = ? AND s.specialty_two = ?
@@ -660,9 +680,17 @@ class ReportingService:
 
     def analytics_summary(self) -> dict[str, Any]:
         """High-level collection stats."""
-        total_cards = self.db.execute("SELECT COUNT(*) as c FROM inventory").fetchone()["c"]
-        unique_cards = self.db.execute("SELECT COUNT(*) as c FROM cards").fetchone()["c"]
-        total_skus = self.db.execute("SELECT COUNT(*) as c FROM skus").fetchone()["c"]
+        # Counted over the browse-mode join, not the raw tables, so the headline
+        # numbers match what the grid actually shows.
+        counts = self.db.execute(
+            "SELECT COUNT(*) as total_cards,"
+            " COUNT(DISTINCT s.card_id) as unique_cards,"
+            " COUNT(DISTINCT i.sku_id) as total_skus"
+            + _SHOW_FROM
+        ).fetchone()
+        total_cards = counts["total_cards"]
+        unique_cards = counts["unique_cards"]
+        total_skus = counts["total_skus"]
 
         value_row = self.db.execute(
             """
@@ -673,24 +701,24 @@ class ReportingService:
                 MIN(p.estimated_price) as min_price,
                 MAX(p.estimated_price) as max_price
             """
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + "WHERE p.estimated_price IS NOT NULL"
         ).fetchone()
 
         status_rows = self.db.execute(
-            "SELECT status, COUNT(*) as count FROM inventory GROUP BY status"
+            "SELECT i.status as status, COUNT(*) as count" + _SHOW_FROM + "GROUP BY i.status"
         ).fetchall()
         by_status = {r["status"]: r["count"] for r in status_rows}
 
         manual_checks = self.db.execute(
             "SELECT COUNT(*) as c"
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + "WHERE p.manual_check_necessary = 1 AND p.manually_checked = 0"
         ).fetchone()["c"]
 
         avg_confidence = self.db.execute(
             "SELECT AVG(p.confidence_percent) as avg_conf"
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + "WHERE p.confidence_percent IS NOT NULL"
         ).fetchone()["avg_conf"]
 
@@ -721,7 +749,7 @@ class ReportingService:
             " SUM(p.estimated_price) AS psum, COUNT(p.estimated_price) AS pcount,"
             " MAX(p.estimated_price) AS pmax"
         )
-        raw = self.db.execute(stats_select + INV_SKU_CARD_PRICE_FROM).fetchone()
+        raw = self.db.execute(stats_select + _SHOW_FROM).fetchone()
         graded = self.db.execute(stats_select + GRADED_INV_FROM).fetchone()
 
         def _sum(a: Any, b: Any) -> Any:
@@ -768,7 +796,7 @@ class ReportingService:
             prices += [
                 r["estimated_price"]
                 for r in self.db.execute(
-                    "SELECT p.estimated_price" + INV_SKU_CARD_PRICE_FROM
+                    "SELECT p.estimated_price" + _SHOW_FROM
                     + " WHERE " + " AND ".join(conditions),
                     params,
                 ).fetchall()
@@ -807,7 +835,7 @@ class ReportingService:
                 END as bucket,
                 COUNT(*) as count
             """
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + "GROUP BY bucket ORDER BY bucket"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -839,7 +867,7 @@ class ReportingService:
                 SUM(CASE WHEN p.estimated_price IS NOT NULL THEN p.estimated_price * i.qty ELSE 0 END) as total_value,
                 AVG(p.estimated_price) as avg_price
             """
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + f"GROUP BY {cfg['col']} ORDER BY {cfg['order']}"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -856,7 +884,7 @@ class ReportingService:
                 p.confidence_percent,
                 i.inventory_id, i.qty
             """
-            + INV_SKU_CARD_PRICE_FROM
+            + _SHOW_FROM
             + "WHERE p.estimated_price IS NOT NULL ORDER BY p.estimated_price DESC LIMIT ?",
             [n],
         ).fetchall()

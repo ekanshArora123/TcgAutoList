@@ -142,7 +142,6 @@ export default function CollectionPage() {
                   <th onClick={() => handleSort("confidence")}>Conf<span className="sort-arrow">{sortArrow("confidence")}</span></th>
                   <th onClick={() => handleSort("status")}>Status<span className="sort-arrow">{sortArrow("status")}</span></th>
                   <th>Review</th>
-                  <th>Tags</th>
                 </tr>
               </thead>
               <tbody>
@@ -180,7 +179,6 @@ export default function CollectionPage() {
                     <td>
                       {card.manual_check_necessary ? <span className="manual-check">!</span> : ""}
                     </td>
-                    <td style={{ fontSize: 11, color: "#8b949e" }}>{card.tags || ""}</td>
                   </tr>
                 ))}
               </tbody>
