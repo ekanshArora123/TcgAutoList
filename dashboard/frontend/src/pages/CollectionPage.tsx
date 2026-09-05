@@ -3,13 +3,6 @@ import { fetchCards, fetchFilters, type CardItem, type CardsResponse, type Filte
 
 const fmt = (n: number | null) => (n != null ? `$${n.toFixed(2)}` : "-");
 
-function confidenceClass(c: number | null) {
-  if (c == null) return "";
-  if (c >= 80) return "confidence-high";
-  if (c >= 40) return "confidence-mid";
-  return "confidence-low";
-}
-
 export default function CollectionPage() {
   const [data, setData] = useState<CardsResponse | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
@@ -23,7 +16,6 @@ export default function CollectionPage() {
   const [condition, setCondition] = useState("");
   const [finish, setFinish] = useState("");
   const [status, setStatus] = useState("");
-  const [manualCheck, setManualCheck] = useState(false);
   const [sort, setSort] = useState("card_name");
   const [order, setOrder] = useState("asc");
   const [page, setPage] = useState(1);
@@ -38,11 +30,10 @@ export default function CollectionPage() {
     if (condition) params.condition = condition;
     if (finish) params.finish = finish;
     if (status) params.status = status;
-    if (manualCheck) params.manual_check = "true";
     const result = await fetchCards(params);
     setData(result);
     setLoading(false);
-  }, [q, setName, era, rarity, condition, finish, status, manualCheck, sort, order, page]);
+  }, [q, setName, era, rarity, condition, finish, status, sort, order, page]);
 
   useEffect(() => {
     fetchFilters().then(setFilters);
@@ -112,10 +103,6 @@ export default function CollectionPage() {
               <option value="">All Statuses</option>
               {filters.statuses.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
-            <label style={{ fontSize: 13, color: "#8b949e", display: "flex", alignItems: "center", gap: 4 }}>
-              <input type="checkbox" checked={manualCheck} onChange={(e) => { setManualCheck(e.target.checked); setPage(1); }} />
-              Needs Review
-            </label>
           </>
         )}
       </div>
@@ -137,11 +124,7 @@ export default function CollectionPage() {
                   <th onClick={() => handleSort("condition")}>Cond<span className="sort-arrow">{sortArrow("condition")}</span></th>
                   <th>Finish</th>
                   <th onClick={() => handleSort("estimated_price")}>Price<span className="sort-arrow">{sortArrow("estimated_price")}</span></th>
-                  <th>Range</th>
-                  <th>Liquid</th>
-                  <th onClick={() => handleSort("confidence")}>Conf<span className="sort-arrow">{sortArrow("confidence")}</span></th>
                   <th onClick={() => handleSort("status")}>Status<span className="sort-arrow">{sortArrow("status")}</span></th>
-                  <th>Review</th>
                 </tr>
               </thead>
               <tbody>
@@ -156,28 +139,10 @@ export default function CollectionPage() {
                     <td className={`price-cell ${card.estimated_price == null ? "no-price" : ""}`}>
                       {fmt(card.estimated_price)}
                     </td>
-                    <td style={{ fontSize: 11, color: "#8b949e" }}>
-                      {card.estimated_low_price != null && card.estimated_high_price != null
-                        ? `${fmt(card.estimated_low_price)} - ${fmt(card.estimated_high_price)}`
-                        : "-"}
-                    </td>
-                    <td className={`price-cell ${card.estimated_liquid_value == null ? "no-price" : ""}`}>
-                      {fmt(card.estimated_liquid_value)}
-                    </td>
-                    <td>
-                      {card.confidence_percent != null ? (
-                        <span className={`confidence-badge ${confidenceClass(card.confidence_percent)}`}>
-                          {card.confidence_percent}%
-                        </span>
-                      ) : "-"}
-                    </td>
                     <td>
                       <span className={`status-badge status-${card.status}`}>
                         {card.status}
                       </span>
-                    </td>
-                    <td>
-                      {card.manual_check_necessary ? <span className="manual-check">!</span> : ""}
                     </td>
                   </tr>
                 ))}

@@ -9,8 +9,7 @@ import {
 } from "../api";
 
 const COLORS = [
-  "#1f6feb", "#3fb950", "#d29922", "#f85149", "#a371f7",
-  "#79c0ff", "#56d364", "#e3b341", "#ff7b72", "#bc8cff",
+  "#b02a1f", "#1d6a4f", "#b8860b", "#2f6f9f", "#7c3aed", "#c2571c", "#0f766e", "#9d174d", "#4d7c0f", "#5b21b6",
 ];
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 const fmtK = (n: number | null | undefined) => {
@@ -56,23 +55,23 @@ export default function GradedAnalytics({ crack }: { crack: string }) {
           <h3>By Grade (Count &amp; Value)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={byGrade}>
-              <XAxis dataKey="label" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} allowDecimals={false} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
+              <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+              <YAxis yAxisId="left" tick={{ fill: "var(--text-muted)", fontSize: 11 }} allowDecimals={false} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
               <Tooltip isAnimationActive={false} content={({ active, payload, label }: any) => {
                 if (!active || !payload?.length) return null;
                 const d = payload[0]?.payload;
                 return (
                   <div className="chart-tooltip">
                     <div className="chart-tooltip-title">Grade {label}</div>
-                    <div style={{ color: "#3fb950" }}>Slabs: {d?.quantity?.toLocaleString()}</div>
-                    <div style={{ color: "#d29922" }}>Value: {fmt(d?.total_value)}</div>
-                    <div style={{ color: "#8b949e" }}>Avg: {fmt(d?.avg_price)}</div>
+                    <div style={{ color: "#1d6a4f" }}>Slabs: {d?.quantity?.toLocaleString()}</div>
+                    <div style={{ color: "#b8860b" }}>Value: {fmt(d?.total_value)}</div>
+                    <div style={{ color: "var(--text-muted)" }}>Avg: {fmt(d?.avg_price)}</div>
                   </div>
                 );
               }} />
-              <Bar yAxisId="left" dataKey="quantity" fill="#3fb950" radius={[2, 2, 0, 0]} name="Slabs" />
-              <Line yAxisId="right" type="monotone" dataKey="total_value" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="Value" />
+              <Bar yAxisId="left" dataKey="quantity" fill="#1d6a4f" radius={[2, 2, 0, 0]} name="Slabs" />
+              <Line yAxisId="right" type="monotone" dataKey="total_value" stroke="#b8860b" strokeWidth={2} dot={{ fill: "#b8860b", r: 3 }} name="Value" />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -99,8 +98,8 @@ export default function GradedAnalytics({ crack }: { crack: string }) {
                 return (
                   <div className="chart-tooltip">
                     <div className="chart-tooltip-title">{d?.label}</div>
-                    <div style={{ color: "#3fb950" }}>Value: {fmt(d?.total_value)}</div>
-                    <div style={{ color: "#8b949e" }}>Slabs: {d?.quantity?.toLocaleString()}</div>
+                    <div style={{ color: "#1d6a4f" }}>Value: {fmt(d?.total_value)}</div>
+                    <div style={{ color: "var(--text-muted)" }}>Slabs: {d?.quantity?.toLocaleString()}</div>
                   </div>
                 );
               }} />
@@ -116,12 +115,12 @@ export default function GradedAnalytics({ crack }: { crack: string }) {
               <XAxis
                 type="number" dataKey="grade" name="Grade"
                 domain={[0, 10]} tickCount={11}
-                tick={{ fill: "#8b949e", fontSize: 11 }}
-                label={{ value: "Grade", position: "insideBottom", offset: -8, fill: "#8b949e", fontSize: 12 }}
+                tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+                label={{ value: "Grade", position: "insideBottom", offset: -8, fill: "var(--text-muted)", fontSize: 12 }}
               />
               <YAxis
                 type="number" dataKey="price" name="Price"
-                tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)}
+                tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => fmtK(v)}
               />
               <ZAxis range={[60, 60]} />
               <Tooltip isAnimationActive={false} cursor={{ strokeDasharray: "3 3" }} content={({ active, payload }: any) => {
@@ -130,12 +129,12 @@ export default function GradedAnalytics({ crack }: { crack: string }) {
                 return (
                   <div className="chart-tooltip">
                     <div className="chart-tooltip-title">{d.card_name}</div>
-                    <div style={{ color: "#8b949e" }}>{d.grading_company} {gradeText(d.grade)}{d.cert_id ? ` · #${d.cert_id}` : ""}</div>
-                    <div style={{ color: "#3fb950" }}>{fmt(d.price)}</div>
+                    <div style={{ color: "var(--text-muted)" }}>{d.grading_company} {gradeText(d.grade)}{d.cert_id ? ` · #${d.cert_id}` : ""}</div>
+                    <div style={{ color: "#1d6a4f" }}>{fmt(d.price)}</div>
                   </div>
                 );
               }} />
-              <Scatter data={points} fill="#1f6feb" fillOpacity={0.75} />
+              <Scatter data={points} fill="var(--primary)" fillOpacity={0.75} />
             </ScatterChart>
           </ResponsiveContainer>
         </div>

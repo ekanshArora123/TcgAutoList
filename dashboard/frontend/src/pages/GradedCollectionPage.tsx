@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import {
-  fetchGradedCollection, fetchGradedFilters, addGradedByCert, cardImageUrl, gradedImageUrl,
+  fetchGradedCollection, fetchGradedFilters, cardImageUrl, gradedImageUrl,
   type GradedCardItem, type GradedResponse, type GradedFilters,
 } from "../api";
 import CardImage from "../components/CardImage";
@@ -37,10 +37,6 @@ export default function GradedCollectionPage() {
   const [columns, setColumns] = useState("auto");
 
   // Add-by-cert form
-  const [certInput, setCertInput] = useState("");
-  const [tcgIdInput, setTcgIdInput] = useState("");
-  const [addCompany, setAddCompany] = useState("PSA");
-  const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
 
   const load = useCallback(async () => {
@@ -64,51 +60,12 @@ export default function GradedCollectionPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!certInput.trim() || adding) return;
-    setAdding(true);
-    setAddError("");
-    try {
-      await addGradedByCert(certInput.trim(), addCompany, tcgIdInput.trim() || undefined);
-      setCertInput("");
-      setTcgIdInput("");
-      setPage(1);
-      await load();
-    } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Add failed");
-    } finally {
-      setAdding(false);
-    }
-  }
 
   return (
     <div>
-      {/* Add a graded card by cert number */}
-      <form className="graded-add-form" onSubmit={handleAdd}>
-        <span className="graded-add-title">Add graded card</span>
-        <input
-          className="search-input"
-          placeholder="Cert #"
-          value={certInput}
-          onChange={(e) => setCertInput(e.target.value)}
-        />
-        <input
-          className="search-input"
-          placeholder="TCGplayer ID (optional)"
-          value={tcgIdInput}
-          onChange={(e) => setTcgIdInput(e.target.value)}
-        />
-        <select className="filter-select" value={addCompany} onChange={(e) => setAddCompany(e.target.value)}>
-          {Array.from(new Set(["PSA", ...(filters?.grading_companies || [])])).map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-        <button className="price-range-btn" type="submit" disabled={adding || !certInput.trim()}>
-          {adding ? "Fetching…" : "Add"}
-        </button>
-        {addError && <span className="graded-add-error">{addError}</span>}
-      </form>
+      {/* The "add graded card by cert" form is deliberately absent: it is a write
+          control (it scrapes PSA and inserts rows), and this dashboard is shown
+          to customers. Adding slabs is an owner task, not a browse action. */}
 
       {/* Search + filters */}
       <div className="filters-bar">
@@ -138,19 +95,19 @@ export default function GradedCollectionPage() {
 
       {/* Sort + result count */}
       <div className="filters-bar">
-        <span style={{ fontSize: 12, color: "#8b949e" }}>Sort:</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Sort:</span>
         <select className="filter-select" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
           {GRADED_SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         <button
           className="price-range-btn"
-          style={{ background: "#161b22", color: "#8b949e" }}
+          style={{ background: "var(--surface)", color: "var(--text-muted)" }}
           onClick={() => { setOrder(order === "asc" ? "desc" : "asc"); setPage(1); }}
         >
           {order === "asc" ? "▲ Asc" : "▼ Desc"}
         </button>
 
-        <span style={{ color: "#30363d", margin: "0 4px" }}>|</span>
+        <span style={{ color: "var(--border)", margin: "0 4px" }}>|</span>
         <select className="filter-select" value={String(perPage)} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}>
           {[24, 48, 96, 144].map((n) => <option key={n} value={n}>{n} per page</option>)}
         </select>
@@ -160,7 +117,7 @@ export default function GradedCollectionPage() {
         </select>
 
         <span style={{ flex: 1 }} />
-        {data && <span style={{ color: "#8b949e", fontSize: 12 }}>{data.total} slab(s)</span>}
+        {data && <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{data.total} slab(s)</span>}
       </div>
 
       {loading ? (

@@ -42,13 +42,13 @@ export default function MultiSelect({ label, options, selected, onChange }: Mult
         style={{ width: "100%", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary}</span>
-        <span style={{ color: "#8b949e", flexShrink: 0 }}>{open ? "▴" : "▾"}</span>
+        <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{open ? "▴" : "▾"}</span>
       </button>
       {open && (
         <div
           style={{
             position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 30,
-            background: "#161b22", border: "1px solid #30363d", borderRadius: 6,
+            background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6,
             boxShadow: "0 6px 16px rgba(0,0,0,0.5)", padding: 6,
           }}
         >
@@ -58,7 +58,7 @@ export default function MultiSelect({ label, options, selected, onChange }: Mult
               placeholder={`Search ${label.toLowerCase()}...`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              style={{ flex: 1, minWidth: 0, fontSize: 12, padding: "3px 6px", background: "#0d1117", color: "#e1e4e8", border: "1px solid #30363d", borderRadius: 4 }}
+              style={{ flex: 1, minWidth: 0, fontSize: 12, padding: "3px 6px", background: "var(--bg-sunken)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4 }}
             />
             {selected.length > 0 && (
               <button className="nav-btn" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => onChange([])}>
@@ -67,11 +67,11 @@ export default function MultiSelect({ label, options, selected, onChange }: Mult
             )}
           </div>
           <div style={{ maxHeight: 220, overflowY: "auto" }}>
-            {shown.length === 0 && <div style={{ padding: 6, color: "#8b949e", fontSize: 12 }}>No matches</div>}
+            {shown.length === 0 && <div style={{ padding: 6, color: "var(--text-muted)", fontSize: 12 }}>No matches</div>}
             {shown.map((opt) => (
               <label
                 key={opt}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", fontSize: 12, color: "#e1e4e8", cursor: "pointer", borderRadius: 4 }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", fontSize: 12, color: "var(--text)", cursor: "pointer", borderRadius: 4 }}
               >
                 <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} />
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt}</span>

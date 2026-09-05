@@ -285,7 +285,7 @@ export default function GradedDetailPage() {
                   View raw card
                 </Link>
                 {identity.raw_estimated_price != null && (
-                  <span style={{ color: "#8b949e", fontSize: 12 }}>Raw ≈ {fmt(identity.raw_estimated_price)}</span>
+                  <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Raw ≈ {fmt(identity.raw_estimated_price)}</span>
                 )}
               </div>
             )}

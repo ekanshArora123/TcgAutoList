@@ -20,8 +20,7 @@ const RANGES = [
 // One color per condition (assigned in best->worst order). A condition's median
 // line, market line, and scatter points all share its color.
 const LINE_COLORS = [
-  "#3fb950", "#1f6feb", "#d29922", "#a371f7", "#f85149",
-  "#79c0ff", "#ff7b72", "#56d364", "#e3b341",
+  "#b02a1f", "#1d6a4f", "#b8860b", "#2f6f9f", "#7c3aed", "#c2571c", "#0f766e", "#9d174d", "#4d7c0f",
 ];
 
 const ms = (iso: string) => Date.parse(iso);
@@ -36,8 +35,8 @@ function SalesTooltip({ active, payload, label }: any) {
   if (!items.length) return null;
   const heading = typeof label === "number" ? new Date(label).toLocaleDateString() : label;
   return (
-    <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-      <div style={{ color: "#e1e4e8", marginBottom: 4 }}>{heading}</div>
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+      <div style={{ color: "var(--text)", marginBottom: 4 }}>{heading}</div>
       {items.map((p: any, i: number) => (
         <div key={`${p.dataKey}-${i}`} style={{ color: p.color }}>
           {p.name}: {p.dataKey === "volume" ? p.value : `$${Number(p.value).toFixed(2)}`}
@@ -207,20 +206,20 @@ export default function SalesChart({
         <>
           <ResponsiveContainer width="100%" height={420}>
             <ComposedChart data={rows} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke="#21262d" vertical={false} />
+              <CartesianGrid stroke="var(--surface-hover)" vertical={false} />
               <XAxis
                 dataKey="t"
                 type="number"
                 scale="time"
                 domain={domain ?? ["dataMin", "dataMax"]}
                 tickFormatter={fmtDate}
-                tick={{ fill: "#8b949e", fontSize: 11 }}
+                tick={{ fill: "var(--text-muted)", fontSize: 11 }}
                 minTickGap={40}
               />
-              <YAxis yAxisId="price" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
-              <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} allowDecimals={false} />
+              <YAxis yAxisId="price" tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+              <YAxis yAxisId="vol" orientation="right" tick={{ fill: "var(--text-muted)", fontSize: 11 }} allowDecimals={false} />
               <Tooltip content={<SalesTooltip />} />
-              <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="#30363d" barSize={6} />
+              <Bar yAxisId="vol" dataKey="volume" name="Volume" fill="var(--border)" barSize={6} />
               {showMarket && visible.map((c) => (
                 <Line
                   key={`m:${c}`}

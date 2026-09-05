@@ -18,9 +18,7 @@ import { conditionRank } from "../conditionOrder";
 type Kind = "raw" | "graded" | "all";
 
 const COLORS = [
-  "#1f6feb", "#3fb950", "#d29922", "#f85149", "#a371f7",
-  "#79c0ff", "#56d364", "#e3b341", "#ff7b72", "#bc8cff",
-  "#39d353", "#db6d28", "#7ee787", "#ffa657", "#d2a8ff",
+  "#b02a1f", "#1d6a4f", "#b8860b", "#2f6f9f", "#7c3aed", "#c2571c", "#0f766e", "#9d174d", "#4d7c0f", "#5b21b6", "#a16207", "#1e40af", "#be123c", "#047857", "#7c2d12",
 ];
 
 // Card conditions ordered best -> worst (mirrors PRIMARY_CONDITIONS + the
@@ -36,8 +34,8 @@ const fmtK = (n: number | null | undefined) => {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-      <div style={{ color: "#e1e4e8", fontWeight: 600 }}>{label}</div>
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+      <div style={{ color: "var(--text)", fontWeight: 600 }}>{label}</div>
       {payload.map((p: any, i: number) => (
         <div key={i} style={{ color: p.color }}>{p.name}: {typeof p.value === "number" ? p.value.toLocaleString() : p.value}</div>
       ))}
@@ -126,14 +124,14 @@ export default function AnalyticsPage() {
     <div>
       {/* Kind + crack selectors */}
       <div className="analytics-mode-bar">
-        <span style={{ fontSize: 12, color: "#8b949e" }}>Show:</span>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Show:</span>
         {(["raw", "graded", "all"] as const).map((k) => (
           <button key={k} className={`seg-btn ${kind === k ? "active" : ""}`} style={{ textTransform: "capitalize" }} onClick={() => setKind(k)}>{k}</button>
         ))}
         {kind !== "raw" && (
           <>
-            <span style={{ color: "#30363d", margin: "0 4px" }}>|</span>
-            <span style={{ fontSize: 12, color: "#8b949e" }}>Crack:</span>
+            <span style={{ color: "var(--border)", margin: "0 4px" }}>|</span>
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Crack:</span>
             {([["", "All"], ["yes", "To crack"], ["no", "Not to crack"]] as const).map(([v, lbl]) => (
               <button key={v} className={`seg-btn ${crack === v ? "active" : ""}`} onClick={() => setCrack(v)}>{lbl}</button>
             ))}
@@ -222,12 +220,12 @@ export default function AnalyticsPage() {
             <button className="nav-btn" onClick={() => loadHistogram(parseBreaks(breaksInput))} style={{ fontSize: 12, padding: "4px 10px" }}>Update</button>
           </div>
           <div className="chart-controls">
-            <span style={{ fontSize: 11, color: "#484f58" }}>Presets:</span>
+            <span style={{ fontSize: 11, color: "var(--border-strong)" }}>Presets:</span>
             {Object.entries(PRESETS).map(([name, breaks]) => (
               <button
                 key={name}
                 className="nav-btn"
-                style={{ fontSize: 11, padding: "3px 8px", background: activePreset === name ? "#1f6feb" : undefined, color: activePreset === name ? "#fff" : undefined }}
+                style={{ fontSize: 11, padding: "3px 8px", background: activePreset === name ? "var(--primary)" : undefined, color: activePreset === name ? "#fff" : undefined }}
                 onClick={() => {
                   setBreaksInput(breaks.join(", "));
                   setActivePreset(name);
@@ -246,43 +244,43 @@ export default function AnalyticsPage() {
                 pctValue: totalValue > 0 ? +((b.total_value / totalValue) * 100).toFixed(1) : 0,
               }));
             })()}>
-              <XAxis dataKey="range" tick={{ fill: "#8b949e", fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
-              <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+              <XAxis dataKey="range" tick={{ fill: "var(--text-muted)", fontSize: 10 }} angle={-45} textAnchor="end" height={60} />
+              <YAxis yAxisId="left" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
               <Tooltip isAnimationActive={false} content={({ active, payload, label }: any) => {
                 if (!active || !payload?.length) return null;
                 const d = payload[0]?.payload;
                 return (
-                  <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-                    <div style={{ color: "#e1e4e8", fontWeight: 600, marginBottom: 4 }}>{label}</div>
-                    <div style={{ color: "#1f6feb" }}>Count: {d?.count?.toLocaleString()}</div>
-                    <div style={{ color: "#d29922" }}>{d?.pctQty}% of cards</div>
-                    <div style={{ color: "#3fb950" }}>{d?.pctValue}% of value (${d?.total_value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</div>
+                  <div style={{ background: "var(--surface)", border: "1px solid var(--border)", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+                    <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: "var(--primary)" }}>Count: {d?.count?.toLocaleString()}</div>
+                    <div style={{ color: "#b8860b" }}>{d?.pctQty}% of cards</div>
+                    <div style={{ color: "#1d6a4f" }}>{d?.pctValue}% of value (${d?.total_value?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</div>
                   </div>
                 );
               }} />
-              <Bar yAxisId="left" dataKey="count" fill="#1f6feb" radius={[2, 2, 0, 0]} name="Count" />
-              <Line yAxisId="right" type="monotone" dataKey="pctQty" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="% of Cards" />
-              <Line yAxisId="right" type="monotone" dataKey="pctValue" stroke="#3fb950" strokeWidth={2} dot={{ fill: "#3fb950", r: 3 }} name="% of Value" />
+              <Bar yAxisId="left" dataKey="count" fill="var(--primary)" radius={[2, 2, 0, 0]} name="Count" />
+              <Line yAxisId="right" type="monotone" dataKey="pctQty" stroke="#b8860b" strokeWidth={2} dot={{ fill: "#b8860b", r: 3 }} name="% of Cards" />
+              <Line yAxisId="right" type="monotone" dataKey="pctValue" stroke="#1d6a4f" strokeWidth={2} dot={{ fill: "#1d6a4f", r: 3 }} name="% of Value" />
             </ComposedChart>
           </ResponsiveContainer>
             </div>
 
             {/* Filter panel — raw only (set/era/condition don't apply to graded). */}
             {kind !== "graded" && (
-            <div style={{ width: 230, flexShrink: 0, borderLeft: "1px solid #30363d", paddingLeft: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#e1e4e8" }}>Filters</div>
+            <div style={{ width: 230, flexShrink: 0, borderLeft: "1px solid var(--border)", paddingLeft: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Filters</div>
 
               <div>
                 {/* Era and Set are exclusive — a set already implies its era. */}
-                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Filter by</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Filter by</div>
                 <div style={{ display: "flex", gap: 4 }}>
                   {(["era", "set"] as const).map((dim) => (
                     <button
                       key={dim}
                       className="nav-btn"
                       style={{ flex: 1, fontSize: 11, padding: "4px 0", textTransform: "capitalize",
-                        background: groupDim === dim ? "#1f6feb" : undefined,
+                        background: groupDim === dim ? "var(--primary)" : undefined,
                         color: groupDim === dim ? "#fff" : undefined }}
                       onClick={() => setGroupDim(dim)}
                     >{dim}</button>
@@ -291,7 +289,7 @@ export default function AnalyticsPage() {
               </div>
 
               <div>
-                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>{groupDim === "era" ? "Eras" : "Sets"}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{groupDim === "era" ? "Eras" : "Sets"}</div>
                 {groupDim === "era" ? (
                   <MultiSelect label="Eras" options={filterOpts?.eras ?? []} selected={selEras} onChange={setSelEras} />
                 ) : (
@@ -300,7 +298,7 @@ export default function AnalyticsPage() {
               </div>
 
               <div>
-                <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 4 }}>Condition</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Condition</div>
                 <MultiSelect label="Conditions" options={filterOpts?.conditions ?? []} selected={selConditions} onChange={setSelConditions} />
               </div>
 
@@ -323,10 +321,10 @@ export default function AnalyticsPage() {
           <h3>Confidence Distribution</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={confidence}>
-              <XAxis dataKey="bucket" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8b949e", fontSize: 11 }} />
+              <XAxis dataKey="bucket" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+              <YAxis tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
               <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
-              <Bar dataKey="count" fill="#a371f7" radius={[2, 2, 0, 0]} />
+              <Bar dataKey="count" fill="#7c3aed" radius={[2, 2, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -378,22 +376,22 @@ export default function AnalyticsPage() {
           <h3>By Condition (Count &amp; Value)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={[...conditions].sort((a, b) => conditionRank(a.condition) - conditionRank(b.condition))}>
-              <XAxis dataKey="condition" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis yAxisId="left" tick={{ fill: "#8b949e", fontSize: 11 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
+              <XAxis dataKey="condition" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+              <YAxis yAxisId="left" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
               <Tooltip isAnimationActive={false} content={({ active, payload, label }: any) => {
                 if (!active || !payload?.length) return null;
                 const d = payload[0]?.payload;
                 return (
-                  <div style={{ background: "#161b22", border: "1px solid #30363d", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
-                    <div style={{ color: "#e1e4e8", fontWeight: 600, marginBottom: 4 }}>{label}</div>
-                    <div style={{ color: "#3fb950" }}>Count: {d?.quantity?.toLocaleString()}</div>
-                    <div style={{ color: "#d29922" }}>Value: {fmt(d?.total_value)}</div>
+                  <div style={{ background: "var(--surface)", border: "1px solid var(--border)", padding: "8px 12px", borderRadius: 6, fontSize: 12 }}>
+                    <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ color: "#1d6a4f" }}>Count: {d?.quantity?.toLocaleString()}</div>
+                    <div style={{ color: "#b8860b" }}>Value: {fmt(d?.total_value)}</div>
                   </div>
                 );
               }} />
-              <Bar yAxisId="left" dataKey="quantity" fill="#3fb950" radius={[2, 2, 0, 0]} name="Count" />
-              <Line yAxisId="right" type="monotone" dataKey="total_value" stroke="#d29922" strokeWidth={2} dot={{ fill: "#d29922", r: 3 }} name="Total Value" />
+              <Bar yAxisId="left" dataKey="quantity" fill="#1d6a4f" radius={[2, 2, 0, 0]} name="Count" />
+              <Line yAxisId="right" type="monotone" dataKey="total_value" stroke="#b8860b" strokeWidth={2} dot={{ fill: "#b8860b", r: 3 }} name="Total Value" />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -403,10 +401,10 @@ export default function AnalyticsPage() {
           <h3>By Rarity (Value)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={rarities.slice(0, 15)} layout="vertical">
-              <XAxis type="number" tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
-              <YAxis dataKey="rarity" type="category" tick={{ fill: "#8b949e", fontSize: 10 }} width={120} />
+              <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
+              <YAxis dataKey="rarity" type="category" tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={120} />
               <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
-              <Bar dataKey="total_value" fill="#d29922" radius={[0, 2, 2, 0]} name="Total Value" />
+              <Bar dataKey="total_value" fill="#b8860b" radius={[0, 2, 2, 0]} name="Total Value" />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -416,10 +414,10 @@ export default function AnalyticsPage() {
           <h3>Top Sets by Value</h3>
           <ResponsiveContainer width="100%" height={400}>
             <BarChart data={sets.slice(0, 20)}>
-              <XAxis dataKey="set_name" tick={{ fill: "#8b949e", fontSize: 9 }} angle={-45} textAnchor="end" height={100} />
-              <YAxis tick={{ fill: "#8b949e", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
+              <XAxis dataKey="set_name" tick={{ fill: "var(--text-muted)", fontSize: 9 }} angle={-45} textAnchor="end" height={100} />
+              <YAxis tick={{ fill: "var(--text-muted)", fontSize: 11 }} tickFormatter={(v) => fmtK(v)} />
               <Tooltip content={<CustomTooltip />} isAnimationActive={false} />
-              <Bar dataKey="total_value" fill="#79c0ff" radius={[2, 2, 0, 0]} name="Total Value" />
+              <Bar dataKey="total_value" fill="#2f6f9f" radius={[2, 2, 0, 0]} name="Total Value" />
             </BarChart>
           </ResponsiveContainer>
         </div>

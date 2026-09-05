@@ -7,18 +7,10 @@ import CardImage from "../components/CardImage";
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 
-function confidenceClass(c: number | null) {
-  if (c == null) return "";
-  if (c >= 80) return "confidence-high";
-  if (c >= 40) return "confidence-mid";
-  return "confidence-low";
-}
-
 export default function CollectionGridPage() {
   const [data, setData] = useState<CollectionResponse | null>(null);
   const [filters, setFilters] = useState<Filters | null>(null);
   const [loading, setLoading] = useState(true);
-  const [advanced, setAdvanced] = useState(false);
 
   // Filters
   const [searchInput, setSearchInput] = useState("");
@@ -30,11 +22,8 @@ export default function CollectionGridPage() {
   const [finish, setFinish] = useState("");
   const [status, setStatus] = useState("");
   const [specialty, setSpecialty] = useState("");
-  const [manualCheck, setManualCheck] = useState(false);
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
-  const [confidenceMin, setConfidenceMin] = useState("");
-  const [confidenceMax, setConfidenceMax] = useState("");
   const [sort, setSort] = useState("estimated_price");
   const [order, setOrder] = useState("desc");
   const [page, setPage] = useState(1);
@@ -51,15 +40,12 @@ export default function CollectionGridPage() {
     if (finish) params.finish = finish;
     if (status) params.status = status;
     if (specialty) params.specialty = specialty;
-    if (manualCheck) params.manual_check = "true";
     if (priceMin) params.price_min = priceMin;
     if (priceMax) params.price_max = priceMax;
-    if (confidenceMin) params.confidence_min = confidenceMin;
-    if (confidenceMax) params.confidence_max = confidenceMax;
     const result = await fetchCollection(params);
     setData(result);
     setLoading(false);
-  }, [q, setName, era, rarity, condition, finish, status, specialty, manualCheck, priceMin, priceMax, confidenceMin, confidenceMax, sort, order, page, perPage]);
+  }, [q, setName, era, rarity, condition, finish, status, specialty, priceMin, priceMax, sort, order, page, perPage]);
 
   useEffect(() => { fetchFilters().then(setFilters); }, []);
   useEffect(() => { load(); }, [load]);
@@ -128,42 +114,34 @@ export default function CollectionGridPage() {
 
       {/* Price range quick filters + sort + advanced toggle */}
       <div className="filters-bar">
-        <span style={{ fontSize: 12, color: "#8b949e" }}>Price:</span>
+        <span className="filter-label">Price:</span>
         {PRICE_RANGES.map((r) => (
           <button
             key={r.label}
             className="price-range-btn"
             style={{
-              background: activePriceRange === r ? "#1f6feb" : "#161b22",
-              color: activePriceRange === r ? "#fff" : "#8b949e",
+              background: activePriceRange === r ? "var(--primary)" : "var(--surface)",
+              color: activePriceRange === r ? "#fff" : "var(--text-muted)",
             }}
             onClick={() => { setPriceMin(r.min); setPriceMax(r.max); setPage(1); }}
           >{r.label}</button>
         ))}
-        <input className="search-input" style={{ width: 70, minWidth: 0 }} placeholder="Min $" type="number" step="any" value={priceMin} onChange={(e) => { setPriceMin(e.target.value); setPage(1); }} />
-        <span style={{ color: "#484f58" }}>-</span>
-        <input className="search-input" style={{ width: 70, minWidth: 0 }} placeholder="Max $" type="number" step="any" value={priceMax} onChange={(e) => { setPriceMax(e.target.value); setPage(1); }} />
+        <input className="search-input price-bound-input" placeholder="Min $" type="number" step="any" value={priceMin} onChange={(e) => { setPriceMin(e.target.value); setPage(1); }} />
+        <span className="filter-sep-dash">&ndash;</span>
+        <input className="search-input price-bound-input" placeholder="Max $" type="number" step="any" value={priceMax} onChange={(e) => { setPriceMax(e.target.value); setPage(1); }} />
 
-        <span style={{ color: "#30363d", margin: "0 4px" }}>|</span>
+        <span className="filter-sep" aria-hidden="true" />
         <select className="filter-select" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
           {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <button className="price-range-btn" style={{ background: "#161b22", color: "#8b949e" }} onClick={() => setOrder(order === "asc" ? "desc" : "asc")}>
+        <button className="price-range-btn" style={{ background: "var(--surface)", color: "var(--text-muted)" }} onClick={() => setOrder(order === "asc" ? "desc" : "asc")}>
           {order === "asc" ? "\u25B2 Asc" : "\u25BC Desc"}
         </button>
 
-        <span style={{ color: "#30363d", margin: "0 4px" }}>|</span>
-        <label className="toggle-label">
-          <input type="checkbox" checked={manualCheck} onChange={(e) => { setManualCheck(e.target.checked); setPage(1); }} />
-          Needs Review
-        </label>
       </div>
 
       {/* Extra filters row */}
       <div className="filters-bar">
-        <input className="search-input" style={{ width: 80, minWidth: 0 }} placeholder="Conf min" type="number" value={confidenceMin} onChange={(e) => { setConfidenceMin(e.target.value); setPage(1); }} />
-        <span style={{ color: "#484f58" }}>-</span>
-        <input className="search-input" style={{ width: 80, minWidth: 0 }} placeholder="Conf max" type="number" value={confidenceMax} onChange={(e) => { setConfidenceMax(e.target.value); setPage(1); }} />
         {filters && (
           <select className="filter-select" value={specialty} onChange={(e) => { setSpecialty(e.target.value); setPage(1); }}>
             <option value="">All Specialties</option>
@@ -178,11 +156,6 @@ export default function CollectionGridPage() {
           <option value="144">144 per page</option>
         </select>
 
-        <span style={{ flex: 1 }} />
-        <label className="toggle-label advanced-toggle">
-          <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
-          Display Advanced
-        </label>
       </div>
 
       {data && <div className="results-count">{data.total.toLocaleString()} cards found</div>}
@@ -193,7 +166,7 @@ export default function CollectionGridPage() {
         <>
           <div className="card-grid">
             {data.items.map((card) => (
-              <CardTile key={card.inventory_id} card={card} advanced={advanced} />
+              <CardTile key={card.inventory_id} card={card} />
             ))}
           </div>
 
@@ -212,7 +185,7 @@ export default function CollectionGridPage() {
   );
 }
 
-function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean }) {
+function CardTile({ card }: { card: CollectionItem }) {
   const isFirstEdition = card.specialty_one === "1st Edition" || card.specialty_one === "First Edition";
 
   const imageInner = (
@@ -223,7 +196,7 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
   );
 
   return (
-    <div className={`card-tile ${advanced ? "card-tile-advanced" : ""}`}>
+    <div className="card-tile">
       <div className="card-tile-image">{imageInner}</div>
 
       <div className="card-tile-info">
@@ -242,70 +215,16 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
           <span className={`card-tile-price ${card.estimated_price == null ? "no-price" : ""}`}>
             {fmt(card.estimated_price)}
           </span>
-          {card.confidence_percent != null && (
-            <span className={`confidence-badge ${confidenceClass(card.confidence_percent)}`}>
-              {card.confidence_percent}%
-            </span>
-          )}
         </div>
 
-        {/* Specialties. Tags are never shown — tagged inventory is hidden. */}
-        <div className="card-tile-tags">
-          {card.specialty_two !== "None" && <span className="tag tag-special">{card.specialty_two}</span>}
-          {card.manual_check_necessary ? <span className="tag tag-review">Review</span> : null}
-        </div>
-
-        {/* Advanced info */}
-        {advanced && (
-          <div className="card-tile-advanced-info">
-            <div className="adv-section">
-              <div className="adv-header">Card Details</div>
-              <div className="adv-row"><span>Era</span><span>{card.era || "-"}</span></div>
-              <div className="adv-row"><span>Rarity</span><span>{card.rarity || "-"}</span></div>
-              <div className="adv-row"><span>Condition</span><span>{card.condition}</span></div>
-              <div className="adv-row"><span>Finish</span><span>{card.finish}</span></div>
-              <div className="adv-row"><span>Type</span><span>{card.card_type || "-"}</span></div>
-              <div className="adv-row"><span>Layout</span><span>{card.visual_layout || "-"}</span></div>
-              <div className="adv-row"><span>Status</span><span className={`status-badge status-${card.status}`}>{card.status}</span></div>
-              <div className="adv-row"><span>Qty</span><span>{card.qty}</span></div>
-              <div className="adv-row"><span>TCGplayer ID</span><span>{card.card_id}</span></div>
-            </div>
-
-            <div className="adv-section">
-              <div className="adv-header">Pricing Algorithm</div>
-              <div className="adv-row"><span>Est. Price</span><span className="price-cell">{fmt(card.estimated_price)}</span></div>
-              <div className="adv-row"><span>Range</span><span>{fmt(card.estimated_low_price)} - {fmt(card.estimated_high_price)}</span></div>
-              <div className="adv-row"><span>Liquid Value</span><span className="price-cell">{fmt(card.estimated_liquid_value)}</span></div>
-              <div className="adv-row"><span>Liquid Range</span><span>{fmt(card.estimated_low_price_liquid)} - {fmt(card.estimated_high_price_liquid)}</span></div>
-              <div className="adv-row"><span>Confidence</span><span>{card.confidence_percent != null ? `${card.confidence_percent}%` : "-"}</span></div>
-              <div className="adv-row"><span>Manual Check</span><span>{card.manual_check_necessary ? "Yes" : "No"}{card.manually_checked ? " (checked)" : ""}</span></div>
-              <div className="adv-row"><span>Calc Date</span><span>{card.calculation_date || "-"}</span></div>
-              <div className="adv-row"><span>Algorithm</span><span>v{card.algorithm_version || "?"}</span></div>
-            </div>
-
-            <div className="adv-section">
-              <div className="adv-header">Market Data</div>
-              {card.market_snapshot_date ? (
-                <>
-                  <div className="adv-row"><span>Snapshot</span><span>{card.market_snapshot_date}</span></div>
-                  <div className="adv-row"><span>Listings</span><span>{card.listing_count ?? "-"}</span></div>
-                  <div className="adv-row"><span>Lowest</span><span>{fmt(card.lowest_listing_price)}</span></div>
-                  <div className="adv-row"><span>Median List</span><span>{fmt(card.median_listing_price)}</span></div>
-                  <div className="adv-row"><span>Mean List</span><span>{fmt(card.mean_listing_price)}</span></div>
-                  <div className="adv-row"><span>P25/P75</span><span>{fmt(card.p25_listing_price)} / {fmt(card.p75_listing_price)}</span></div>
-                  <div className="adv-row"><span>Recent Sales</span><span>{card.recent_sales_count ?? "-"}</span></div>
-                  <div className="adv-row"><span>Avg Sale</span><span>{fmt(card.avg_sale_price)}</span></div>
-                  <div className="adv-row"><span>Median Sale</span><span>{fmt(card.median_sale_price)}</span></div>
-                  <div className="adv-row"><span>Sale Range</span><span>{fmt(card.min_sale_price)} - {fmt(card.max_sale_price)}</span></div>
-                  <div className="adv-row"><span>Newest Sale</span><span>{card.newest_sale_date?.split("T")[0] || "-"}</span></div>
-                  <div className="adv-row"><span>Oldest Sale</span><span>{card.oldest_sale_date?.split("T")[0] || "-"}</span></div>
-                </>
-              ) : (
-                <div className="adv-row"><span>No market data</span><span></span></div>
-              )}
-            </div>
+        {/* Specialties. Tags are never shown — tagged inventory is hidden — and
+            neither is the internal manual-review flag. */}
+        {card.specialty_two !== "None" && (
+          <div className="card-tile-tags">
+            <span className="tag tag-special">{card.specialty_two}</span>
           </div>
         )}
+
       </div>
     </div>
   );
