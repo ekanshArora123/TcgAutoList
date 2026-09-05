@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
 import {
   fetchGradedCollection, fetchGradedFilters, addGradedByCert, cardImageUrl, gradedImageUrl,
   type GradedCardItem, type GradedResponse, type GradedFilters,
@@ -244,13 +243,7 @@ function GradedTile({ card }: { card: GradedCardItem }) {
     </>
   );
 
-  // The whole tile links to the slab detail page (keyed by cert). Cert-less
-  // manual adds have no detail route, so they render as a plain, unlinked tile.
-  return card.cert_id ? (
-    <Link to={`/graded/slab/${encodeURIComponent(card.cert_id)}`} className="graded-tile graded-tile-link">
-      {inner}
-    </Link>
-  ) : (
-    <div className="graded-tile">{inner}</div>
-  );
+  // Browse-only: tiles do not link to the slab detail page. The route itself is
+  // still registered, so it stays reachable by URL.
+  return <div className="graded-tile">{inner}</div>;
 }

@@ -1,22 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
 import {
   fetchCollection, fetchFilters, cardImageUrl,
   type CollectionItem, type CollectionResponse, type Filters,
 } from "../api";
 import CardImage from "../components/CardImage";
-
-// Path to a card's detail page. Identity is the SKU minus condition. Tagged
-// inventory never reaches the browse views (hidden in browse mode), so tags are
-// not part of the key.
-function cardDetailPath(card: CollectionItem): string {
-  const qs = new URLSearchParams({
-    finish: card.finish,
-    specialty_one: card.specialty_one,
-    specialty_two: card.specialty_two,
-  }).toString();
-  return `/card/${card.card_id}?${qs}`;
-}
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 
@@ -237,9 +224,7 @@ function CardTile({ card, advanced }: { card: CollectionItem; advanced: boolean 
 
   return (
     <div className={`card-tile ${advanced ? "card-tile-advanced" : ""}`}>
-      <Link to={cardDetailPath(card)} className="card-tile-image card-tile-image-link">
-        {imageInner}
-      </Link>
+      <div className="card-tile-image">{imageInner}</div>
 
       <div className="card-tile-info">
         <div className="card-tile-name" title={card.card_name}>

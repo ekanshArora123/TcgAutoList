@@ -643,14 +643,11 @@ body {
   transition: none !important;
 }
 
-/* Card detail page */
-.card-tile-image-link {
-  display: block;
-  cursor: pointer;
-}
-
-.card-tile-image-link:hover img {
-  opacity: 0.85;
+/* Browse-only tiles: the hover lift stays (the grid should feel browsable) but
+   the cursor stays an arrow, since nothing here is clickable. */
+.card-tile:hover,
+.graded-tile:hover {
+  cursor: default;
 }
 
 .card-detail {
@@ -969,7 +966,6 @@ body {
   flex-direction: column;
   transition: border-color 0.15s;
 }
-.graded-tile-link { text-decoration: none; cursor: pointer; }
 .graded-tile:hover { border-color: #e03131; }
 
 /* Bigger image: fills the tile width at the slab's natural aspect. */
