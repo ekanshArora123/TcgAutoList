@@ -62,16 +62,28 @@ _SHOW_FROM = INV_SKU_CARD_PRICE_FROM.replace(
     _SKUS_JOIN, f"{_SKUS_JOIN} {_SHOW_MODE_PREDICATE}"
 )
 
-# Stored condition -> the grade a customer is shown. `DM` is an internal alias
-# for DMG; showing both is two names for one grade. Only display is affected —
-# the stored value, the pricing path, and the market-snapshot join all keep the
-# real condition.
+# Stored condition -> the grade a customer is shown.
+#
+# Two collapses, both display-only:
+#   * `DM` is an internal alias for DMG; showing both is two names for one grade.
+#   * TCGplayer has no in-between grades, so LP-NM/MP-LP/HP-MP/DM-HP mean nothing
+#     to a buyer. Each rounds UP to its better neighbour (the pair's first entry
+#     in pricing config's IN_BETWEEN_CONDITIONS).
+#
+# What a card sells FOR is untouched: an LP-NM still carries its own, lower,
+# LP-NM price. The stored value, the pricing path, and the market-snapshot join
+# all keep the real condition — only the label changes.
 _CONDITION_DISPLAY = {
     "DM": "DMG",
+    "LP-NM": "NM",
+    "MP-LP": "LP",
+    "HP-MP": "MP",
+    "DM-HP": "HP",
 }
 
-# Display grades best -> worst, for ordering.
-_DISPLAY_CONDITION_ORDER = ("NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP", "DM-HP", "DMG")
+# Display grades best -> worst, for ordering. The in-between grades are gone by
+# construction — nothing maps to them.
+_DISPLAY_CONDITION_ORDER = ("NM", "LP", "MP", "HP", "DMG")
 
 
 def _case(col: str, mapping: dict[str, Any], default: str) -> str:
