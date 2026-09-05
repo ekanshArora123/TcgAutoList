@@ -13,6 +13,7 @@ import {
   type TopCard, type SetBreakdown, type Filters,
 } from "../api";
 import GradedAnalytics from "../components/GradedAnalytics";
+import { conditionRank } from "../conditionOrder";
 
 type Kind = "raw" | "graded" | "all";
 
@@ -24,11 +25,6 @@ const COLORS = [
 
 // Card conditions ordered best -> worst (mirrors PRIMARY_CONDITIONS + the
 // in-between grades on the backend). Used to sort the By Condition chart.
-const CONDITION_ORDER = ["MINT", "NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP", "DMG"];
-const conditionRank = (c: string) => {
-  const i = CONDITION_ORDER.indexOf(c);
-  return i === -1 ? CONDITION_ORDER.length : i; // unknown grades sort last
-};
 
 const fmt = (n: number | null | undefined) => (n != null ? `$${n.toFixed(2)}` : "-");
 const fmtK = (n: number | null | undefined) => {

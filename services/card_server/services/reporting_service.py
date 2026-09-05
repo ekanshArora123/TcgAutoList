@@ -47,13 +47,65 @@ GRADED_NO_TAG_OPTION = "No tags"
 # reporting queries (browse, detail, analytics, breakdowns) in one place. The
 # original constant is left untouched so the write/orchestrator path that also
 # imports it still sees every card.
-_SHOW_MODE_PREDICATE = "AND (i.tags IS NULL OR TRIM(i.tags) = '')"
+# MINT is excluded outright; see _CONDITION_DISPLAY for the grades that are
+# relabelled rather than dropped.
+_EXCLUDED_CONDITIONS = ("MINT",)
+
+_SHOW_MODE_PREDICATE = (
+    "AND (i.tags IS NULL OR TRIM(i.tags) = '')"
+    + " AND s.condition NOT IN (" + ",".join(f"'{c}'" for c in _EXCLUDED_CONDITIONS) + ")"
+)
 
 _SKUS_JOIN = "JOIN skus s ON i.sku_id = s.sku_id"
 assert _SKUS_JOIN in INV_SKU_CARD_PRICE_FROM, "inventory join changed shape"
 _SHOW_FROM = INV_SKU_CARD_PRICE_FROM.replace(
     _SKUS_JOIN, f"{_SKUS_JOIN} {_SHOW_MODE_PREDICATE}"
 )
+
+# Stored condition -> the grade a customer is shown. `DM` is an internal alias
+# for DMG; showing both is two names for one grade. Only display is affected —
+# the stored value, the pricing path, and the market-snapshot join all keep the
+# real condition.
+_CONDITION_DISPLAY = {
+    "DM": "DMG",
+}
+
+# Display grades best -> worst, for ordering.
+_DISPLAY_CONDITION_ORDER = ("NM", "LP-NM", "LP", "MP-LP", "MP", "HP-MP", "HP", "DM-HP", "DMG")
+
+
+def _case(col: str, mapping: dict[str, Any], default: str) -> str:
+    """A SQL CASE over `col`. Keys/values are module constants, never user input."""
+    whens = " ".join(f"WHEN '{k}' THEN {v!r}" if isinstance(v, str) else f"WHEN '{k}' THEN {v}"
+                     for k, v in mapping.items())
+    return f"CASE {col} {whens} ELSE {default} END"
+
+
+# The displayed grade, and a best->worst rank to ORDER BY (alphabetical order on
+# a grade name is meaningless to a buyer).
+_SHOW_CONDITION = _case("s.condition", _CONDITION_DISPLAY, "s.condition")
+_CONDITION_RANK = _case(
+    _SHOW_CONDITION,
+    {c: i for i, c in enumerate(_DISPLAY_CONDITION_ORDER)},
+    str(len(_DISPLAY_CONDITION_ORDER)),
+)
+
+
+def _display_conditions(stored: list[str]) -> list[str]:
+    """Stored grades -> the deduped, grade-ordered list the dropdown offers."""
+    shown = {_CONDITION_DISPLAY.get(c, c) for c in stored if c not in _EXCLUDED_CONDITIONS}
+    rank = {c: i for i, c in enumerate(_DISPLAY_CONDITION_ORDER)}
+    return sorted(shown, key=lambda c: (rank.get(c, len(rank)), c))
+
+
+def _raw_conditions(shown: str) -> list[str]:
+    """Every stored condition that displays as `shown` — the expansion a filter on
+    a displayed grade needs (asking for DMG must also match stored `DM`)."""
+    raws = [raw for raw, display in _CONDITION_DISPLAY.items() if display == shown]
+    if shown not in _CONDITION_DISPLAY:
+        raws.append(shown)  # `shown` is itself a stored grade
+    return raws
+
 
 # Collection browse additionally surfaces the latest market snapshot per SKU.
 # specialty_one is part of the match: a 1st Edition card must not display the
@@ -76,7 +128,7 @@ _SORT_COLUMNS = {
     "set_name": "c.set_name",
     "era": "c.era",
     "rarity": "c.rarity",
-    "condition": "s.condition",
+    "condition": _CONDITION_RANK,
     "estimated_price": "p.estimated_price",
     "confidence": "p.confidence_percent",
     "status": "i.status",
@@ -90,13 +142,13 @@ _BREAKDOWN_DIMS = {
     "era": {"col": "c.era", "name": "era", "coalesce": True, "extra_aggs": True, "order": "total_value DESC"},
     "rarity": {"col": "c.rarity", "name": "rarity", "coalesce": True, "extra_aggs": False, "order": "total_value DESC"},
     "set": {"col": "c.set_name", "name": "set_name", "coalesce": True, "extra_aggs": False, "order": "total_value DESC"},
-    "condition": {"col": "s.condition", "name": "condition", "coalesce": False, "extra_aggs": False, "order": "quantity DESC"},
+    "condition": {"col": _SHOW_CONDITION, "name": "condition", "coalesce": False, "extra_aggs": False, "order": "quantity DESC"},
 }
 
-_CARD_COLUMNS = """
+_CARD_COLUMNS = f"""
     i.inventory_id, i.sku_id, i.qty, i.tags, i.status,
     i.front_photo_path, i.back_photo_path, i.ebay_listing_id,
-    s.condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
+    {_SHOW_CONDITION} as condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
     c.card_name, c.set_name, c.rarity, c.card_number, c.era,
     c.card_type, c.visual_layout,
     p.estimated_price, p.estimated_liquid_value,
@@ -105,10 +157,10 @@ _CARD_COLUMNS = """
     p.calculation_date, p.algorithm_version
 """
 
-_COLLECTION_COLUMNS = """
+_COLLECTION_COLUMNS = f"""
     i.inventory_id, i.sku_id, i.qty, i.tags, i.status,
     i.front_photo_path, i.back_photo_path, i.ebay_listing_id,
-    s.condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
+    {_SHOW_CONDITION} as condition, s.finish, s.card_id, s.specialty_one, s.specialty_two,
     c.card_name, c.set_name, c.rarity, c.card_number, c.era,
     c.card_type, c.visual_layout, c.product_type,
     p.estimated_price, p.estimated_liquid_value,
@@ -161,11 +213,13 @@ def _build_filters(f: dict[str, Any]) -> tuple[list[str], list[Any]]:
     if f.get("eras"):
         add_in("c.era", f["eras"])
     if f.get("conditions"):
-        add_in("s.condition", f["conditions"])
+        shown = f["conditions"]
+        shown = shown if isinstance(shown, (list, tuple)) else [shown]
+        add_in("s.condition", [raw for c in shown if c for raw in _raw_conditions(c)])
     if f.get("rarity"):
         add("c.rarity = ?", f["rarity"])
     if f.get("condition"):
-        add("s.condition = ?", f["condition"])
+        add_in("s.condition", _raw_conditions(f["condition"]))
     if f.get("finish"):
         add("s.finish = ?", f["finish"])
     if f.get("status"):
@@ -458,18 +512,17 @@ class ReportingService:
             return None
 
         rows = self.db.execute(
-            """
-            SELECT s.condition,
+            f"""
+            SELECT {_SHOW_CONDITION} as condition,
                    SUM(i.qty) as qty,
                    MAX(p.estimated_price) as estimated_price,
                    MAX(p.confidence_percent) as confidence_percent
             """
             + _SHOW_FROM
-            + """
+            + f"""
             WHERE s.card_id = ? AND s.finish = ?
               AND s.specialty_one = ? AND s.specialty_two = ?
-              AND (i.tags IS NULL OR TRIM(i.tags) = '')
-            GROUP BY s.condition
+            GROUP BY {_SHOW_CONDITION}
             """,
             [card_id, finish, specialty_one, specialty_two],
         ).fetchall()
@@ -671,7 +724,7 @@ class ReportingService:
             "sets": self.cards.get_all_set_names(),
             "eras": self.cards.get_all_eras(),
             "rarities": self.cards.get_all_rarities(),
-            "conditions": self.skus.get_all_conditions(),
+            "conditions": _display_conditions(self.skus.get_all_conditions()),
             "finishes": self.skus.get_all_finishes(),
             "statuses": self.inventory.get_all_statuses(),
         }
@@ -852,7 +905,7 @@ class ReportingService:
         label = (
             f"COALESCE({cfg['col']}, 'Unknown') as {cfg['name']}"
             if cfg["coalesce"]
-            else cfg["col"]
+            else f"{cfg['col']} as {cfg['name']}"
         )
         extra = (
             ", SUM(i.qty) as total_qty, AVG(p.confidence_percent) as avg_confidence"
@@ -876,10 +929,10 @@ class ReportingService:
         """Top N most valuable owned cards."""
         n = min(int(n), 100)
         rows = self.db.execute(
-            """
+            f"""
             SELECT
                 c.card_name, c.set_name, c.era, c.rarity,
-                s.condition, s.finish,
+                {_SHOW_CONDITION} as condition, s.finish,
                 p.estimated_price, p.estimated_liquid_value,
                 p.confidence_percent,
                 i.inventory_id, i.qty
